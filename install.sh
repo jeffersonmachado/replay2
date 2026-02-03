@@ -209,21 +209,23 @@ sudo_or_die_prefix chmod +x "$PREFIX/bin/main.exp" "$PREFIX/uninstall.sh"
 
 # Wrapper replay2
 WRAPPER="$PREFIX/bin/replay2"
-sudo_or_die_prefix sh -c "cat >\"$WRAPPER\" <<'EOF'
+sudo_or_die_prefix sh -c '
+cat >"$1" <<'"'"'EOF'"'"'
 #!/bin/sh
 set -eu
 
-PREFIX_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"
+PREFIX_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 if command -v expect >/dev/null 2>&1; then
-  exec expect \"\$PREFIX_DIR/bin/main.exp\" \"\$@\"
+  exec expect "$PREFIX_DIR/bin/main.exp" "$@"
 fi
 if [ -x /opt/freeware/bin/expect ]; then
-  exec /opt/freeware/bin/expect \"\$PREFIX_DIR/bin/main.exp\" \"\$@\"
+  exec /opt/freeware/bin/expect "$PREFIX_DIR/bin/main.exp" "$@"
 fi
-printf '%s\n' 'Erro: expect não encontrado. Instale o pacote Expect e/ou ajuste PATH.' >&2
+printf "%s\n" "Erro: expect não encontrado. Instale o pacote Expect e/ou ajuste PATH." >&2
 exit 127
-EOF"
+EOF
+' sh "$WRAPPER"
 sudo_or_die_prefix chmod +x "$WRAPPER"
 
 # Symlink opcional

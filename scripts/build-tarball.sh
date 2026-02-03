@@ -51,6 +51,18 @@ chmod +x "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/bin/main.
 OUT="$DIST_DIR/${APP_NAME}-${VERSION}.tar.gz"
 info "Gerando: $OUT"
 
-(cd "$STAGE_PARENT" && tar -czf "$OUT" "${APP_NAME}-${VERSION}")
+(cd "$STAGE_PARENT" && {
+  # Em alguns AIX o `tar` não suporta -z. Preferimos tar+gzip quando necessário.
+  if tar -czf "$OUT" "${APP_NAME}-${VERSION}" >/dev/null 2>&1; then
+    :
+  else
+    rm -f "$OUT"
+    if command -v gzip >/dev/null 2>&1; then
+      tar -cf - "${APP_NAME}-${VERSION}" | gzip -c >"$OUT"
+    else
+      die "tar não suporta -z e gzip não encontrado. Instale gzip ou use um tar com suporte a -z."
+    fi
+  fi
+})
 
 info "OK: $OUT"

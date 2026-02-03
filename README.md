@@ -63,7 +63,7 @@ Este repositório inclui um empacotamento **portável** em `tar.gz`, com instala
 ### Gerar o tarball
 
 ```bash
-./scripts/build-tarball.sh
+sh ./scripts/build-tarball.sh
 ls -la dist/
 ```
 

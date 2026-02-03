@@ -1,0 +1,53 @@
+#!/usr/bin/env expect
+#
+# demo.exp
+# Demonstração executável da engine usando o simulador em examples/.
+#
+
+if {[catch {package require Expect} err]} {
+    puts stderr "Erro: pacote Expect não encontrado: $err"
+    exit 1
+}
+
+set ::APP_ROOT [file dirname [file dirname [file normalize [info script]]]]
+
+source [file join $::APP_ROOT lib/config.tcl]
+source [file join $::APP_ROOT lib/capture.tcl]
+source [file join $::APP_ROOT lib/normalize.tcl]
+source [file join $::APP_ROOT lib/signature.tcl]
+source [file join $::APP_ROOT lib/state_machine.tcl]
+
+source [file join $::APP_ROOT examples/screens/screen_login.tcl]
+source [file join $::APP_ROOT examples/screens/screen_menu.tcl]
+
+proc start_demo_session {cfg app_root} {
+    set tclsh [::config::find_tclsh]
+    set sim [file join $app_root examples legacy_sim.tcl]
+    set cmd [list $tclsh $sim]
+    eval [linsert $cmd 0 spawn -nottycopy -nottyinit]
+    fconfigure $spawn_id -encoding [dict get $cfg encoding] -translation [dict get $cfg translation]
+    return $spawn_id
+}
+
+proc main {} {
+    set cfg [::config::parse_argv $::argv $::APP_ROOT]
+    encoding system [dict get $cfg encoding]
+    set ::capture::maxBytes [dict get $cfg max_bytes]
+
+    set spawn_id [start_demo_session $cfg $::APP_ROOT]
+    ::state_machine::set_current_state "LOGIN"
+
+    while {1} {
+        set raw_screen [::capture::snapshot $spawn_id -timeout [dict get $cfg capture_timeout] -quiet_ms [dict get $cfg capture_quiet_ms]]
+        set norm_screen [::normalize::screen $raw_screen]
+        set sig [::signature::from_screen $norm_screen]
+        if {![string match "*TIT=*" $sig]} { after 50; continue }
+        if {![::state_machine::dispatch $spawn_id $sig $norm_screen]} {
+            puts stderr "Aviso: tela não reconhecida. Assinatura: '$sig'"
+            after 200
+        }
+    }
+}
+
+main
+

@@ -1,0 +1,145 @@
+#!/usr/bin/env expect
+#
+# main.exp
+# Engine principal de automação screen-oriented para sistemas legados em modo texto.
+#
+# Objetivos principais:
+# - Encoding UTF-8 desde o início
+# - Captura de tela centralizada
+# - Normalização de ANSI/box-drawing
+# - Assinatura estável de tela
+# - Máquina de estados explícita
+# - Handlers isolados por tela
+
+########################################################################
+## Configuração inicial
+########################################################################
+
+if {[catch {package require Expect} err]} {
+    puts stderr "Erro: pacote Expect não encontrado: $err"
+    exit 1
+}
+
+# Diretório base do projeto (assume que este script está em bin/)
+set ::APP_ROOT [file dirname [file dirname [file normalize [info script]]]]
+
+set ::AUTO_PATH [linsert $::auto_path 0 \
+    [file join $::APP_ROOT lib] \
+    [file join $::APP_ROOT screens]]
+
+########################################################################
+## Carregamento dos módulos
+########################################################################
+
+source [file join $::APP_ROOT lib/config.tcl]
+source [file join $::APP_ROOT lib/capture.tcl]
+source [file join $::APP_ROOT lib/normalize.tcl]
+source [file join $::APP_ROOT lib/signature.tcl]
+source [file join $::APP_ROOT lib/state_machine.tcl]
+
+########################################################################
+## Carregamento de handlers de tela (plugins)
+########################################################################
+
+# Engine-only: carrega automaticamente todos os módulos em screens/*.tcl,
+# se existirem. O demo ficou em examples/.
+set screens_dir [file join $::APP_ROOT screens]
+if {[file isdirectory $screens_dir]} {
+    foreach f [lsort [glob -nocomplain -directory $screens_dir *.tcl]] {
+        source $f
+    }
+}
+
+########################################################################
+## Conexão com o sistema legado (simulado neste exemplo)
+########################################################################
+
+proc start_legacy_session {cfg} {
+    # Em um cenário real, poderia ser algo como:
+    #   spawn -noecho -encoding utf-8 ssh user@host "legacy_app"
+    #   ou
+    #   spawn -noecho -encoding cp850 legacy_binary.exe
+    #
+    set cmd [dict get $cfg legacy_cmd]
+    if {[llength $cmd] < 1} {
+        error "Config inválida: legacy_cmd vazio (use --legacy-cmd ou DAKOTA_LEGACY_CMD)"
+    }
+
+    # `-nottycopy` e `-nottyinit` evitam interferência com terminais interativos.
+    # Observação: `spawn` aceita um comando como lista.
+    eval [linsert $cmd 0 spawn -nottycopy -nottyinit]
+
+    # Configuração básica do canal Expect/resultante (encoding).
+    fconfigure $spawn_id \
+        -encoding [dict get $cfg encoding] \
+        -translation [dict get $cfg translation]
+    return $spawn_id
+}
+
+########################################################################
+## Loop principal da máquina de estados
+########################################################################
+
+proc main {} {
+    set cfg [::config::parse_argv $::argv $::APP_ROOT]
+
+    # Encoding padrão da aplicação (desde o início)
+    encoding system [dict get $cfg encoding]
+
+    # Parametriza limites da captura (mantém compatibilidade com o módulo atual)
+    set ::capture::maxBytes [dict get $cfg max_bytes]
+
+    set spawn_id [start_legacy_session $cfg]
+
+    # Estado inicial esperado (tela de login)
+    ::state_machine::set_current_state "LOGIN"
+
+    set stable_required [dict get $cfg stable_required]
+    if {$stable_required < 1} { set stable_required 1 }
+    set last_sig ""
+    set stable_count 0
+
+    while {1} {
+        # 1) Captura a tela atual (buffer completo)
+        set raw_screen [::capture::snapshot $spawn_id \
+            -timeout [dict get $cfg capture_timeout] \
+            -quiet_ms [dict get $cfg capture_quiet_ms]]
+
+        # 2) Normaliza (ANSI, box-drawing, espaços, etc.)
+        set norm_screen [::normalize::screen $raw_screen]
+
+        # 3) Gera assinatura estável de tela
+        set sig [::signature::from_screen $norm_screen]
+
+        # 3.0) Estabilidade: exige N leituras seguidas com a mesma assinatura.
+        if {$sig eq $last_sig} {
+            incr stable_count
+        } else {
+            set stable_count 1
+            set last_sig $sig
+        }
+        if {$stable_count < $stable_required} {
+            after 50
+            continue
+        }
+
+        # 3.1) Se a assinatura não contém indícios de moldura/título,
+        #      consideramos que ainda não há uma "tela" estável (pode ser
+        #      apenas eco de teclado, ruído, etc.).
+        if {![string match "*TIT=*" $sig]} {
+            after 200
+            continue
+        }
+
+        # 4) Despacha para a máquina de estados/handler apropriado
+        if {![::state_machine::dispatch $spawn_id $sig $norm_screen]} {
+            puts stderr "Aviso: tela não reconhecida. Assinatura: '$sig'"
+            # Estratégia simples: aguardar um pouco e tentar de novo
+            after 500
+        }
+    }
+}
+
+main
+
+

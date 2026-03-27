@@ -239,30 +239,103 @@ document.getElementById('filter_status').addEventListener('input', loadRuns);
 
 LOGIN_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Login</title>
+<title>Dakota Replay - Login</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:16px; max-width:420px;}
-input{width:100%; padding:10px; margin-top:8px;}
-button{padding:10px; margin-top:12px;}
-.muted{color:#6b7280;}
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .fade-in { animation: fadeIn 0.5s ease-in; }
 </style>
 </head>
-<body>
-<h2>Replay Control</h2>
-<p class="muted">Login interno</p>
-<input id="u" placeholder="username"/>
-<input id="p" placeholder="password" type="password"/>
-<button onclick="go()">Entrar</button>
-<p id="msg" class="muted"></p>
-<script>
-async function go(){
-  const u=document.getElementById('u').value;
-  const p=document.getElementById('p').value;
-  const r=await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p}), credentials:'include'});
-  if (r.status===200) { window.location='/'; return; }
-  document.getElementById('msg').textContent = 'falha';
-}
-</script>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center min-h-screen">
+  <!-- Decorative elements -->
+  <div class="fixed top-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+  <div class="fixed bottom-0 right-0 w-96 h-96 bg-blue-400/10 rounded-full blur-3xl"></div>
+  
+  <div class="relative w-full max-w-md mx-auto px-6 fade-in">
+    <!-- Card Container -->
+    <div class="bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl shadow-2xl p-8 space-y-8">
+      <!-- Header -->
+      <div class="text-center space-y-4">
+        <div class="flex justify-center mb-2">
+          <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+          </div>
+        </div>
+        <h1 class="text-3xl font-bold text-white">Dakota Replay</h1>
+        <p class="text-slate-400 text-sm">Sistema de Automação de Testes</p>
+      </div>
+      
+      <!-- Form -->
+      <form id="loginForm" class="space-y-4">
+        <!-- Username -->
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-2">Usuário</label>
+          <input id="u" type="text" placeholder="seu usuário" class="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" required/>
+        </div>
+        
+        <!-- Password -->
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-2">Senha</label>
+          <input id="p" type="password" placeholder="sua senha" class="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" required/>
+        </div>
+        
+        <!-- Error Message -->
+        <div id="msg" class="hidden bg-red-500/10 border border-red-500/50 text-red-400 text-sm px-4 py-2 rounded-lg"></div>
+        
+        <!-- Submit Button -->
+        <button type="button" onclick="go()" class="w-full mt-6 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Entrar</button>
+      </form>
+      
+      <!-- Footer -->
+      <div class="pt-6 border-t border-slate-700/50 space-y-2 text-center">
+        <p class="text-slate-500 text-xs">Desenvolvido por</p>
+        <div class="flex justify-center gap-2 text-xs">
+          <a href="https://www.dakota.com.br/" target="_blank" class="text-blue-400 hover:text-blue-300 transition">Dakota Calçados</a>
+          <span class="text-slate-600">×</span>
+          <a href="https://www.results.com.br/" target="_blank" class="text-blue-400 hover:text-blue-300 transition">Results</a>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Footer text -->
+    <p class="text-center text-slate-500 text-xs mt-8">Sistema seguro • Acesso restrito</p>
+  </div>
+  
+  <script>
+    async function go(){
+      const u = document.getElementById('u').value.trim();
+      const p = document.getElementById('p').value;
+      const msg = document.getElementById('msg');
+      
+      if (!u || !p) {
+        msg.classList.remove('hidden');
+        msg.textContent = 'Preencha todos os campos';
+        return;
+      }
+      
+      const r = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p }),
+        credentials: 'include'
+      });
+      
+      if (r.status === 200) {
+        window.location = '/';
+        return;
+      }
+      
+      msg.classList.remove('hidden');
+      msg.textContent = 'Usuário ou senha inválidos';
+    }
+    
+    // Allow Enter key to submit
+    document.getElementById('loginForm').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') go();
+    });
+  </script>
 </body></html>
 """
 
@@ -365,8 +438,12 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(LOGIN_HTML.encode("utf-8"))
             return
         if p.path == "/":
-            u = self._require()
+            u = self._auth()
             if not u:
+                # Redirect to login instead of 401
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

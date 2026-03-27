@@ -16,6 +16,7 @@ source [file join $::APP_ROOT lib/capture.tcl]
 source [file join $::APP_ROOT lib/normalize.tcl]
 source [file join $::APP_ROOT lib/signature.tcl]
 source [file join $::APP_ROOT lib/state_machine.tcl]
+source [file join $::APP_ROOT lib/action.tcl]
 
 source [file join $::APP_ROOT examples/screens/screen_login.tcl]
 source [file join $::APP_ROOT examples/screens/screen_menu.tcl]

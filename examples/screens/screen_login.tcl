@@ -38,8 +38,8 @@ proc ::screen_login::handler {spawn_id state signature norm_screen} {
     }
 
     puts ">> [clock format [clock seconds]] - Detectada tela de LOGIN (state=$state)"
-    fconfigure $spawn_id -encoding utf-8 -translation crlf
-    send -- "__LOGIN_OK__\n"
+    ::action::configure_channel $spawn_id -encoding utf-8 -translation crlf
+    ::action::send_keys $spawn_id "__LOGIN_OK__\n"
 }
 
 ::screen_login::init

@@ -38,6 +38,8 @@ mkdir -p "$STAGE_DIR"
 info "Staging em: $STAGE_DIR"
 
 cp -R "$ROOT_DIR/bin" "$ROOT_DIR/lib" "$ROOT_DIR/screens" "$STAGE_DIR/"
+if [ -d "$ROOT_DIR/gateway" ]; then cp -R "$ROOT_DIR/gateway" "$STAGE_DIR/"; fi
+if [ -d "$ROOT_DIR/dashboard" ]; then cp -R "$ROOT_DIR/dashboard" "$STAGE_DIR/"; fi
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
@@ -47,6 +49,15 @@ fi
 
 # Garante executáveis
 chmod +x "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/bin/main.exp" "$STAGE_DIR/scripts/build-tarball.sh" 2>/dev/null || true
+chmod +x "$STAGE_DIR/bin/replay2.exp" 2>/dev/null || true
+chmod +x "$STAGE_DIR/gateway/dakota-gateway" "$STAGE_DIR/gateway/control/server.py" "$STAGE_DIR/dashboard/server.py" 2>/dev/null || true
+
+# Remove caches Python do stage (não são artefatos oficiais)
+rm -rf \
+  "$STAGE_DIR/gateway/__pycache__" \
+  "$STAGE_DIR/gateway/dakota_gateway/__pycache__" \
+  "$STAGE_DIR/gateway/tests/__pycache__" \
+  "$STAGE_DIR/dashboard/__pycache__" 2>/dev/null || true
 
 OUT="$DIST_DIR/${APP_NAME}-${VERSION}.tar.gz"
 info "Gerando: $OUT"

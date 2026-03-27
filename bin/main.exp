@@ -32,6 +32,13 @@ set ::AUTO_PATH [linsert $::auto_path 0 \
 ########################################################################
 
 source [file join $::APP_ROOT lib/config.tcl]
+source [file join $::APP_ROOT lib/events.tcl]
+source [file join $::APP_ROOT lib/log.tcl]
+source [file join $::APP_ROOT lib/dump.tcl]
+source [file join $::APP_ROOT lib/record.tcl]
+source [file join $::APP_ROOT lib/control.tcl]
+source [file join $::APP_ROOT lib/plugins.tcl]
+source [file join $::APP_ROOT lib/action.tcl]
 source [file join $::APP_ROOT lib/capture.tcl]
 source [file join $::APP_ROOT lib/normalize.tcl]
 source [file join $::APP_ROOT lib/signature.tcl]
@@ -41,14 +48,8 @@ source [file join $::APP_ROOT lib/state_machine.tcl]
 ## Carregamento de handlers de tela (plugins)
 ########################################################################
 
-# Engine-only: carrega automaticamente todos os módulos em screens/*.tcl,
-# se existirem. O demo ficou em examples/.
-set screens_dir [file join $::APP_ROOT screens]
-if {[file isdirectory $screens_dir]} {
-    foreach f [lsort [glob -nocomplain -directory $screens_dir *.tcl]] {
-        source $f
-    }
-}
+# OBS: o carregamento de `screens/*.tcl` foi movido para dentro do `main`,
+# para permitir controle via config (screens_dir/plugins_file).
 
 ########################################################################
 ## Conexão com o sistema legado (simulado neste exemplo)
@@ -86,6 +87,33 @@ proc main {} {
     # Encoding padrão da aplicação (desde o início)
     encoding system [dict get $cfg encoding]
 
+    # Observabilidade (logger + dumps) via events
+    ::log::configure \
+        -level [dict get $cfg log_level] \
+        -format [dict get $cfg log_format] \
+        -stream [dict get $cfg log_stream]
+    ::events::register_sink ::log::event_sink
+
+    ::dump::configure \
+        -dir [dict get $cfg dump_dir] \
+        -on_unknown [dict get $cfg dump_on_unknown]
+    ::events::register_sink ::dump::event_sink
+
+    # Record (opcional)
+    if {[dict get $cfg record_file] ne ""} {
+        ::record::start [dict get $cfg record_file]
+        ::events::register_sink ::record::event_sink
+    }
+
+    # Control server (opcional)
+    if {[dict get $cfg control_port] > 0} {
+        ::control::start [dict get $cfg control_bind] [dict get $cfg control_port]
+    }
+
+    # Carrega plugins/handlers (opcionalmente filtrados por plugins_file)
+    set loaded [::plugins::load_screens [dict get $cfg screens_dir] [dict get $cfg plugins_file]]
+    ::events::emit "plugins_loaded" [dict create level "info" count [llength $loaded]]
+
     # Parametriza limites da captura (mantém compatibilidade com o módulo atual)
     set ::capture::maxBytes [dict get $cfg max_bytes]
 
@@ -100,16 +128,72 @@ proc main {} {
     set stable_count 0
 
     while {1} {
+        # Interrompe se solicitado via controle
+        if {[::control::should_stop]} {
+            ::events::emit "engine_stop_requested" [dict create level "info"]
+            break
+        }
+
+        # Ações manuais enfileiradas via controle (send/dump)
+        foreach act [::control::drain_actions] {
+            if {[dict get $act type] eq "send_keys"} {
+                ::action::send_keys $spawn_id [dict get $act keys]
+            }
+        }
+        if {[::control::drain_dump_request]} {
+            ::events::emit "unknown_screen" [dict create \
+                level "info" \
+                signature $last_sig \
+                state [::state_machine::get_current_state] \
+                raw_screen "" \
+                norm_screen "" \
+                dump_reason "manual_dump_request" \
+            ]
+        }
+
+        # Se pausado, não despacha automaticamente
+        if {![::control::should_dispatch]} {
+            after 100
+            continue
+        }
+
         # 1) Captura a tela atual (buffer completo)
         set raw_screen [::capture::snapshot $spawn_id \
             -timeout [dict get $cfg capture_timeout] \
             -quiet_ms [dict get $cfg capture_quiet_ms]]
 
+        ::events::emit "screen_captured" [dict create \
+            spawn_id $spawn_id \
+            raw_len [string length $raw_screen] \
+        ]
+
         # 2) Normaliza (ANSI, box-drawing, espaços, etc.)
         set norm_screen [::normalize::screen $raw_screen]
 
+        ::events::emit "screen_normalized" [dict create \
+            spawn_id $spawn_id \
+            norm_len [string length $norm_screen] \
+        ]
+
         # 3) Gera assinatura estável de tela
         set sig [::signature::from_screen $norm_screen]
+
+        # Atualiza status do ControlAPI + última tela (para TUI)
+        set curState [::state_machine::get_current_state]
+        ::control::set_last_screen $raw_screen $norm_screen $sig $curState
+        ::control::update_status [dict create \
+            state $curState \
+            signature $sig \
+            stable_count $stable_count \
+            stable_required $stable_required \
+            spawn_id $spawn_id \
+        ]
+
+        ::events::emit "signature_computed" [dict create \
+            spawn_id $spawn_id \
+            signature $sig \
+            state $curState \
+        ]
 
         # 3.0) Estabilidade: exige N leituras seguidas com a mesma assinatura.
         if {$sig eq $last_sig} {
@@ -134,10 +218,25 @@ proc main {} {
         # 4) Despacha para a máquina de estados/handler apropriado
         if {![::state_machine::dispatch $spawn_id $sig $norm_screen]} {
             puts stderr "Aviso: tela não reconhecida. Assinatura: '$sig'"
+            ::events::emit "unknown_screen" [dict create \
+                level "warn" \
+                signature $sig \
+                state $curState \
+                stable_required $stable_required \
+                stable_count $stable_count \
+                last_sig $last_sig \
+                raw_screen $raw_screen \
+                norm_screen $norm_screen \
+                dump_reason "dispatch_no_match" \
+            ]
             # Estratégia simples: aguardar um pouco e tentar de novo
             after 500
         }
     }
+
+    # Cleanup
+    catch {::record::stop}
+    catch {::control::stop}
 }
 
 main

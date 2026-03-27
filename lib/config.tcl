@@ -12,6 +12,24 @@ namespace eval ::config {
     namespace export parse_argv usage
 }
 
+proc ::config::_parse_legacy_cmd {raw} {
+    # Aceita:
+    # - lista Tcl (ex.: "ssh user@host legacy_app")
+    # - string entre chaves (ex.: "{ssh user@host legacy_app}") => remove chaves
+    # - string simples (fallback)
+    set s [string trim $raw]
+    if {[string length $s] >= 2 && [string index $s 0] eq "{" && [string index $s end] eq "}"} {
+        # Se o usuário passou chaves para o shell, removemos a camada externa.
+        set s [string range $s 1 end-1]
+        set s [string trim $s]
+    }
+    # Interpretamos como lista Tcl (se tiver espaços vira múltiplos elementos).
+    if {[catch {set cmd [lrange $s 0 end]}]} {
+        return [list $raw]
+    }
+    return $cmd
+}
+
 proc ::config::find_tclsh {} {
     # Descobre um tclsh executável no PATH (portável entre Linux e AIX).
     # Permite override via env DAKOTA_TCLSH.
@@ -47,17 +65,30 @@ Opções:
   --capture-quiet-ms <ms>     Silêncio para considerar captura estável (default: 200)
   --stable-required <n>       Iterações estáveis antes de despachar (default: 1)
   --max-bytes <n>             Limite de bytes por snapshot (default: 65535)
+  --screens-dir <path>        Diretório de handlers (default: <app_root>/screens)
+  --plugins-file <path>       Arquivo dict de enable/disable de plugins
+                             (default: <screens-dir>/plugins.tcldict.txt)
   --dump-dir <path>           Diretório para dumps (default: vazio=desligado)
   --dump-on-unknown <0|1>     Dump quando tela não reconhecida (default: 1)
   --log-level <lvl>           debug|info|warn|error (default: info)
+  --log-format <fmt>          text|json|both (default: text)
+  --log-stream <s>            stdout|stderr (default: stderr)
+  --record-file <path>        Grava eventos em arquivo (default: vazio=desligado)
+  --control-port <n>          Porta TCP local p/ controle (0=desliga, default: 0)
+  --control-bind <ip>         Bind do servidor de controle (default: 127.0.0.1)
   --help                      Mostra esta ajuda
 
 Env vars (alternativas):
-  DAKOTA_LEGACY_CMD, DAKOTA_ENCODING, DAKOTA_LOG_LEVEL, DAKOTA_DUMP_DIR
+  DAKOTA_LEGACY_CMD, DAKOTA_ENCODING, DAKOTA_LOG_LEVEL, DAKOTA_LOG_FORMAT,
+  DAKOTA_LOG_STREAM, DAKOTA_DUMP_DIR, DAKOTA_SCREENS_DIR, DAKOTA_PLUGINS_FILE,
+  DAKOTA_RECORD_FILE, DAKOTA_CONTROL_PORT, DAKOTA_CONTROL_BIND
 }]\n
 }
 
 proc ::config::parse_argv {argv app_root} {
+    set default_screens_dir [file join $app_root screens]
+    set default_plugins_file [file join $default_screens_dir plugins.tcldict.txt]
+
     # Defaults
     set cfg [dict create \
         legacy_cmd {} \
@@ -67,18 +98,21 @@ proc ::config::parse_argv {argv app_root} {
         capture_quiet_ms 200 \
         stable_required 1 \
         max_bytes 65535 \
+        screens_dir $default_screens_dir \
+        plugins_file $default_plugins_file \
         dump_dir "" \
         dump_on_unknown 1 \
         log_level "info" \
+        log_format "text" \
+        log_stream "stderr" \
+        record_file "" \
+        control_port 0 \
+        control_bind "127.0.0.1" \
     ]
 
     # Overrides por env
     if {[info exists ::env(DAKOTA_LEGACY_CMD)] && $::env(DAKOTA_LEGACY_CMD) ne ""} {
-        if {[catch {set cmd [lrange $::env(DAKOTA_LEGACY_CMD) 0 end]}]} {
-            # Se não for uma lista Tcl válida, deixa como string única
-            set cmd [list $::env(DAKOTA_LEGACY_CMD)]
-        }
-        dict set cfg legacy_cmd $cmd
+        dict set cfg legacy_cmd [::config::_parse_legacy_cmd $::env(DAKOTA_LEGACY_CMD)]
     }
     if {[info exists ::env(DAKOTA_ENCODING)] && $::env(DAKOTA_ENCODING) ne ""} {
         dict set cfg encoding $::env(DAKOTA_ENCODING)
@@ -86,8 +120,29 @@ proc ::config::parse_argv {argv app_root} {
     if {[info exists ::env(DAKOTA_LOG_LEVEL)] && $::env(DAKOTA_LOG_LEVEL) ne ""} {
         dict set cfg log_level $::env(DAKOTA_LOG_LEVEL)
     }
+    if {[info exists ::env(DAKOTA_LOG_FORMAT)] && $::env(DAKOTA_LOG_FORMAT) ne ""} {
+        dict set cfg log_format [string tolower $::env(DAKOTA_LOG_FORMAT)]
+    }
+    if {[info exists ::env(DAKOTA_LOG_STREAM)] && $::env(DAKOTA_LOG_STREAM) ne ""} {
+        dict set cfg log_stream [string tolower $::env(DAKOTA_LOG_STREAM)]
+    }
     if {[info exists ::env(DAKOTA_DUMP_DIR)] && $::env(DAKOTA_DUMP_DIR) ne ""} {
         dict set cfg dump_dir $::env(DAKOTA_DUMP_DIR)
+    }
+    if {[info exists ::env(DAKOTA_SCREENS_DIR)] && $::env(DAKOTA_SCREENS_DIR) ne ""} {
+        dict set cfg screens_dir $::env(DAKOTA_SCREENS_DIR)
+    }
+    if {[info exists ::env(DAKOTA_PLUGINS_FILE)] && $::env(DAKOTA_PLUGINS_FILE) ne ""} {
+        dict set cfg plugins_file $::env(DAKOTA_PLUGINS_FILE)
+    }
+    if {[info exists ::env(DAKOTA_RECORD_FILE)] && $::env(DAKOTA_RECORD_FILE) ne ""} {
+        dict set cfg record_file $::env(DAKOTA_RECORD_FILE)
+    }
+    if {[info exists ::env(DAKOTA_CONTROL_PORT)] && $::env(DAKOTA_CONTROL_PORT) ne ""} {
+        dict set cfg control_port [expr {int($::env(DAKOTA_CONTROL_PORT))}]
+    }
+    if {[info exists ::env(DAKOTA_CONTROL_BIND)] && $::env(DAKOTA_CONTROL_BIND) ne ""} {
+        dict set cfg control_bind $::env(DAKOTA_CONTROL_BIND)
     }
 
     # Parse de argv
@@ -103,9 +158,7 @@ proc ::config::parse_argv {argv app_root} {
                 incr i
                 if {$i >= [llength $argv]} { error "Falta valor para --legacy-cmd" }
                 set raw [lindex $argv $i]
-                # Espera uma lista Tcl válida (entre aspas/chaves no shell)
-                set cmd [lrange $raw 0 end]
-                dict set cfg legacy_cmd $cmd
+                dict set cfg legacy_cmd [::config::_parse_legacy_cmd $raw]
             }
             --encoding {
                 incr i
@@ -131,6 +184,14 @@ proc ::config::parse_argv {argv app_root} {
                 incr i
                 dict set cfg max_bytes [expr {int([lindex $argv $i])}]
             }
+            --screens-dir {
+                incr i
+                dict set cfg screens_dir [lindex $argv $i]
+            }
+            --plugins-file {
+                incr i
+                dict set cfg plugins_file [lindex $argv $i]
+            }
             --dump-dir {
                 incr i
                 dict set cfg dump_dir [lindex $argv $i]
@@ -142,6 +203,26 @@ proc ::config::parse_argv {argv app_root} {
             --log-level {
                 incr i
                 dict set cfg log_level [string tolower [lindex $argv $i]]
+            }
+            --log-format {
+                incr i
+                dict set cfg log_format [string tolower [lindex $argv $i]]
+            }
+            --log-stream {
+                incr i
+                dict set cfg log_stream [string tolower [lindex $argv $i]]
+            }
+            --record-file {
+                incr i
+                dict set cfg record_file [lindex $argv $i]
+            }
+            --control-port {
+                incr i
+                dict set cfg control_port [expr {int([lindex $argv $i])}]
+            }
+            --control-bind {
+                incr i
+                dict set cfg control_bind [lindex $argv $i]
             }
             default {
                 error "Argumento desconhecido: $a\n\n[usage]"

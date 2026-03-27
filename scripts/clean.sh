@@ -8,6 +8,13 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 # Remove somente artefatos NÃO-oficiais/temporários.
 rm -rf "$ROOT_DIR/tests/tmp" 2>/dev/null || true
 
+# Cache Python (não deve ir para distribuição)
+rm -rf \
+  "$ROOT_DIR/gateway/__pycache__" \
+  "$ROOT_DIR/gateway/dakota_gateway/__pycache__" \
+  "$ROOT_DIR/gateway/tests/__pycache__" \
+  "$ROOT_DIR/dashboard/__pycache__" 2>/dev/null || true
+
 if [ -d "$ROOT_DIR/dist" ]; then
   # Mantém dist/*.tar.gz (artefato oficial), remove o resto.
   for f in "$ROOT_DIR/dist/"*; do

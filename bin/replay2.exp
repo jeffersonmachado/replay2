@@ -1,0 +1,506 @@
+#!/usr/bin/env expect
+#
+# replay2.exp
+# CLI com subcomandos para controle/diagnóstico da engine.
+#
+
+if {[catch {package require Expect} err]} {
+    puts stderr "Erro: pacote Expect não encontrado: $err"
+    exit 1
+}
+
+set ::APP_ROOT [file dirname [file dirname [file normalize [info script]]]]
+set ::AUTO_PATH [linsert $::auto_path 0 \
+    [file join $::APP_ROOT lib] \
+    [file join $::APP_ROOT screens]]
+
+source [file join $::APP_ROOT lib/config.tcl]
+source [file join $::APP_ROOT lib/normalize.tcl]
+source [file join $::APP_ROOT lib/signature.tcl]
+source [file join $::APP_ROOT lib/plugins.tcl]
+source [file join $::APP_ROOT lib/action.tcl]
+
+proc usage {} {
+    return [string trim {
+Uso:
+  replay2 <cmd> [args]
+
+Cmds:
+  run [opções...]                 Executa a engine (equivale a main.exp)
+  doctor                          Diagnóstico do ambiente (Tcl/Expect)
+  signature (--file <p>|--stdin)  Calcula assinatura de uma tela
+  inspect dump <dir>              Inspeciona um dump gerado
+  plugins list|validate|enable|disable [args]
+  record --out <file> -- [run args...]   Grava eventos (via --record-file)
+  replay --legacy-cmd <tcl_list> --record <file> [--encoding <enc>] [--translation <t>]
+  control attach --host <h> --port <p>   Conecta ao ControlAPI
+  tui --port <p> [--host <h>]            TUI de debug (precisa ControlAPI)
+}]\n
+}
+
+proc die {msg} {
+    puts stderr "Erro: $msg"
+    puts stderr [usage]
+    exit 2
+}
+
+proc cmd_run {args} {
+    # Re-executa a engine em um processo separado.
+    set main [file join $::APP_ROOT bin main.exp]
+    exec expect $main {*}$args
+}
+
+proc cmd_doctor {} {
+    puts "Tcl patchlevel: [info patchlevel]"
+    puts "Tcl platform: [array get ::tcl_platform]"
+    if {[catch {package present Expect} v]} {
+        puts stderr "Expect: indisponível"
+        exit 1
+    }
+    puts "Expect version: $v"
+    exit 0
+}
+
+proc cmd_signature {args} {
+    set file ""
+    set useStdin 0
+    set i 0
+    while {$i < [llength $args]} {
+        set a [lindex $args $i]
+        switch -exact -- $a {
+            --file {
+                incr i
+                set file [lindex $args $i]
+            }
+            --stdin {
+                set useStdin 1
+            }
+            --help {
+                puts [usage]
+                exit 0
+            }
+            default {
+                die "signature: argumento desconhecido: $a"
+            }
+        }
+        incr i
+    }
+    if {!$useStdin && $file eq ""} {
+        die "signature: use --file <path> ou --stdin"
+    }
+
+    if {$useStdin} {
+        set raw [read stdin]
+    } else {
+        if {![file exists $file]} { die "signature: arquivo não existe: $file" }
+        set f [open $file r]
+        set raw [read $f]
+        close $f
+    }
+    set norm [::normalize::screen $raw]
+    set sig  [::signature::from_screen $norm]
+    puts $sig
+}
+
+proc cmd_inspect_dump {dirPath} {
+    if {![file isdirectory $dirPath]} { die "inspect dump: diretório inválido: $dirPath" }
+    set metaFile [file join $dirPath meta.tcldict.txt]
+    if {![file exists $metaFile]} { die "inspect dump: meta não encontrado: $metaFile" }
+    set f [open $metaFile r]
+    set meta [string trim [read $f]]
+    close $f
+    if {[catch {dict size $meta}]} { die "inspect dump: meta inválido (não dict)" }
+
+    puts "dump_dir: $dirPath"
+    foreach k {type ts_ms pid signature state dump_reason raw_len norm_len} {
+        if {[dict exists $meta $k]} {
+            puts "$k: [dict get $meta $k]"
+        }
+    }
+    set rawF  [file join $dirPath raw_screen.txt]
+    set normF [file join $dirPath norm_screen.txt]
+    if {[file exists $rawF]}  { puts "raw_screen:  $rawF" }
+    if {[file exists $normF]} { puts "norm_screen: $normF" }
+}
+
+proc cmd_plugins {sub args} {
+    # Usa defaults do config para resolver screens_dir/plugins_file
+    set cfg [::config::parse_argv {} $::APP_ROOT]
+    set screens_dir  [dict get $cfg screens_dir]
+    set plugins_file [dict get $cfg plugins_file]
+
+    switch -exact -- $sub {
+        list {
+            set st [::plugins::read_state $plugins_file]
+            puts "screens_dir: $screens_dir"
+            puts "plugins_file: $plugins_file"
+            foreach f [::plugins::discover $screens_dir] {
+                set base [file tail $f]
+                set en [::plugins::is_enabled $st $f]
+                puts "[format %-30s $base] enabled=$en"
+            }
+        }
+        enable -
+        disable {
+            if {[llength $args] < 1} { die "plugins $sub: informe o plugin (basename ou path)" }
+            set name [lindex $args 0]
+            set en [expr {$sub eq "enable"}]
+            ::plugins::set_enabled $plugins_file $name $en
+            puts "ok $sub $name"
+        }
+        validate {
+            # Valida por 'source' em interp separado, com libs mínimas.
+            set files [::plugins::discover $screens_dir]
+            set ok 0
+            set fail 0
+            foreach f $files {
+                set i [interp create]
+                interp eval $i [list set ::APP_ROOT $::APP_ROOT]
+                interp eval $i [list lappend ::auto_path [file join $::APP_ROOT lib] [file join $::APP_ROOT screens]]
+                set rc [catch {
+                    interp eval $i [list source [file join $::APP_ROOT lib signature.tcl]]
+                    interp eval $i [list source [file join $::APP_ROOT lib state_machine.tcl]]
+                    interp eval $i [list source $f]
+                } err]
+                interp delete $i
+                if {$rc == 0} {
+                    incr ok
+                    puts "OK  [file tail $f]"
+                } else {
+                    incr fail
+                    puts "FAIL [file tail $f] :: $err"
+                }
+            }
+            puts "Resumo: ok=$ok fail=$fail"
+            if {$fail > 0} { exit 1 }
+        }
+        default {
+            die "plugins: subcomando desconhecido: $sub"
+        }
+    }
+}
+
+proc cmd_record {args} {
+    # replay2 record --out <file> -- <run args...>
+    set out ""
+    set rest {}
+    set sawSep 0
+    set i 0
+    while {$i < [llength $args]} {
+        set a [lindex $args $i]
+        if {$a eq "--"} {
+            set sawSep 1
+            set rest [lrange $args [expr {$i + 1}] end]
+            break
+        }
+        switch -exact -- $a {
+            --out {
+                incr i
+                set out [lindex $args $i]
+            }
+            default {
+                die "record: argumento desconhecido: $a (use --out e --)"
+            }
+        }
+        incr i
+    }
+    if {$out eq ""} { die "record: falta --out <arquivo>" }
+    if {!$sawSep} { die "record: falta separador -- antes dos args do run" }
+
+    # Injeta --record-file para o main.exp
+    cmd_run {*}[concat [list --record-file $out] $rest]
+}
+
+proc cmd_replay {args} {
+    # Reproduz apenas ações gravadas como action_sent(keys) (MVP).
+    set legacy_raw ""
+    set recordFile ""
+    set encoding "utf-8"
+    set translation "crlf"
+
+    set i 0
+    while {$i < [llength $args]} {
+        set a [lindex $args $i]
+        switch -exact -- $a {
+            --legacy-cmd {
+                incr i
+                set legacy_raw [lindex $args $i]
+            }
+            --record {
+                incr i
+                set recordFile [lindex $args $i]
+            }
+            --encoding {
+                incr i
+                set encoding [lindex $args $i]
+            }
+            --translation {
+                incr i
+                set translation [lindex $args $i]
+            }
+            default {
+                die "replay: argumento desconhecido: $a"
+            }
+        }
+        incr i
+    }
+    if {$legacy_raw eq ""} { die "replay: falta --legacy-cmd" }
+    if {$recordFile eq ""} { die "replay: falta --record <arquivo>" }
+    if {![file exists $recordFile]} { die "replay: record não existe: $recordFile" }
+
+    # Parse legacy cmd como lista Tcl
+    set legacy_cmd [lrange $legacy_raw 0 end]
+    eval [linsert $legacy_cmd 0 spawn -nottycopy -nottyinit]
+    fconfigure $spawn_id -encoding $encoding -translation $translation
+
+    set f [open $recordFile r]
+    set sent 0
+    while {[gets $f line] >= 0} {
+        set line [string trim $line]
+        if {$line eq ""} { continue }
+        set ev [lindex $line 0]
+        if {[catch {dict size $ev}]} { continue }
+        if {![dict exists $ev type]} { continue }
+        if {[dict get $ev type] ne "action_sent"} { continue }
+        if {![dict exists $ev keys]} { continue }
+        set keys [dict get $ev keys]
+        ::action::send_keys $spawn_id $keys
+        incr sent
+    }
+    close $f
+    puts "Replayed action_sent count=$sent"
+}
+
+proc cmd_control_attach {args} {
+    set host "127.0.0.1"
+    set port ""
+    set i 0
+    while {$i < [llength $args]} {
+        set a [lindex $args $i]
+        switch -exact -- $a {
+            --host { incr i; set host [lindex $args $i] }
+            --port { incr i; set port [lindex $args $i] }
+            default { die "control attach: argumento desconhecido: $a" }
+        }
+        incr i
+    }
+    if {$port eq ""} { die "control attach: falta --port" }
+
+    set s [socket $host $port]
+    fconfigure $s -buffering line -translation lf
+    # Mostra greeting
+    if {[gets $s line] >= 0} { puts $line }
+    puts "Digite comandos (status/pause/resume/step/send <keys>/dump/quit). Ctrl-D para sair."
+
+    # Loop simples: stdin -> socket, socket -> stdout
+    fileevent $s readable [list apply {{chan} {
+        if {[eof $chan]} { exit 0 }
+        while {[gets $chan l] >= 0} { puts $l }
+    }} $s]
+
+    while {![eof stdin]} {
+        if {[gets stdin l] < 0} { break }
+        puts $s $l
+        flush $s
+        after 10
+        update
+    }
+    catch {close $s}
+}
+
+proc cmd_tui {args} {
+    set host "127.0.0.1"
+    set port ""
+    set mode "norm"  ;# norm|raw|status
+
+    set i 0
+    while {$i < [llength $args]} {
+        set a [lindex $args $i]
+        switch -exact -- $a {
+            --host { incr i; set host [lindex $args $i] }
+            --port { incr i; set port [lindex $args $i] }
+            --mode { incr i; set mode [string tolower [lindex $args $i]] }
+            default { die "tui: argumento desconhecido: $a" }
+        }
+        incr i
+    }
+    if {$port eq ""} { die "tui: falta --port" }
+    if {$mode ni {"norm" "raw" "status"}} { die "tui: --mode inválido (norm|raw|status)" }
+
+    proc _tui_unescape {s} {
+        set out $s
+        regsub -all {\\\\} $out {\\} out
+        regsub -all {\\n}  $out "\n" out
+        regsub -all {\\r}  $out "\r" out
+        regsub -all {\\t}  $out "\t" out
+        return $out
+    }
+
+    proc _tui_clear {} {
+        puts -nonewline "\033\[2J\033\[H"
+        flush stdout
+    }
+
+    set s [socket $host $port]
+    fconfigure $s -buffering line -translation lf -blocking 0
+
+    # terminal input em modo char
+    catch {fconfigure stdin -translation binary -buffering none -blocking 0}
+
+    set greeting ""
+    after 50
+    if {[gets $s greeting] >= 0} {
+        # ignora greeting na UI, mas mostra em log inicial
+    }
+
+    set lastStatus ""
+    set lastBody ""
+
+    proc _tui_render {mode status body} {
+        _tui_clear
+        puts "dakota-replay2 TUI (mode=$mode)"
+        puts "Keys: p=pause  r=resume  s=step  d=dump  k=send_keys  1=status 2=norm 3=raw  q=quit"
+        puts ""
+        if {$status ne ""} {
+            puts "STATUS: $status"
+            puts ""
+        }
+        puts $body
+        flush stdout
+    }
+
+    proc _tui_send_line {sock line} {
+        puts $sock $line
+        flush $sock
+    }
+
+    # Loop
+    set tick 0
+    while {1} {
+        incr tick
+
+        # Poll socket responses
+        while {[gets $s line] >= 0} {
+            if {[string match "SCREEN *" $line]} {
+                # SCREEN <raw|norm> <escaped>
+                set which [lindex $line 1]
+                set payload [string range $line [string first " " $line] end]
+                # payload começa em " raw ..." ou " norm ..."
+                set payload [string trim [string range $payload [string first " " $payload] end]]
+                set lastBody [_tui_unescape $payload]
+            } elseif {$line ne ""} {
+                set lastStatus $line
+            }
+        }
+
+        # Atualiza status com frequência
+        if {$tick % 5 == 0} {
+            _tui_send_line $s "status"
+            if {$mode ne "status"} {
+                _tui_send_line $s "screen $mode"
+            }
+        }
+
+        # Render
+        if {$tick % 5 == 0} {
+            set body ""
+            if {$mode eq "status"} {
+                set body "(sem tela - apenas status)"
+            } else {
+                set body $lastBody
+            }
+            _tui_render $mode $lastStatus $body
+        }
+
+        # Keyboard handling (1 char)
+        set ch [read stdin 1]
+        if {$ch ne ""} {
+            switch -exact -- $ch {
+                "q" {
+                    _tui_send_line $s "quit"
+                    break
+                }
+                "p" { _tui_send_line $s "pause" }
+                "r" { _tui_send_line $s "resume" }
+                "s" { _tui_send_line $s "step" }
+                "d" { _tui_send_line $s "dump" }
+                "1" { set mode "status" }
+                "2" { set mode "norm" }
+                "3" { set mode "raw" }
+                "k" {
+                    # Prompt bloqueante simples
+                    catch {fconfigure stdin -blocking 1 -buffering line -translation lf}
+                    puts -nonewline "\nkeys> "
+                    flush stdout
+                    if {[gets stdin line] >= 0} {
+                        _tui_send_line $s "send $line"
+                    }
+                    catch {fconfigure stdin -translation binary -buffering none -blocking 0}
+                }
+                default {
+                    # ignora
+                }
+            }
+        }
+
+        after 50
+        update
+    }
+
+    catch {close $s}
+}
+
+# Entrypoint
+if {[llength $::argv] < 1} {
+    # Compat: sem subcomando => run
+    cmd_run {*}$::argv
+    exit 0
+}
+
+set cmd [lindex $::argv 0]
+set args [lrange $::argv 1 end]
+
+switch -exact -- $cmd {
+    run {
+        cmd_run {*}$args
+    }
+    doctor {
+        cmd_doctor
+    }
+    signature {
+        cmd_signature {*}$args
+    }
+    inspect {
+        if {[llength $args] < 2} { die "inspect: use 'inspect dump <dir>'" }
+        set sub [lindex $args 0]
+        if {$sub ne "dump"} { die "inspect: subcomando inválido: $sub" }
+        cmd_inspect_dump [lindex $args 1]
+    }
+    plugins {
+        if {[llength $args] < 1} { die "plugins: subcomando requerido" }
+        cmd_plugins [lindex $args 0] {*}[lrange $args 1 end]
+    }
+    record {
+        cmd_record {*}$args
+    }
+    replay {
+        cmd_replay {*}$args
+    }
+    control {
+        if {[llength $args] < 1} { die "control: subcomando requerido" }
+        set sub [lindex $args 0]
+        if {$sub ne "attach"} { die "control: use 'control attach'" }
+        cmd_control_attach {*}[lrange $args 1 end]
+    }
+    tui {
+        cmd_tui {*}$args
+    }
+    --help -
+    -h {
+        puts [usage]
+    }
+    default {
+        die "comando desconhecido: $cmd"
+    }
+}
+

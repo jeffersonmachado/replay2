@@ -37,9 +37,9 @@ proc ::screen_menu::handler {spawn_id state signature norm_screen} {
     }
 
     puts ">> [clock format [clock seconds]] - Detectada tela de MENU (state=$state)"
-    fconfigure $spawn_id -encoding utf-8 -translation crlf
-    send -- "3\n"
-    after 500
+    ::action::configure_channel $spawn_id -encoding utf-8 -translation crlf
+    ::action::send_keys $spawn_id "3\n"
+    ::action::sleep_ms 500
     puts ">> Fluxo de exemplo concluído. Encerrando."
     exit 0
 }

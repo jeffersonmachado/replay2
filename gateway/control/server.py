@@ -527,26 +527,32 @@ class Handler(BaseHTTPRequestHandler):
         return c[name].value
 
     def _auth(self):
-        cv = self._get_cookie("dakota_session")
-        if not cv:
-            return None
-        parsed = auth.verify_cookie(self.server.cookie_secret, cv)
-        if not parsed:
-            return None
-        username, token, exp = parsed
-        con = self._db()
-        try:
-            row = query_one(con, "SELECT u.id,u.username,u.role,s.token_hash,s.expires_at_ms FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.username=?",
-                            (username,))
-            if not row:
-                return None
-            if int(row["expires_at_ms"]) < int(time.time() * 1000):
-                return None
-            if row["token_hash"] != auth.sha256_hex(token.encode("utf-8")):
-                return None
-            return {"id": int(row["id"]), "username": row["username"], "role": row["role"]}
-        finally:
-            self._db_release(con)
+      cv = self._get_cookie("dakota_session")
+      if not cv:
+        return None
+      parsed = auth.verify_cookie(self.server.cookie_secret, cv)
+      if not parsed:
+        return None
+
+      username, token, _exp = parsed
+      token_hash = auth.sha256_hex(token.encode("utf-8"))
+      con = self._db()
+      try:
+        row = query_one(
+          con,
+          "SELECT u.id,u.username,u.role,s.expires_at_ms "
+          "FROM users u JOIN sessions s ON s.user_id=u.id "
+          "WHERE u.username=? AND s.token_hash=? "
+          "ORDER BY s.id DESC LIMIT 1",
+          (username, token_hash),
+        )
+        if not row:
+          return None
+        if int(row["expires_at_ms"]) < int(time.time() * 1000):
+          return None
+        return {"id": int(row["id"]), "username": row["username"], "role": row["role"]}
+      finally:
+        self._db_release(con)
 
     def _require(self, roles: set[str] | None = None):
         u = self._auth()

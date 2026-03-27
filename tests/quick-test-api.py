@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import sys
+import http.client
 import http.cookiejar
 from pathlib import Path
 from urllib.request import Request, build_opener, HTTPCookieProcessor
@@ -231,6 +232,39 @@ def main():
             passed += 1
         else:
             log_fail(f"status {status}, expected 401")
+            failed += 1
+    except Exception as e:
+        log_fail(str(e))
+        failed += 1
+
+    # Test 8: Manual Cookie header should work for simple HTTP clients
+    log_test("manual Cookie header round-trip")
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=5)
+        conn.request(
+            "POST",
+            "/api/login",
+            json.dumps({"username": "admin", "password": "admin123"}),
+            {"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        set_cookie = resp.getheader("Set-Cookie") or ""
+        resp.read()
+        conn.close()
+
+        cookie_pair = set_cookie.split(";", 1)[0]
+        conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=5)
+        conn.request("GET", "/api/me", headers={"Cookie": cookie_pair})
+        resp = conn.getresponse()
+        body = resp.read().decode()
+        conn.close()
+        data = json.loads(body) if body else {}
+
+        if resp.status == 200 and data.get("username") == "admin" and '"' not in cookie_pair:
+            log_pass()
+            passed += 1
+        else:
+            log_fail(f"status {resp.status}, cookie={cookie_pair}")
             failed += 1
     except Exception as e:
         log_fail(str(e))

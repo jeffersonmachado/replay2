@@ -53,12 +53,15 @@ def sign_cookie(secret: bytes, username: str, token: str, expires_at_ms: int) ->
     payload = f"{username}|{token}|{expires_at_ms}".encode("utf-8")
     sig = hmac.new(secret, payload, hashlib.sha256).hexdigest()
     raw = f"{username}|{token}|{expires_at_ms}|{sig}".encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii")
+    # Strip base64 padding so the cookie value stays token-safe and avoids quoting
+    # in Set-Cookie headers, which makes non-browser HTTP clients easier to use.
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
 def verify_cookie(secret: bytes, cookie_val: str) -> tuple[str, str, int] | None:
     try:
-        raw = base64.urlsafe_b64decode(cookie_val.encode("ascii"))
+        padded = cookie_val + ("=" * (-len(cookie_val) % 4))
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
         parts = raw.decode("utf-8").split("|")
         if len(parts) != 4:
             return None

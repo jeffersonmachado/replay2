@@ -34,7 +34,8 @@ INDEX_HTML = """<!doctype html>
 <html><head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dakota Replay Control</title>
+<title>Dakota Calçados | Replay Control</title>
+<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.12),_transparent_28%),linear-gradient(135deg,_#1c1917_0%,_#292524_46%,_#111827_100%)] text-stone-100">
@@ -60,6 +61,29 @@ INDEX_HTML = """<!doctype html>
         <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
           <div class="rounded-full border border-stone-700 bg-stone-900/70 px-4 py-2 text-sm text-stone-300" id="me"></div>
           <button onclick="logout()" class="rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-medium text-amber-100 transition hover:bg-amber-300/20">Logout</button>
+        </div>
+      </div>
+
+      <div class="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-2xl border border-stone-800 bg-stone-900/55 px-4 py-4">
+          <p class="text-xs uppercase tracking-[0.2em] text-stone-500">Total de runs</p>
+          <p id="metric_total" class="mt-2 text-3xl font-semibold text-stone-50">0</p>
+          <p class="mt-1 text-sm text-stone-400">Volume atual monitorado</p>
+        </div>
+        <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-4">
+          <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Em execução</p>
+          <p id="metric_running" class="mt-2 text-3xl font-semibold text-emerald-100">0</p>
+          <p class="mt-1 text-sm text-emerald-100/70">Runs ativas agora</p>
+        </div>
+        <div class="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-4">
+          <p class="text-xs uppercase tracking-[0.2em] text-amber-200/80">Na fila</p>
+          <p id="metric_queued" class="mt-2 text-3xl font-semibold text-amber-100">0</p>
+          <p class="mt-1 text-sm text-amber-100/70">Aguardando processamento</p>
+        </div>
+        <div class="rounded-2xl border border-rose-500/20 bg-rose-500/8 px-4 py-4">
+          <p class="text-xs uppercase tracking-[0.2em] text-rose-200/80">Com falha</p>
+          <p id="metric_failed" class="mt-2 text-3xl font-semibold text-rose-100">0</p>
+          <p class="mt-1 text-sm text-rose-100/70">Exigem atenção operacional</p>
         </div>
       </div>
     </div>
@@ -126,7 +150,7 @@ INDEX_HTML = """<!doctype html>
       <div class="mb-4 flex items-center justify-between">
         <div>
           <h2 class="text-lg font-semibold text-stone-100">Fila de execuções</h2>
-          <p class="text-sm text-stone-400">Visão consolidada dos runs criados, andamento e ações operacionais.</p>
+          <p class="text-sm text-stone-400">Visão consolidada dos runs criados, andamento, progresso e ações operacionais.</p>
         </div>
       </div>
 
@@ -138,6 +162,7 @@ INDEX_HTML = """<!doctype html>
                 <th class="px-4 py-4">id</th>
                 <th class="px-4 py-4">status</th>
                 <th class="px-4 py-4">created_at</th>
+                <th class="px-4 py-4">progresso</th>
                 <th class="px-4 py-4">params</th>
                 <th class="px-4 py-4">ações</th>
               </tr>
@@ -170,16 +195,43 @@ async function loadRuns() {
   const d = await r.json();
   const rows = document.getElementById('rows');
   rows.innerHTML='';
+    const allRuns = d.runs || [];
     const statusFilter = (document.getElementById('filter_status').value || '').trim().toLowerCase();
     const filteredRuns = statusFilter
-        ? d.runs.filter(r => String(r.status || '').toLowerCase().includes(statusFilter))
-        : d.runs;
+        ? allRuns.filter(r => String(r.status || '').toLowerCase().includes(statusFilter))
+        : allRuns;
+
+    const runningCount = allRuns.filter(r => ['running', 'resuming'].includes(String(r.status || '').toLowerCase())).length;
+    const queuedCount = allRuns.filter(r => ['queued', 'pending'].includes(String(r.status || '').toLowerCase())).length;
+    const failedCount = allRuns.filter(r => ['failed', 'canceled', 'cancelled'].includes(String(r.status || '').toLowerCase())).length;
+    document.getElementById('metric_total').textContent = String(allRuns.length);
+    document.getElementById('metric_running').textContent = String(runningCount);
+    document.getElementById('metric_queued').textContent = String(queuedCount);
+    document.getElementById('metric_failed').textContent = String(failedCount);
+
+    if (!filteredRuns.length) {
+      rows.innerHTML = `
+        <tr>
+          <td colspan="6" class="px-6 py-14 text-center">
+            <div class="mx-auto max-w-md rounded-3xl border border-dashed border-stone-700 bg-stone-900/40 px-6 py-10">
+              <p class="text-sm font-medium uppercase tracking-[0.2em] text-stone-500">Sem resultados</p>
+              <p class="mt-2 text-lg font-semibold text-stone-200">Nenhuma run encontrada para o filtro atual.</p>
+              <p class="mt-2 text-sm text-stone-400">Ajuste o filtro ou crie uma nova execução para visualizar dados operacionais.</p>
+            </div>
+          </td>
+        </tr>`;
+      document.getElementById('status').textContent = `runs: 0/${allRuns.length}`;
+      return;
+    }
 
     for (const run of filteredRuns) {
     const tr = document.createElement('tr');
     tr.className = 'align-top text-stone-200 hover:bg-white/[0.02]';
     const created = new Date(run.created_at_ms).toLocaleString();
     let extra = '';
+    let progressValue = 0;
+    let sessionsOk = 0;
+    let sessionsFailed = 0;
     try {
       if (run.params_json) {
         const pj = JSON.parse(run.params_json);
@@ -189,11 +241,37 @@ async function loadRuns() {
       }
       if (run.metrics_json) {
         const mj = JSON.parse(run.metrics_json);
-        extra += `<br/>progress=${escapeHtml(mj.last_seq_global_applied||0)}`;
-        extra += `<br/>sess_ok=${escapeHtml(mj.sessions_success||0)} fail=${escapeHtml(mj.sessions_failed||0)}`;
+        progressValue = Number(mj.last_seq_global_applied || 0);
+        sessionsOk = Number(mj.sessions_success || 0);
+        sessionsFailed = Number(mj.sessions_failed || 0);
+        extra += `<br/>progress=${escapeHtml(progressValue)}`;
+        extra += `<br/>sess_ok=${escapeHtml(sessionsOk)} fail=${escapeHtml(sessionsFailed)}`;
       }
     } catch(e) {}
     const params = `<div class="font-mono text-xs leading-6 text-stone-400">log_dir=${escapeHtml(run.log_dir)}<br/>target=${escapeHtml(run.target_user)}@${escapeHtml(run.target_host)}<br/>mode=${escapeHtml(run.mode)}${extra}</div>`;
+    const statusValue = String(run.status || '').toLowerCase();
+    const statusClass = statusValue === 'running' || statusValue === 'resuming'
+      ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100'
+      : statusValue === 'queued' || statusValue === 'pending'
+      ? 'border-amber-300/20 bg-amber-300/10 text-amber-100'
+      : statusValue === 'failed' || statusValue === 'canceled' || statusValue === 'cancelled'
+      ? 'border-rose-300/20 bg-rose-300/10 text-rose-100'
+      : 'border-sky-300/20 bg-sky-300/10 text-sky-100';
+    const progressPercent = Math.max(0, Math.min(100, progressValue > 0 ? progressValue % 101 : 0));
+    const progress = `
+      <div class="min-w-[170px]">
+        <div class="flex items-center justify-between text-xs text-stone-400">
+          <span>seq ${escapeHtml(progressValue)}</span>
+          <span>${escapeHtml(progressPercent)}%</span>
+        </div>
+        <div class="mt-2 h-2 overflow-hidden rounded-full bg-stone-800">
+          <div class="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" style="width:${progressPercent}%"></div>
+        </div>
+        <div class="mt-2 flex gap-3 text-[11px] uppercase tracking-[0.14em] text-stone-500">
+          <span>ok ${escapeHtml(sessionsOk)}</span>
+          <span>fail ${escapeHtml(sessionsFailed)}</span>
+        </div>
+      </div>`;
     const actions = `
       <div class="flex flex-wrap gap-2">
         <button class="rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-400/20" onclick="startRun(${run.id})">start</button>
@@ -205,14 +283,15 @@ async function loadRuns() {
     `;
     tr.innerHTML = `
       <td class="px-4 py-4"><code class="rounded-lg bg-stone-800 px-2 py-1 text-amber-200">${run.id}</code></td>
-      <td class="px-4 py-4"><span class="inline-flex rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs font-medium text-amber-100">${escapeHtml(run.status)}</span></td>
+      <td class="px-4 py-4"><span class="inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusClass}">${escapeHtml(run.status)}</span></td>
       <td class="px-4 py-4 text-stone-300">${created}</td>
+      <td class="px-4 py-4">${progress}</td>
       <td class="px-4 py-4">${params}</td>
       <td class="px-4 py-4">${actions}</td>
     `;
     rows.appendChild(tr);
   }
-    document.getElementById('status').textContent = `runs: ${filteredRuns.length}/${d.runs.length}`;
+    document.getElementById('status').textContent = `runs: ${filteredRuns.length}/${allRuns.length}`;
 }
 
 function escapeHtml(s) {
@@ -288,7 +367,8 @@ document.getElementById('filter_status').addEventListener('input', loadRuns);
 
 LOGIN_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Dakota Replay - Login</title>
+<title>Dakota Calçados | Replay Control</title>
+<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }

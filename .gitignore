@@ -6,3 +6,7 @@ tests/tmp/
 __pycache__/
 *.pyc
 *.pyo
+
+# Local control-plane runtime artifacts
+.local-secrets/
+gateway/state/

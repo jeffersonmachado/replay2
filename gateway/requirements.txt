@@ -1,0 +1,14 @@
+# Dakota Gateway dependencies - minimal for core functionality
+# No external deps required for core, but these are for development/testing
+
+# Optional: for improved testing
+pytest>=7.0,<9.0
+pytest-cov>=4.0,<5.0
+
+# Optional: code quality
+pylint>=2.16,<4.0
+flake8>=5.0,<7.0
+black>=23.0,<25.0
+
+# Optional: performance testing
+locust>=2.0,<3.0

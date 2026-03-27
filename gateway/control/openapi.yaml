@@ -1,0 +1,161 @@
+openapi: 3.0.3
+info:
+  title: Dakota Replay2 Control API
+  version: 0.2.0
+servers:
+  - url: http://127.0.0.1:8090
+paths:
+  /api/login:
+    post:
+      summary: Authenticate user and set session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Authenticated }
+        '401': { description: Invalid credentials }
+  /api/logout:
+    post:
+      summary: Logout and clear session cookie
+      responses:
+        '200': { description: Logged out }
+  /api/me:
+    get:
+      summary: Get current authenticated user
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  username: { type: string }
+                  role: { type: string }
+        '401': { description: Unauthorized }
+  /api/runs:
+    get:
+      summary: List replay runs
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 200 }
+      responses:
+        '200': { description: Runs listed }
+        '401': { description: Unauthorized }
+    post:
+      summary: Create replay run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [log_dir, target_host, target_user, mode]
+              properties:
+                log_dir: { type: string }
+                target_host: { type: string }
+                target_user: { type: string }
+                target_command: { type: string }
+                mode:
+                  type: string
+                  enum: [strict-global, parallel-sessions]
+                params:
+                  type: object
+      responses:
+        '200': { description: Created }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+  /api/runs/{id}/events:
+    get:
+      summary: List run events
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Events listed }
+        '401': { description: Unauthorized }
+  /api/runs/{id}/start:
+    post:
+      summary: Start queued run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Started }
+  /api/runs/{id}/pause:
+    post:
+      summary: Pause running run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Paused }
+  /api/runs/{id}/resume:
+    post:
+      summary: Resume paused run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Resumed }
+  /api/runs/{id}/cancel:
+    post:
+      summary: Cancel run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Cancelled }
+  /api/runs/{id}/retry:
+    post:
+      summary: Create a retry run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Retry created }
+  /api/users:
+    get:
+      summary: List users (admin)
+      responses:
+        '200': { description: Users listed }
+        '403': { description: Forbidden }
+    post:
+      summary: Create user (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                role:
+                  type: string
+                  enum: [admin, operator, viewer]
+      responses:
+        '200': { description: User created }
+        '400': { description: Invalid input }

@@ -116,4 +116,71 @@ DEPS_EXPECT=expect DEPS_TCL=tcl ./install.sh --prefix /opt/dakota-replay2
 sudo /opt/dakota-replay2/uninstall.sh
 ```
 
+## Gestão Web e APIs
+
+Control Server (gerenciamento de replays):
+
+```bash
+python3 gateway/control/server.py \
+	--listen 127.0.0.1:8090 \
+	--cookie-secret-file /caminho/cookie.secret \
+	--hmac-key-file /caminho/hmac.key \
+	--bootstrap-admin admin:admin123
+```
+
+Dashboard (eventos em tempo real):
+
+```bash
+python3 dashboard/server.py --events-file /caminho/events.jsonl --listen 127.0.0.1:8080
+```
+
+Especificação OpenAPI disponível em:
+
+- `gateway/control/openapi.yaml`
+
+## Testes Web
+
+Teste rápido de API:
+
+```bash
+python3 tests/quick-test-api.py
+```
+
+Teste de browser (Selenium):
+
+```bash
+python3 tests/test_web_ui_selenium.py
+```
+
+## Performance
+
+Benchmark de captura/normalização/assinatura:
+
+```bash
+tclsh tests/benchmark.tcl
+```
+
+## Troubleshooting
+
+- Erro `ModuleNotFoundError: dakota_gateway`: rode os comandos a partir da raiz do projeto.
+- Erro de login `401` após autenticar: verifique relógio do host e validade do cookie.
+- SQLite com lock: confirme uso de WAL e `busy_timeout` (já habilitados por padrão).
+- Selenium falhando no CI: valide se `chromium/chromedriver` estão instalados no runner.
+
+## CI/CD
+
+Pipeline em `GitHub Actions`:
+
+- Testes Tcl
+- Testes Python de integridade
+- Testes API
+- Benchmark de performance
+- Lint Python
+- Coverage report
+- Smoke test de UI com Selenium (best effort)
+
+Arquivo:
+
+- `.github/workflows/ci.yml`
+
 

@@ -34,75 +34,121 @@ INDEX_HTML = """<!doctype html>
 <html><head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Replay Control</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:16px;}
-header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
-table{width:100%;border-collapse:collapse;margin-top:12px;}
-th,td{border-bottom:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;}
-th{position:sticky;top:0;background:#fff;}
-code{background:#f3f4f6;padding:2px 4px;border-radius:4px;}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
-input,select{padding:6px 8px;}
-button{padding:6px 10px;}
-.pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;}
-.muted{color:#6b7280;}
-</style>
+<title>Dakota Replay Control</title>
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-<header>
-  <h2 style="margin:0">Replay Control</h2>
-  <div class="row">
-    <span class="muted" id="me"></span>
-    <button onclick="logout()">Logout</button>
-  </div>
-</header>
-
-<div class="row" style="margin-top:12px">
-  <input id="log_dir" placeholder="log_dir (ex: /var/log/dakota-gateway)" size="40"/>
-  <input id="target_host" placeholder="target_host" size="18"/>
-  <input id="target_user" placeholder="target_user" size="12"/>
-  <input id="target_cmd" placeholder="target_command (opcional)" size="18"/>
-  <select id="mode">
-    <option value="strict-global">strict-global</option>
-    <option value="parallel-sessions">parallel-sessions</option>
-  </select>
-  <input id="concurrency" placeholder="concurrency (ex: 20)" size="14"/>
-  <input id="ramp" placeholder="ramp-up/s (ex: 2)" size="12"/>
-  <input id="speed" placeholder="speed (ex: 4)" size="10"/>
-  <input id="jitter" placeholder="jitter ms" size="10"/>
-  <input id="user_pool" placeholder="user pool csv (replay01,replay02,...)" size="28"/>
-  <select id="on_mismatch">
-    <option value="continue">on mismatch: continue</option>
-    <option value="fail-fast">on mismatch: fail-fast</option>
-  </select>
-  <button onclick="createRun()">Criar run</button>
-  <span class="muted" id="status"></span>
+<body class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.12),_transparent_28%),linear-gradient(135deg,_#1c1917_0%,_#292524_46%,_#111827_100%)] text-stone-100">
+<div class="fixed inset-0 pointer-events-none overflow-hidden">
+  <div class="absolute -top-24 -left-16 h-72 w-72 rounded-full bg-amber-300/10 blur-3xl"></div>
+  <div class="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-orange-400/10 blur-3xl"></div>
 </div>
 
-<div class="row" style="margin-top:8px">
-    <input id="filter_status" placeholder="filtrar status (running, failed...)" size="30"/>
-    <label><input id="auto_refresh" type="checkbox" checked/> auto-refresh</label>
-</div>
+<main class="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+  <section class="rounded-[28px] border border-stone-700/50 bg-stone-950/65 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-md overflow-hidden">
+    <div class="border-b border-stone-800/80 px-6 py-5 sm:px-8">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex items-center gap-4">
+          <div class="rounded-2xl bg-white px-5 py-4 ring-1 ring-stone-200/80 shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
+            <img src="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" alt="Dakota" class="h-7 w-auto" loading="eager" referrerpolicy="no-referrer" />
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.24em] text-amber-200/80">Replay Control</p>
+            <h1 class="mt-1 text-2xl font-semibold tracking-[0.18em] text-stone-50 sm:text-3xl">Painel Operacional</h1>
+            <p class="mt-1 text-sm text-stone-300">Automação e governança de execuções para Dakota Calçados.</p>
+          </div>
+        </div>
+        <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+          <div class="rounded-full border border-stone-700 bg-stone-900/70 px-4 py-2 text-sm text-stone-300" id="me"></div>
+          <button onclick="logout()" class="rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-medium text-amber-100 transition hover:bg-amber-300/20">Logout</button>
+        </div>
+      </div>
+    </div>
 
-<table>
-  <thead><tr>
-    <th style="width:80px">id</th>
-    <th style="width:130px">status</th>
-    <th style="width:170px">created_at</th>
-    <th>params</th>
-    <th style="width:240px">ações</th>
-  </tr></thead>
-  <tbody id="rows"></tbody>
-</table>
+    <div class="grid gap-6 px-6 py-6 sm:px-8 lg:grid-cols-[1.2fr_0.8fr]">
+      <section class="rounded-3xl border border-stone-800 bg-stone-900/60 p-5 shadow-inner shadow-black/20">
+        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-stone-100">Criar nova run</h2>
+            <p class="text-sm text-stone-400">Configure a execução e envie para a fila operacional.</p>
+          </div>
+          <div class="text-sm text-stone-400" id="status"></div>
+        </div>
 
-<h3>Detalhe</h3>
-<div class="row">
-  <input id="detail_id" placeholder="run id" size="8"/>
-  <button onclick="loadDetail()">Carregar</button>
-</div>
-<pre id="detail" class="muted" style="white-space:pre-wrap"></pre>
-<pre id="events" class="muted" style="white-space:pre-wrap"></pre>
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <input id="log_dir" placeholder="log_dir (ex: /var/log/dakota-gateway)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 xl:col-span-2"/>
+          <input id="target_host" placeholder="target_host" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="target_user" placeholder="target_user" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="target_cmd" placeholder="target_command (opcional)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 md:col-span-2 xl:col-span-2"/>
+          <select id="mode" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40">
+            <option value="strict-global">strict-global</option>
+            <option value="parallel-sessions">parallel-sessions</option>
+          </select>
+          <select id="on_mismatch" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40">
+            <option value="continue">on mismatch: continue</option>
+            <option value="fail-fast">on mismatch: fail-fast</option>
+          </select>
+          <input id="concurrency" placeholder="concurrency (ex: 20)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="ramp" placeholder="ramp-up/s (ex: 2)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="speed" placeholder="speed (ex: 4)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="jitter" placeholder="jitter ms" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <input id="user_pool" placeholder="user pool csv (replay01,replay02,...)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 md:col-span-2 xl:col-span-2"/>
+        </div>
+
+        <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex flex-wrap items-center gap-3 text-sm text-stone-300">
+            <input id="filter_status" placeholder="filtrar status (running, failed...)" class="min-w-[240px] rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+            <label class="inline-flex items-center gap-2 rounded-full border border-stone-700 bg-stone-950/70 px-4 py-2">
+              <input id="auto_refresh" type="checkbox" checked class="h-4 w-4 rounded border-stone-600 bg-stone-900 text-amber-300 focus:ring-amber-300/40"/>
+              auto-refresh
+            </label>
+          </div>
+          <button onclick="createRun()" class="rounded-xl bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 px-5 py-3 text-sm font-semibold text-stone-950 shadow-lg shadow-orange-950/30 transition hover:brightness-105">Criar run</button>
+        </div>
+      </section>
+
+      <section class="rounded-3xl border border-stone-800 bg-stone-900/60 p-5 shadow-inner shadow-black/20">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold text-stone-100">Detalhe da run</h2>
+          <p class="text-sm text-stone-400">Carregue o contexto e os últimos eventos de uma execução específica.</p>
+        </div>
+        <div class="flex gap-3">
+          <input id="detail_id" placeholder="run id" class="w-28 rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
+          <button onclick="loadDetail()" class="rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm font-medium text-amber-100 transition hover:bg-amber-300/20">Carregar</button>
+        </div>
+        <div class="mt-4 space-y-4">
+          <pre id="detail" class="max-h-64 overflow-auto rounded-2xl border border-stone-800 bg-stone-950/90 p-4 text-xs leading-6 text-stone-300 whitespace-pre-wrap"></pre>
+          <pre id="events" class="max-h-64 overflow-auto rounded-2xl border border-stone-800 bg-stone-950/90 p-4 text-xs leading-6 text-stone-300 whitespace-pre-wrap"></pre>
+        </div>
+      </section>
+    </div>
+
+    <div class="border-t border-stone-800/80 px-6 py-6 sm:px-8">
+      <div class="mb-4 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-stone-100">Fila de execuções</h2>
+          <p class="text-sm text-stone-400">Visão consolidada dos runs criados, andamento e ações operacionais.</p>
+        </div>
+      </div>
+
+      <div class="overflow-hidden rounded-3xl border border-stone-800 bg-stone-950/70">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-stone-800 text-sm">
+            <thead class="bg-stone-900/95 text-left text-xs uppercase tracking-[0.18em] text-stone-400">
+              <tr>
+                <th class="px-4 py-4">id</th>
+                <th class="px-4 py-4">status</th>
+                <th class="px-4 py-4">created_at</th>
+                <th class="px-4 py-4">params</th>
+                <th class="px-4 py-4">ações</th>
+              </tr>
+            </thead>
+            <tbody id="rows" class="divide-y divide-stone-800"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
 
 <script>
 async function api(path, opts={}) {
@@ -131,6 +177,7 @@ async function loadRuns() {
 
     for (const run of filteredRuns) {
     const tr = document.createElement('tr');
+    tr.className = 'align-top text-stone-200 hover:bg-white/[0.02]';
     const created = new Date(run.created_at_ms).toLocaleString();
     let extra = '';
     try {
@@ -146,20 +193,22 @@ async function loadRuns() {
         extra += `<br/>sess_ok=${escapeHtml(mj.sessions_success||0)} fail=${escapeHtml(mj.sessions_failed||0)}`;
       }
     } catch(e) {}
-    const params = `<div class="muted mono">log_dir=${escapeHtml(run.log_dir)}<br/>target=${escapeHtml(run.target_user)}@${escapeHtml(run.target_host)}<br/>mode=${escapeHtml(run.mode)}${extra}</div>`;
+    const params = `<div class="font-mono text-xs leading-6 text-stone-400">log_dir=${escapeHtml(run.log_dir)}<br/>target=${escapeHtml(run.target_user)}@${escapeHtml(run.target_host)}<br/>mode=${escapeHtml(run.mode)}${extra}</div>`;
     const actions = `
-      <button onclick="startRun(${run.id})">start</button>
-      <button onclick="pauseRun(${run.id})">pause</button>
-      <button onclick="resumeRun(${run.id})">resume</button>
-      <button onclick="cancelRun(${run.id})">cancel</button>
-      <button onclick="retryRun(${run.id})">retry</button>
+      <div class="flex flex-wrap gap-2">
+        <button class="rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-400/20" onclick="startRun(${run.id})">start</button>
+        <button class="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-400/20" onclick="pauseRun(${run.id})">pause</button>
+        <button class="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-400/20" onclick="resumeRun(${run.id})">resume</button>
+        <button class="rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition hover:bg-rose-400/20" onclick="cancelRun(${run.id})">cancel</button>
+        <button class="rounded-lg border border-violet-400/20 bg-violet-400/10 px-3 py-1.5 text-xs font-medium text-violet-200 transition hover:bg-violet-400/20" onclick="retryRun(${run.id})">retry</button>
+      </div>
     `;
     tr.innerHTML = `
-      <td><code>${run.id}</code></td>
-      <td><span class="pill">${escapeHtml(run.status)}</span></td>
-      <td>${created}</td>
-      <td>${params}</td>
-      <td>${actions}</td>
+      <td class="px-4 py-4"><code class="rounded-lg bg-stone-800 px-2 py-1 text-amber-200">${run.id}</code></td>
+      <td class="px-4 py-4"><span class="inline-flex rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs font-medium text-amber-100">${escapeHtml(run.status)}</span></td>
+      <td class="px-4 py-4 text-stone-300">${created}</td>
+      <td class="px-4 py-4">${params}</td>
+      <td class="px-4 py-4">${actions}</td>
     `;
     rows.appendChild(tr);
   }
@@ -246,61 +295,63 @@ LOGIN_HTML = """<!doctype html>
   .fade-in { animation: fadeIn 0.5s ease-in; }
 </style>
 </head>
-<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center min-h-screen">
+<body class="bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_32%),linear-gradient(135deg,_#1c1917_0%,_#292524_42%,_#111827_100%)] flex items-center justify-center min-h-screen">
   <!-- Decorative elements -->
-  <div class="fixed top-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-  <div class="fixed bottom-0 right-0 w-96 h-96 bg-blue-400/10 rounded-full blur-3xl"></div>
+  <div class="fixed top-0 left-0 w-96 h-96 bg-amber-300/10 rounded-full blur-3xl"></div>
+  <div class="fixed bottom-0 right-0 w-96 h-96 bg-orange-400/10 rounded-full blur-3xl"></div>
   
   <div class="relative w-full max-w-md mx-auto px-6 fade-in">
     <!-- Card Container -->
-    <div class="bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl shadow-2xl p-8 space-y-8">
+    <div class="bg-stone-950/65 backdrop-blur-md border border-stone-700/50 rounded-3xl shadow-[0_30px_80px_rgba(0,0,0,0.45)] p-8 space-y-8">
       <!-- Header -->
       <div class="text-center space-y-4">
         <div class="flex justify-center mb-2">
-          <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center">
-            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-            </svg>
+          <div class="bg-white rounded-2xl px-5 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.28)] ring-1 ring-stone-200/80">
+            <img
+              src="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg"
+              alt="Dakota"
+              class="h-7 w-auto"
+              loading="eager"
+              referrerpolicy="no-referrer"
+            />
           </div>
         </div>
-        <h1 class="text-3xl font-bold text-white">Dakota Replay</h1>
-        <p class="text-slate-400 text-sm">Sistema de Automação de Testes</p>
+        <h1 class="text-3xl font-semibold tracking-[0.18em] uppercase text-stone-50">Replay Control</h1>
+        <p class="text-stone-300 text-sm">Sistema interno de automação para Dakota Calçados</p>
       </div>
       
       <!-- Form -->
       <form id="loginForm" class="space-y-4">
         <!-- Username -->
         <div>
-          <label class="block text-sm font-medium text-slate-300 mb-2">Usuário</label>
-          <input id="u" type="text" placeholder="seu usuário" class="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" required/>
+          <label class="block text-sm font-medium text-stone-200 mb-2">Usuário</label>
+          <input id="u" type="text" placeholder="seu usuário" class="w-full px-4 py-3 bg-stone-900/70 border border-stone-700 rounded-xl text-stone-50 placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300 transition" required/>
         </div>
         
         <!-- Password -->
         <div>
-          <label class="block text-sm font-medium text-slate-300 mb-2">Senha</label>
-          <input id="p" type="password" placeholder="sua senha" class="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" required/>
+          <label class="block text-sm font-medium text-stone-200 mb-2">Senha</label>
+          <input id="p" type="password" placeholder="sua senha" class="w-full px-4 py-3 bg-stone-900/70 border border-stone-700 rounded-xl text-stone-50 placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300 transition" required/>
         </div>
         
         <!-- Error Message -->
-        <div id="msg" class="hidden bg-red-500/10 border border-red-500/50 text-red-400 text-sm px-4 py-2 rounded-lg"></div>
+        <div id="msg" class="hidden bg-red-500/10 border border-red-400/40 text-red-300 text-sm px-4 py-3 rounded-xl"></div>
         
         <!-- Submit Button -->
-        <button type="button" onclick="go()" class="w-full mt-6 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Entrar</button>
+        <button type="button" onclick="go()" class="w-full mt-6 bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 hover:from-amber-300 hover:via-orange-300 hover:to-rose-300 text-stone-950 font-semibold py-3 px-4 rounded-xl transition transform hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-amber-300/60 shadow-lg shadow-orange-950/30">Entrar</button>
       </form>
       
       <!-- Footer -->
-      <div class="pt-6 border-t border-slate-700/50 space-y-2 text-center">
-        <p class="text-slate-500 text-xs">Desenvolvido por</p>
-        <div class="flex justify-center gap-2 text-xs">
-          <a href="https://www.dakota.com.br/" target="_blank" class="text-blue-400 hover:text-blue-300 transition">Dakota Calçados</a>
-          <span class="text-slate-600">×</span>
-          <a href="https://www.results.com.br/" target="_blank" class="text-blue-400 hover:text-blue-300 transition">Results</a>
+      <div class="pt-6 border-t border-stone-700/50 space-y-2 text-center">
+        <p class="text-stone-500 text-xs uppercase tracking-[0.18em]">Desenvolvido por</p>
+        <div class="flex justify-center text-sm">
+          <a href="https://www.results.com.br/" target="_blank" class="text-amber-200 hover:text-amber-100 transition font-medium">Results</a>
         </div>
       </div>
     </div>
     
     <!-- Footer text -->
-    <p class="text-center text-slate-500 text-xs mt-8">Sistema seguro • Acesso restrito</p>
+    <p class="text-center text-stone-500 text-xs mt-8">Sistema seguro • Acesso restrito</p>
   </div>
   
   <script>

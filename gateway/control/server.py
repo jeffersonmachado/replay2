@@ -36,7 +36,7 @@ INDEX_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Dakota Calçados | Replay Control</title>
 <link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/assets/tailwind.css" />
 </head>
 <body class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.12),_transparent_28%),linear-gradient(135deg,_#1c1917_0%,_#292524_46%,_#111827_100%)] text-stone-100">
 <div class="fixed inset-0 pointer-events-none overflow-hidden">
@@ -369,7 +369,7 @@ LOGIN_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Dakota Calçados | Replay Control</title>
 <link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/assets/tailwind.css" />
 <style>
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   .fade-in { animation: fadeIn 0.5s ease-in; }
@@ -568,6 +568,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = urlparse(self.path)
+        if p.path == "/assets/tailwind.css":
+            css_path = Path(__file__).resolve().parent / "static" / "tailwind.css"
+            if not css_path.exists():
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/css; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(css_path.read_bytes())
+            return
         if p.path == "/login":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

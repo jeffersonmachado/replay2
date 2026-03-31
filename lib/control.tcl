@@ -13,6 +13,9 @@
 ##
 ## Observações:
 ## - Sem autenticação (MVP). Por padrão bind em 127.0.0.1.
+## - Escopo previsto: uso local/interno em ambiente controlado.
+## - Não exponha esta porta em rede aberta sem camada adicional de proteção
+##   (ex.: túnel, firewall, autenticação externa ou bind restrito).
 ########################################################################
 
 namespace eval ::control {
@@ -250,4 +253,3 @@ proc ::control::should_stop {} {
     variable stop_requested
     return $stop_requested
 }
-

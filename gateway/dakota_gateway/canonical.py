@@ -11,12 +11,30 @@ _KEY_ORDER = [
     "actor",
     "session_id",
     "seq_session",
+    "capture_id",
+    "capture_session_uuid",
     "dir",
     "n",
     "data_b64",
     "sig",
     "norm_sha256",
     "norm_len",
+    "screen_sig",
+    "screen_sample",
+    "key_b64",
+    "key_text",
+    "key_kind",
+    "input_len",
+    "contains_newline",
+    "contains_escape",
+    "is_probable_paste",
+    "is_probable_command",
+    "logical_parts",
+    "screen_raw_b64",
+    "screen_source",
+    "screen_snapshot_ts_ms",
+    "screen_snapshot_age_ms",
+    "source",
     "prev_hash",
 ]
 
@@ -34,4 +52,3 @@ def canonical_string(ev) -> str:
             v = ""
         parts.append(f"{k}={v}\n")
     return "".join(parts)
-

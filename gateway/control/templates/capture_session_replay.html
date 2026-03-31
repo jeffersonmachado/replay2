@@ -1,0 +1,1079 @@
+<div class="space-y-6" data-page-group="capture-replay">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao de replay">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/captures" class="r2ctl-btn-soft" data-tab-link="back">← Voltar</a>
+      <span class="text-stone-400 text-xs flex items-center">|</span>
+      <span id="nav-session-id" class="text-stone-400 text-xs font-mono flex items-center">-</span>
+    </div>
+  </nav>
+
+  <!-- Detalhe da sessão -->
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Sessão de Captura - Visualização & Replay</h2>
+      <p class="r2ctl-section-copy text-sm">Interação capturada: entrada do usuário e resposta do servidor.</p>
+    </div>
+
+    <!-- Metadados -->
+    <div class="grid gap-3 sm:grid-cols-3 mb-4">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Usuário</p>
+        <p id="session-actor" class="text-sm font-semibold text-stone-200 font-mono">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Sessão ID</p>
+        <p id="session-id-display" class="text-xs text-stone-200 font-mono break-all">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Total Bytes</p>
+        <p id="session-bytes-total" class="text-sm font-semibold text-stone-200">-</p>
+      </div>
+    </div>
+
+    <!-- Info de entrada/saída -->
+    <div class="grid gap-3 sm:grid-cols-2 mb-4">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-yellow-400 mb-1">📥 Bytes Digitados (entrada)</p>
+        <p id="session-bytes-in" class="text-lg font-semibold text-stone-200">0</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-green-400 mb-1">📤 Bytes Recebidos (saída)</p>
+        <p id="session-bytes-out" class="text-lg font-semibold text-stone-200">0</p>
+      </div>
+    </div>
+
+    <!-- Controles de playback -->
+    <div class="mb-4 rounded-2xl px-4 py-3 bg-sky-900/30 border border-sky-700/40 flex items-center justify-between gap-3">
+      <div class="text-sm text-sky-200">
+        <strong>Playback local:</strong> Clique em Iniciar Playback para revisar a trilha bruta capturada.
+        <div id="playback-status-message" class="mt-1 hidden text-xs text-emerald-200/90">Reprodução concluída. Você pode reproduzir novamente.</div>
+      </div>
+      <button id="playback-start-btn" class="r2ctl-btn-pill r2ctl-btn-pill-success text-xs">▶ Iniciar Playback</button>
+    </div>
+
+    <div class="rounded-2xl px-4 py-3 bg-emerald-900/20 border border-emerald-700/40">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="text-sm text-emerald-100">
+          <strong>Replay operacional:</strong> dispare uma run usando a mesma captura em modo bruto ou determinístico.
+          <div id="operational-replay-status" class="mt-1 text-xs text-emerald-200/80">carregando contexto operacional...</div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="run-raw-btn" class="r2ctl-btn-soft text-xs">Criar replay bruto</button>
+          <button id="run-deterministic-btn" class="r2ctl-btn-primary text-xs">Criar replay determinístico</button>
+          <a id="run-new-link" href="/runs/new" class="r2ctl-btn-soft text-xs hidden">Abrir em runs/new</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Painel de Playback (oculto inicialmente) -->
+  <section id="playback-panel" class="hidden r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="text-lg font-semibold">🎬 Reprodução em Tempo Real</h3>
+      <div class="flex gap-2">
+        <button id="playback-pause-btn" class="r2ctl-btn-soft text-xs">⏸ Pausar</button>
+        <button id="playback-stop-btn" class="r2ctl-btn-soft text-xs">⏹ Parar</button>
+      </div>
+    </div>
+    
+    <div class="mb-3 grid gap-3 sm:grid-cols-3">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
+        <label for="playback-speed" class="text-xs text-stone-400">Velocidade</label>
+        <input id="playback-speed" type="range" min="0.25" max="4" step="0.25" value="1" class="w-full mt-2" />
+        <p id="playback-speed-label" class="text-xs text-stone-300 mt-1">1.0x</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
+        <p class="text-xs text-stone-400">Progresso</p>
+        <div id="playback-progress" class="w-full h-2 bg-stone-700 rounded-full mt-2 overflow-hidden">
+          <div id="playback-progress-bar" class="h-full bg-green-600 playback-progress-bar-init"></div>
+        </div>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
+        <p class="text-xs text-stone-400">Evento</p>
+        <p id="playback-event-counter" class="text-sm font-semibold text-stone-200 mt-2">0 / 0</p>
+      </div>
+    </div>
+
+    <!-- Terminal para playback -->
+    <div class="rounded-2xl bg-black/50 p-4 font-mono text-xs leading-relaxed border border-stone-700/40">
+      <div id="playback-terminal" class="min-h-[240px] max-h-[480px] overflow-auto">
+        <pre id="playback-output" class="text-gray-100 whitespace-pre-wrap"></pre>
+      </div>
+    </div>
+
+    <p class="text-xs text-stone-400 mt-3">Dica: Use a barra de velocidade para acelerar/desacelerar a reprodução, ou use os botões de pausa/parar.</p>
+  </section>
+
+  <!-- Timeline de eventos -->
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="text-lg font-semibold">📊 Timeline de Eventos</h3>
+      <div class="flex flex-wrap gap-2">
+        <button id="events-view-grouped" class="r2ctl-btn-soft text-xs active">Agrupado</button>
+        <button id="events-view-detailed" class="r2ctl-btn-soft text-xs">Detalhado</button>
+        <button id="events-filter-all" class="r2ctl-btn-soft text-xs active">Todos</button>
+        <button id="events-filter-in" class="r2ctl-btn-soft text-xs">📥 Entrada</button>
+        <button id="events-filter-out" class="r2ctl-btn-soft text-xs">📤 Saída</button>
+        <button id="events-filter-det" class="r2ctl-btn-soft text-xs">🎯 Determinístico</button>
+      </div>
+    </div>
+
+    <div id="events-list" class="space-y-3">
+      <div class="text-sm text-stone-400">Carregando eventos...</div>
+    </div>
+  </section>
+</div>
+
+<style>
+.playback-progress-bar-init {
+  width: 0%;
+}
+
+#playback-terminal {
+  /* Terminal styling */
+  font-family: "IBM Plex Mono", monospace;
+  color: #10b981;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.event-item {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background-color: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.event-direction {
+  font-weight: bold;
+  font-size: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.event-direction.in {
+  background-color: rgba(249, 191, 35, 0.2);
+  color: #fbbf24;
+}
+
+.event-direction.out {
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.event-direction.det {
+  background-color: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+}
+
+.event-content {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.det-details-toggle {
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(14, 165, 233, 0.12);
+  color: #7dd3fc;
+  border-radius: 9999px;
+  font-size: 11px;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.det-details-toggle:hover {
+  background: rgba(14, 165, 233, 0.2);
+}
+
+.r2ctl-btn-pill-success {
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.r2ctl-btn-pill-success:hover {
+  background-color: rgba(34, 197, 94, 0.3);
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+.active {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+  color: #60a5fa !important;
+}
+</style>
+
+<script>
+(function() {
+  'use strict';
+
+  const params = new URLSearchParams(window.location.search);
+  const captureId = params.get('capture_id');
+  const sessionId = params.get('session_id');
+
+  let replayData = null;
+  let playbackState = { isRunning: false, isPaused: false, currentEventIndex: 0, speed: 1 };
+  let playbackTimeout = null;
+  let operationalReplayReady = false;
+  let eventsFilterMode = 'all';
+  let eventsViewMode = 'grouped';
+  const timelinePrefsKey = 'dakota_capture_replay_timeline_prefs_v1';
+  const playbackPrefsKey = 'dakota_capture_replay_playback_prefs_v1';
+  const DEC_SPECIAL_GRAPHICS_MAP = {
+    l: '┌',
+    k: '┐',
+    m: '└',
+    j: '┘',
+    q: '─',
+    x: '│',
+    t: '├',
+    u: '┤',
+    v: '┴',
+    w: '┬',
+    n: '┼',
+  };
+
+  // Carregar dados de replay
+  async function loadReplayData() {
+    if (!captureId || !sessionId) {
+      alert('capture_id e session_id são obrigatórios');
+      return;
+    }
+
+    try {
+      // Tenta buscar com autenticação
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      replayData = await response.json();
+      renderSessionInfo();
+      renderEventsList(eventsFilterMode);
+    } catch (err) {
+      console.error('Erro ao carregar dados de replay:', err);
+      document.getElementById('events-list').innerHTML = `
+        <div class="text-red-300 text-sm p-4 rounded bg-red-900/20 border border-red-700/40">
+          Erro ao carregar dados: ${err.message}
+        </div>
+      `;
+    }
+  }
+
+  function renderSessionInfo() {
+    if (!replayData) return;
+
+    const session = replayData.session_start || {};
+    const playback = replayData.playback || {};
+    const capture = replayData.capture || {};
+    const totalIn = Number(playback.total_bytes_in || 0);
+    const totalOut = Number(playback.total_bytes_out || 0);
+    const hasBytesEvents = Number(playback.event_count || 0) > 0;
+    const deterministicCount = Number(playback.deterministic_event_count || 0);
+
+    document.getElementById('nav-session-id').textContent = sessionId.substring(0, 8) + '...';
+    document.getElementById('session-actor').textContent = session.actor || '-';
+    document.getElementById('session-id-display').textContent = sessionId;
+    document.getElementById('session-bytes-total').textContent = `${totalIn + totalOut} bytes`;
+    document.getElementById('session-bytes-in').textContent = `${totalIn} bytes`;
+    document.getElementById('session-bytes-out').textContent = `${totalOut} bytes • det=${deterministicCount}`;
+
+    const startBtn = document.getElementById('playback-start-btn');
+    const statusMsg = document.getElementById('playback-status-message');
+    if (startBtn) {
+      startBtn.disabled = !hasBytesEvents;
+      startBtn.classList.toggle('opacity-50', !hasBytesEvents);
+      startBtn.classList.toggle('cursor-not-allowed', !hasBytesEvents);
+      startBtn.title = hasBytesEvents
+        ? 'Iniciar reprodução da sessão'
+        : 'Sem eventos de bytes para reproduzir nesta sessão';
+      if (!playbackState.currentEventIndex) {
+        startBtn.textContent = '▶ Iniciar Playback';
+      }
+    }
+    if (statusMsg && !playbackState.currentEventIndex) {
+      statusMsg.classList.add('hidden');
+    }
+    applyPlaybackPrefs(hasBytesEvents);
+    updateOperationalReplayPanel(capture, deterministicCount);
+  }
+
+  function eventDirectionClass(ev) {
+    if (ev.type === 'deterministic_input') return 'det';
+    return ev.direction || 'out';
+  }
+
+  function renderEventsList(filter = 'all') {
+    eventsFilterMode = filter;
+    persistTimelinePrefs();
+    const allEvents = replayData.timeline || [];
+    const filtered = allEvents.filter((ev) => {
+      if (filter === 'all') return true;
+      if (filter === 'det') return ev.type === 'deterministic_input';
+      return ev.direction === filter;
+    }).filter((ev) => {
+      if (ev.type === 'deterministic_input') return true;
+      return Boolean(formatEventContent(ev).trim());
+    });
+    const events = eventsViewMode === 'detailed'
+      ? filtered.map((ev) => ({ ...ev, summary: formatEventContent(ev), data_decoded: formatEventContent(ev) }))
+      : buildTimelineItems(filtered);
+    const container = document.getElementById('events-list');
+
+    if (events.length === 0) {
+      const hasSession = Boolean(replayData?.session_start);
+      container.innerHTML = hasSession
+        ? '<div class="text-amber-200 text-sm p-3 rounded bg-amber-900/20 border border-amber-700/40">Nenhum evento para o filtro selecionado.</div>'
+        : '<div class="text-stone-400 text-sm">Nenhum evento encontrado.</div>';
+      return;
+    }
+
+    const decoratedEvents = decorateDeterministicRepeats(events);
+    container.innerHTML = decoratedEvents.map((ev) => `
+      <div class="event-item">
+        <div class="event-direction ${eventDirectionClass(ev)}">
+          ${ev.type === 'deterministic_input' ? '🎯 DET' : (ev.direction === 'in' ? '📥 IN' : '📤 OUT')}
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between gap-3 text-xs text-stone-400">
+            <div>
+              <strong>${renderEventSeqLabel(ev)}</strong> | ${renderEventMetaLabel(ev)} | ${new Date(ev.ts_ms).toLocaleTimeString()}
+            </div>
+            ${ev.type === 'deterministic_input' ? `
+              <button type="button" class="det-details-toggle" data-det-toggle="${escapeHtml(String(ev.seq_global || ''))}">
+                Detalhes
+              </button>
+            ` : ''}
+          </div>
+          <div class="event-content">${escapeHtml(formatEventContent(ev))}</div>
+          ${ev.type === 'deterministic_input' ? `
+            <div class="hidden text-xs text-stone-300 whitespace-pre-wrap" data-det-details="${escapeHtml(String(ev.seq_global || ''))}">
+screen=${escapeHtml(ev.screen_sig || '-')}
+source=${escapeHtml(ev.screen_source || '-')}
+kind=${escapeHtml(ev.key_kind || '-')}
+age_ms=${escapeHtml(ev.screen_snapshot_age_ms ?? '-')}
+flags=${ev.is_probable_paste ? 'paste ' : ''}${ev.is_probable_command ? 'command ' : ''}${ev.contains_escape ? 'escape ' : ''}${ev.contains_newline ? 'newline' : ''}
+${ev._repeatDetScreen
+  ? escapeHtml(`mesma tela do DET anterior (${ev._repeatDetIndex}x em sequência)`)
+  : escapeHtml(formatScreenSample(ev.screen_sample || ''))}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function resolveEventByteCount(ev) {
+    const count = Number(ev?.n_bytes ?? ev?.n ?? 0);
+    return Number.isFinite(count) ? count : 0;
+  }
+
+  function renderEventSeqLabel(ev) {
+    const start = Number(ev?.seq_global ?? 0);
+    const end = Number(ev?.seq_global_end ?? start);
+    return start && end && end > start ? `Seq #${start}-${end}` : `Seq #${start}`;
+  }
+
+  function renderEventMetaLabel(ev) {
+    if (ev?.type === 'deterministic_input') {
+      const base = ev.key_text || ev.key_kind || 'input';
+      return ev._repeatDetScreen ? `${base} • mesma tela` : base;
+    }
+    const bytes = resolveEventByteCount(ev);
+    const chunks = Number(ev?.chunk_count || 1);
+    return chunks > 1 ? `${bytes} bytes • ${chunks} chunks` : `${bytes} bytes`;
+  }
+
+  function decorateDeterministicRepeats(events) {
+    let previousScreenKey = '';
+    let repeatIndex = 0;
+    return (events || []).map((ev) => {
+      if (ev?.type !== 'deterministic_input') {
+        previousScreenKey = '';
+        repeatIndex = 0;
+        return ev;
+      }
+      const screenKey = `${ev.screen_sig || ''}::${ev.screen_source || ''}`;
+      if (screenKey && screenKey === previousScreenKey) {
+        repeatIndex += 1;
+        return { ...ev, _repeatDetScreen: true, _repeatDetIndex: repeatIndex };
+      }
+      previousScreenKey = screenKey;
+      repeatIndex = 1;
+      return { ...ev, _repeatDetScreen: false, _repeatDetIndex: repeatIndex };
+    });
+  }
+
+  function normalizeTerminalPreview(text) {
+    const input = String(text || '').replace(/\r\n/g, '\n');
+    const lines = [''];
+    let row = 0;
+    let col = 0;
+
+    for (const ch of input) {
+      if (ch === '\n') {
+        row += 1;
+        lines[row] = lines[row] || '';
+        col = 0;
+        continue;
+      }
+      if (ch === '\r') {
+        col = 0;
+        continue;
+      }
+      if (ch === '\b') {
+        col = Math.max(0, col - 1);
+        continue;
+      }
+      const current = lines[row] || '';
+      const chars = current.split('');
+      while (chars.length < col) chars.push(' ');
+      chars[col] = ch;
+      lines[row] = chars.join('');
+      col += 1;
+    }
+
+    return lines
+      .map((line) => line.replace(/[ \t]+$/g, ''))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd();
+  }
+
+  function decodeDecGraphics(text) {
+    const input = String(text || '');
+    let out = '';
+    let graphicsMode = false;
+
+    for (let i = 0; i < input.length; i += 1) {
+      const ch = input[i];
+      if (ch === '\x1b') {
+        const next = input[i + 1] || '';
+        const third = input[i + 2] || '';
+        if ((next === '(' || next === ')') && third) {
+          graphicsMode = third === '0';
+          i += 2;
+          continue;
+        }
+      }
+      if (graphicsMode && DEC_SPECIAL_GRAPHICS_MAP[ch]) {
+        out += DEC_SPECIAL_GRAPHICS_MAP[ch];
+      } else {
+        out += ch;
+      }
+    }
+    return out;
+  }
+
+  function stripAnsiSequences(text) {
+    return String(text || '')
+      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/\x1b[PX^_].*?\x1b\\/gs, '')
+      .replace(/\x1b[()#][0-9A-Za-z]/g, '')
+      .replace(/\x1b[=>78]/g, '')
+      .replace(/\x1b[@-Z\\-_]/g, '');
+  }
+
+  function cleanTerminalText(text) {
+    return stripAnsiSequences(decodeDecGraphics(text))
+      .replace(/(^|\n)[0B](?=[┌├└┐┘┤┬┴┼│─])/g, '$1')
+      .replace(/(^|\n)\s*[0B](?=Login do Sistema|Codigo|Senha|Deseja sair do sistema|Modulo|Cadastro|Manutencao)/g, '$1');
+  }
+
+  function squashNoiseLines(lines) {
+    const filtered = lines.filter((line) => line.trim());
+    const hasScreenContent = filtered.some((line) =>
+      /login do sistema|codigo|senha|deseja sair do sistema|modulo|cadastro|manutencao/i.test(line)
+    );
+    if (!hasScreenContent) return lines;
+    return lines.filter((line) => !/^bash:\s/im.test(line));
+  }
+
+  function formatScreenSample(text) {
+    const clean = normalizeTerminalPreview(cleanTerminalText(text));
+    const lines = squashNoiseLines(clean.split('\n'));
+    return lines
+      .filter((line) => !/^[\s│─┌┐└┘├┤┬┴┼]+$/.test(line))
+      .slice(0, 8)
+      .join('\n')
+      .trim();
+  }
+
+  function formatEventContent(ev) {
+    const text = ev?.summary ?? ev?.data_decoded ?? '';
+    if (ev?.type === 'deterministic_input') return text;
+    const clean = normalizeTerminalPreview(cleanTerminalText(text));
+    return squashNoiseLines(clean.split('\n')).join('\n').trim();
+  }
+
+  function buildTimelineItems(events) {
+    const items = [];
+    let pendingOut = null;
+
+    const flushPendingOut = () => {
+      if (!pendingOut) return;
+      const content = pendingOut.parts.join('\n').trim();
+      if (content) {
+        items.push({
+          ...pendingOut.base,
+          type: 'bytes',
+          direction: 'out',
+          n_bytes: pendingOut.nBytes,
+          chunk_count: pendingOut.chunkCount,
+          seq_global_end: pendingOut.seqEnd,
+          summary: content,
+          data_decoded: content,
+        });
+      }
+      pendingOut = null;
+    };
+
+    for (const ev of events) {
+      const content = formatEventContent(ev);
+      const isOut = ev?.type === 'bytes' && ev?.direction === 'out';
+      const tsMs = Number(ev?.ts_ms || 0);
+      const seq = Number(ev?.seq_global || 0);
+
+      if (isOut) {
+        const compact = content.trim();
+        const shouldSkip =
+          !compact ||
+          compact === '0' ||
+          compact === '=' ||
+          compact.length <= 1;
+        if (shouldSkip) continue;
+
+        if (
+          pendingOut &&
+          (tsMs - pendingOut.lastTsMs) <= 700 &&
+          pendingOut.parts.length < 8
+        ) {
+          pendingOut.parts.push(compact);
+          pendingOut.nBytes += resolveEventByteCount(ev);
+          pendingOut.chunkCount += 1;
+          pendingOut.lastTsMs = tsMs;
+          pendingOut.seqEnd = seq;
+          continue;
+        }
+
+        flushPendingOut();
+        pendingOut = {
+          base: { ...ev, summary: compact, data_decoded: compact },
+          parts: [compact],
+          nBytes: resolveEventByteCount(ev),
+          chunkCount: 1,
+          lastTsMs: tsMs,
+          seqEnd: seq,
+        };
+        continue;
+      }
+
+      flushPendingOut();
+      if (ev?.type === 'bytes' && ev?.direction === 'in' && !content.trim()) {
+        items.push({
+          ...ev,
+          summary: ev?.data_decoded === '\x1b' ? 'Esc' : ev?.data_decoded === '\r' ? 'Enter' : content,
+          data_decoded: ev?.data_decoded || content,
+        });
+        continue;
+      }
+      items.push({ ...ev, summary: content, data_decoded: content });
+    }
+
+    flushPendingOut();
+    return items;
+  }
+
+  function createVirtualTerminal(rows = 30, cols = 120) {
+    return {
+      rows,
+      cols,
+      cursorRow: 0,
+      cursorCol: 0,
+      savedRow: 0,
+      savedCol: 0,
+      graphicsMode: false,
+      buffer: Array.from({ length: rows }, () => Array(cols).fill(' ')),
+    };
+  }
+
+  function vtScroll(term) {
+    term.buffer.shift();
+    term.buffer.push(Array(term.cols).fill(' '));
+    term.cursorRow = term.rows - 1;
+  }
+
+  function vtSetCursor(term, row, col) {
+    term.cursorRow = Math.max(0, Math.min(term.rows - 1, row));
+    term.cursorCol = Math.max(0, Math.min(term.cols - 1, col));
+  }
+
+  function vtWriteChar(term, ch) {
+    if (term.cursorRow >= term.rows) vtScroll(term);
+    if (term.cursorCol >= term.cols) {
+      term.cursorCol = 0;
+      term.cursorRow += 1;
+      if (term.cursorRow >= term.rows) vtScroll(term);
+    }
+    const rendered = term.graphicsMode && DEC_SPECIAL_GRAPHICS_MAP[ch] ? DEC_SPECIAL_GRAPHICS_MAP[ch] : ch;
+    term.buffer[term.cursorRow][term.cursorCol] = rendered;
+    term.cursorCol += 1;
+  }
+
+  function vtHandleCsi(term, params, finalChar) {
+    const parts = String(params || '').split(';').map((part) => Number(part || 0));
+    const p1 = parts[0] || 0;
+    const p2 = parts[1] || 0;
+    if (finalChar === 'H' || finalChar === 'f') {
+      vtSetCursor(term, Math.max(0, (p1 || 1) - 1), Math.max(0, (p2 || 1) - 1));
+      return;
+    }
+    if (finalChar === 'J') {
+      if (p1 === 2 || p1 === 0) {
+        term.buffer = Array.from({ length: term.rows }, () => Array(term.cols).fill(' '));
+        vtSetCursor(term, 0, 0);
+      }
+      return;
+    }
+    if (finalChar === 'K') {
+      const row = term.buffer[term.cursorRow] || [];
+      for (let col = term.cursorCol; col < term.cols; col += 1) row[col] = ' ';
+      return;
+    }
+    if (finalChar === 'A') {
+      vtSetCursor(term, term.cursorRow - (p1 || 1), term.cursorCol);
+      return;
+    }
+    if (finalChar === 'B') {
+      vtSetCursor(term, term.cursorRow + (p1 || 1), term.cursorCol);
+      return;
+    }
+    if (finalChar === 'C') {
+      vtSetCursor(term, term.cursorRow, term.cursorCol + (p1 || 1));
+      return;
+    }
+    if (finalChar === 'D') {
+      vtSetCursor(term, term.cursorRow, term.cursorCol - (p1 || 1));
+      return;
+    }
+  }
+
+  function vtFeed(term, input) {
+    const text = String(input || '');
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      if (ch === '\x1b') {
+        const next = text[i + 1] || '';
+        const third = text[i + 2] || '';
+        if (next === '[') {
+          let j = i + 2;
+          while (j < text.length && !/[@-~]/.test(text[j])) j += 1;
+          if (j < text.length) {
+            vtHandleCsi(term, text.slice(i + 2, j), text[j]);
+            i = j + 1;
+            continue;
+          }
+        }
+        if ((next === '(' || next === ')') && third) {
+          term.graphicsMode = third === '0';
+          i += 3;
+          continue;
+        }
+        if (next === '7') {
+          term.savedRow = term.cursorRow;
+          term.savedCol = term.cursorCol;
+          i += 2;
+          continue;
+        }
+        if (next === '8') {
+          vtSetCursor(term, term.savedRow, term.savedCol);
+          i += 2;
+          continue;
+        }
+        i += 2;
+        continue;
+      }
+      if (ch === '\n') {
+        term.cursorRow += 1;
+        if (term.cursorRow >= term.rows) vtScroll(term);
+        i += 1;
+        continue;
+      }
+      if (ch === '\r') {
+        term.cursorCol = 0;
+        i += 1;
+        continue;
+      }
+      if (ch === '\b') {
+        term.cursorCol = Math.max(0, term.cursorCol - 1);
+        i += 1;
+        continue;
+      }
+      if (ch >= ' ') vtWriteChar(term, ch);
+      i += 1;
+    }
+  }
+
+  function vtRender(term) {
+    const lines = term.buffer.map((row) => row.join('').replace(/[ \t]+$/g, ''));
+    const trimmed = squashNoiseLines(lines).join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+    return trimmed || '';
+  }
+
+  function escapeHtml(text) {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return String(text || '').replace(/[&<>"']/g, m => map[m]);
+  }
+
+  // Controles de playback
+  function finalizePlaybackUi() {
+    playbackState.isRunning = false;
+    playbackState.isPaused = false;
+    if (playbackTimeout) {
+      clearTimeout(playbackTimeout);
+      playbackTimeout = null;
+    }
+    const panel = document.getElementById('playback-panel');
+    const startBtn = document.getElementById('playback-start-btn');
+    const pauseBtn = document.getElementById('playback-pause-btn');
+    const statusMsg = document.getElementById('playback-status-message');
+    panel?.classList.add('hidden');
+    startBtn?.classList.remove('hidden');
+    if (startBtn) startBtn.textContent = '▶ Reproduzir novamente';
+    if (pauseBtn) pauseBtn.textContent = '⏸ Pausar';
+    statusMsg?.classList.remove('hidden');
+    persistPlaybackPrefs({});
+  }
+
+  document.getElementById('playback-start-btn')?.addEventListener('click', () => {
+    if (!replayData) {
+      alert('Dados de replay não carregados');
+      return;
+    }
+    playbackState.isRunning = true;
+    playbackState.currentEventIndex = 0;
+    document.getElementById('playback-panel').classList.remove('hidden');
+    document.getElementById('playback-start-btn').classList.add('hidden');
+    document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
+    document.getElementById('playback-status-message')?.classList.add('hidden');
+    persistPlaybackPrefs({});
+    startPlayback();
+  });
+
+  document.getElementById('playback-pause-btn')?.addEventListener('click', () => {
+    playbackState.isPaused = !playbackState.isPaused;
+    const btn = document.getElementById('playback-pause-btn');
+    btn.textContent = playbackState.isPaused ? '▶ Retomar' : '⏸ Pausar';
+    if (!playbackState.isPaused) {
+      playNextEvent();
+    }
+  });
+
+  document.getElementById('playback-stop-btn')?.addEventListener('click', () => {
+    finalizePlaybackUi();
+    document.getElementById('playback-output').textContent = '';
+    document.getElementById('playback-event-counter').textContent = '0 / 0';
+    document.getElementById('playback-progress-bar').style.width = '0%';
+  });
+
+  document.getElementById('playback-speed')?.addEventListener('input', (e) => {
+    playbackState.speed = parseFloat(e.target.value);
+    document.getElementById('playback-speed-label').textContent = playbackState.speed.toFixed(2) + 'x';
+    persistPlaybackPrefs({ speed: playbackState.speed });
+  });
+
+  // Filtros de eventos
+  document.getElementById('events-filter-all')?.addEventListener('click', () => {
+    updateFilterButtons('all');
+    renderEventsList('all');
+  });
+
+  document.getElementById('events-filter-in')?.addEventListener('click', () => {
+    updateFilterButtons('in');
+    renderEventsList('in');
+  });
+
+  document.getElementById('events-filter-out')?.addEventListener('click', () => {
+    updateFilterButtons('out');
+    renderEventsList('out');
+  });
+  document.getElementById('events-filter-det')?.addEventListener('click', () => {
+    updateFilterButtons('det');
+    renderEventsList('det');
+  });
+
+  document.getElementById('events-view-grouped')?.addEventListener('click', () => {
+    eventsViewMode = 'grouped';
+    updateViewButtons('grouped');
+    persistTimelinePrefs();
+    renderEventsList(eventsFilterMode);
+  });
+
+  document.getElementById('events-view-detailed')?.addEventListener('click', () => {
+    eventsViewMode = 'detailed';
+    updateViewButtons('detailed');
+    persistTimelinePrefs();
+    renderEventsList(eventsFilterMode);
+  });
+
+  document.getElementById('events-list')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-det-toggle]');
+    if (!btn) return;
+    const key = btn.getAttribute('data-det-toggle');
+    const details = document.querySelector(`[data-det-details="${key}"]`);
+    if (!details) return;
+    const isHidden = details.classList.contains('hidden');
+    details.classList.toggle('hidden', !isHidden);
+    btn.textContent = isHidden ? 'Ocultar' : 'Detalhes';
+  });
+
+  function updateFilterButtons(filter) {
+    document.querySelectorAll('[id^="events-filter-"]').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    document.getElementById(`events-filter-${filter}`)?.classList.add('active');
+  }
+
+  function updateViewButtons(viewMode) {
+    document.querySelectorAll('[id^="events-view-"]').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    document.getElementById(`events-view-${viewMode}`)?.classList.add('active');
+  }
+
+  function loadTimelinePrefs() {
+    try {
+      const raw = window.localStorage.getItem(timelinePrefsKey);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data?.filter && ['all', 'in', 'out', 'det'].includes(data.filter)) {
+        eventsFilterMode = data.filter;
+      }
+      if (data?.view && ['grouped', 'detailed'].includes(data.view)) {
+        eventsViewMode = data.view;
+      }
+    } catch (_err) {
+      // ignore preference read failures
+    }
+  }
+
+  function persistTimelinePrefs() {
+    try {
+      window.localStorage.setItem(
+        timelinePrefsKey,
+        JSON.stringify({ filter: eventsFilterMode, view: eventsViewMode }),
+      );
+    } catch (_err) {
+      // ignore preference write failures
+    }
+  }
+
+  function loadPlaybackPrefs() {
+    try {
+      const raw = window.localStorage.getItem(playbackPrefsKey);
+      if (!raw) return {};
+      const data = JSON.parse(raw);
+      return data && typeof data === 'object' ? data : {};
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function persistPlaybackPrefs(partial = {}) {
+    try {
+      const current = loadPlaybackPrefs();
+      const next = { ...current, ...partial };
+      delete next.panelOpen;
+      window.localStorage.setItem(playbackPrefsKey, JSON.stringify(next));
+    } catch (_err) {
+      // ignore preference write failures
+    }
+  }
+
+  function applyPlaybackPrefs(hasBytesEvents) {
+    const prefs = loadPlaybackPrefs();
+    const speed = Number(prefs?.speed || playbackState.speed || 1);
+    const safeSpeed = Number.isFinite(speed) ? Math.min(4, Math.max(0.25, speed)) : 1;
+    playbackState.speed = safeSpeed;
+    const speedInput = document.getElementById('playback-speed');
+    const speedLabel = document.getElementById('playback-speed-label');
+    if (speedInput) speedInput.value = String(safeSpeed);
+    if (speedLabel) speedLabel.textContent = `${safeSpeed.toFixed(2)}x`;
+
+    const panel = document.getElementById('playback-panel');
+    const startBtn = document.getElementById('playback-start-btn');
+    if (!panel || !startBtn) return;
+    panel.classList.add('hidden');
+    startBtn.classList.remove('hidden');
+  }
+
+  function updateOperationalReplayPanel(capture, deterministicCount) {
+    const statusEl = document.getElementById('operational-replay-status');
+    const rawBtn = document.getElementById('run-raw-btn');
+    const detBtn = document.getElementById('run-deterministic-btn');
+    const runNewLink = document.getElementById('run-new-link');
+    const canAutoRun = Number(capture?.target_env_id || 0) > 0 || Number(capture?.connection_profile_id || 0) > 0;
+    operationalReplayReady = canAutoRun;
+
+    const prefill = new URLSearchParams({
+      log_dir: String(replayData?.log_dir || ''),
+      source_capture: String(capture?.id || captureId || ''),
+      replay_session_id: String(sessionId || ''),
+      input_mode: deterministicCount > 0 ? 'deterministic' : 'raw',
+      on_deterministic_mismatch: 'fail-fast',
+    });
+    if (capture?.target_env_id) prefill.set('target_env_id', String(capture.target_env_id));
+    if (capture?.connection_profile_id) prefill.set('connection_profile_id', String(capture.connection_profile_id));
+    if (runNewLink) {
+      runNewLink.href = `/runs/new?${prefill.toString()}`;
+      runNewLink.classList.toggle('hidden', canAutoRun);
+    }
+    if (statusEl) {
+      statusEl.textContent = canAutoRun
+        ? `Pronto para criar run pela captura atual. deterministic_events=${deterministicCount}.`
+        : 'Faltam vínculo de ambiente/perfil na captura para disparo direto. Use runs/new.';
+    }
+    [rawBtn, detBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.disabled = !canAutoRun;
+      btn.classList.toggle('opacity-50', !canAutoRun);
+      btn.classList.toggle('cursor-not-allowed', !canAutoRun);
+    });
+  }
+
+  async function createAndStartOperationalReplay(inputMode) {
+    if (!replayData) return;
+    const capture = replayData.capture || {};
+    if (!operationalReplayReady) {
+      window.location = document.getElementById('run-new-link')?.href || '/runs/new';
+      return;
+    }
+    const statusEl = document.getElementById('operational-replay-status');
+    if (statusEl) statusEl.textContent = `Criando run ${inputMode}...`;
+    const payload = {
+      log_dir: replayData.log_dir || '',
+      mode: 'strict-global',
+      target_env_id: capture.target_env_id || null,
+      connection_profile_id: capture.connection_profile_id || null,
+      params: {
+        replay_session_id: sessionId,
+        input_mode: inputMode,
+        on_deterministic_mismatch: 'fail-fast',
+      },
+    };
+    const createResp = await fetch('/api/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+    });
+    const createData = await createResp.json();
+    if (!createResp.ok || !createData?.id) {
+      if (statusEl) statusEl.textContent = createData?.error || `Falha ao criar run ${inputMode}.`;
+      return;
+    }
+    const runId = Number(createData.id || 0);
+    if (statusEl) statusEl.textContent = `Run #${runId} criada. Iniciando...`;
+    const startResp = await fetch(`/api/runs/${runId}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      credentials: 'same-origin',
+    });
+    const startData = await startResp.json().catch(() => ({}));
+    if (!startResp.ok) {
+      if (statusEl) statusEl.textContent = startData?.error || `Run #${runId} criada, mas falhou ao iniciar.`;
+      return;
+    }
+    window.location = `/runs/${runId}`;
+  }
+
+  function startPlayback() {
+    const events = replayData.playback?.events || [];
+    playbackState.terminal = createVirtualTerminal();
+    document.getElementById('playback-output').textContent = '';
+    document.getElementById('playback-event-counter').textContent = `0 / ${events.length}`;
+    document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
+    playNextEvent();
+  }
+
+  function playNextEvent() {
+    if (!playbackState.isRunning || playbackState.isPaused) return;
+
+    const events = replayData.playback?.events || [];
+    if (playbackState.currentEventIndex >= events.length) {
+      finalizePlaybackUi();
+      return;
+    }
+
+    const event = events[playbackState.currentEventIndex];
+    const outputEl = document.getElementById('playback-output');
+    const progressBar = document.getElementById('playback-progress-bar');
+    const counter = document.getElementById('playback-event-counter');
+
+    if (event.direction === 'out') {
+      vtFeed(playbackState.terminal, event.content);
+      outputEl.textContent = vtRender(playbackState.terminal);
+    }
+
+    // Scroll automático
+    const terminal = document.getElementById('playback-terminal');
+    terminal.scrollTop = terminal.scrollHeight;
+
+    // Atualizar progresso
+    const progress = ((playbackState.currentEventIndex + 1) / events.length) * 100;
+    progressBar.style.width = progress + '%';
+    counter.textContent = `${playbackState.currentEventIndex + 1} / ${events.length}`;
+
+    playbackState.currentEventIndex++;
+
+    // Calcular delay baseado na velocidade
+    const delay = Math.max(30, 180 / playbackState.speed); // 1x mais próximo de revisão operacional
+    playbackTimeout = setTimeout(playNextEvent, delay);
+  }
+
+  // Voltar à página de capturas
+  document.querySelector('[data-tab-link="back"]')?.addEventListener('click', (e) => {
+    const backUrl = `/captures?capture_id=${captureId}`;
+    window.history.back();
+  });
+
+  document.getElementById('run-raw-btn')?.addEventListener('click', () => createAndStartOperationalReplay('raw'));
+  document.getElementById('run-deterministic-btn')?.addEventListener('click', () => createAndStartOperationalReplay('deterministic'));
+
+  // Carregar dados ao inicializar
+  loadTimelinePrefs();
+  updateViewButtons(eventsViewMode);
+  updateFilterButtons(eventsFilterMode);
+  loadReplayData();
+})();
+</script>

@@ -451,15 +451,16 @@ CREATE TABLE replay_runs (
 );
 ```
 
-### 4.2 Dashboard Web (dashboard/server.py)
+### 4.2 UI Web Operacional (gateway/control/server.py)
 
-**Responsabilidade:** Visualizar eventos da engine (opcional).
+**Responsabilidade:** Operar capturas, runs, replay e observabilidade pela UI oficial.
 
-**Entrada:** JSONL de eventos (do replay2 com `--log-format json`).
+**Entrada:** SQLite + JSONL de captura/replay expostos pelo control plane.
 
 ```bash
-expect bin/main.exp ... --log-format json --log-stream stdout > events.jsonl
-python3 dashboard/server.py --events-file events.jsonl --listen 127.0.0.1:8080
+python3 gateway/control/server.py \
+  --listen 127.0.0.1:8090 \
+  --db gateway/state/replay.db
 ```
 
 ---
@@ -816,11 +817,12 @@ Editar `gateway/dakota_gateway/schema.py`:
 
 ### 10.4 Importar Logs em Dashboard
 
-Dashboard consome JSON-lines do replay2:
+UI oficial consome estado operacional e logs de captura/replay:
 
 ```bash
-expect bin/main.exp ... --log-format json | 
-    python3 dashboard/server.py --events-file /dev/stdin
+python3 gateway/control/server.py \
+    --listen 127.0.0.1:8090 \
+    --db gateway/state/replay.db
 ```
 
 ---

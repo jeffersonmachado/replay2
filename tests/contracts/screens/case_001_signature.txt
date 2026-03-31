@@ -1,0 +1,1 @@
+L=5;W=14;TIT=+----+|+----+;LBL=Usuário;Senha

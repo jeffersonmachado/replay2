@@ -12,8 +12,17 @@ rm -rf "$ROOT_DIR/tests/tmp" 2>/dev/null || true
 rm -rf \
   "$ROOT_DIR/gateway/__pycache__" \
   "$ROOT_DIR/gateway/dakota_gateway/__pycache__" \
+  "$ROOT_DIR/gateway/control/__pycache__" \
   "$ROOT_DIR/gateway/tests/__pycache__" \
   "$ROOT_DIR/dashboard/__pycache__" 2>/dev/null || true
+
+# Arquivos de banco de dados e estado local
+find "$ROOT_DIR" \
+  -name "*.db" \
+  -o -name "*.db-wal" \
+  -o -name "*.db-shm" \
+  -o -name "*.pyc" \
+  2>/dev/null | xargs rm -f || true
 
 if [ -d "$ROOT_DIR/dist" ]; then
   # Mantém dist/*.tar.gz (artefato oficial), remove o resto.

@@ -39,27 +39,44 @@ info "Staging em: $STAGE_DIR"
 
 cp -R "$ROOT_DIR/bin" "$ROOT_DIR/lib" "$ROOT_DIR/screens" "$STAGE_DIR/"
 if [ -d "$ROOT_DIR/gateway" ]; then cp -R "$ROOT_DIR/gateway" "$STAGE_DIR/"; fi
-if [ -d "$ROOT_DIR/dashboard" ]; then cp -R "$ROOT_DIR/dashboard" "$STAGE_DIR/"; fi
+if [ -d "$ROOT_DIR/tests" ]; then cp -R "$ROOT_DIR/tests" "$STAGE_DIR/"; fi
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
   mkdir -p "$STAGE_DIR/scripts"
-  cp -f "$ROOT_DIR/scripts/build-tarball.sh" "$STAGE_DIR/scripts/"
+  cp -f "$ROOT_DIR/scripts/"*.sh "$STAGE_DIR/scripts/"
 fi
 
 # Garante executáveis
-chmod +x "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/bin/main.exp" "$STAGE_DIR/scripts/build-tarball.sh" 2>/dev/null || true
+chmod +x "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/bin/main.exp" "$STAGE_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$STAGE_DIR/bin/replay2.exp" 2>/dev/null || true
-chmod +x "$STAGE_DIR/gateway/dakota-gateway" "$STAGE_DIR/gateway/control/server.py" "$STAGE_DIR/dashboard/server.py" 2>/dev/null || true
+chmod +x "$STAGE_DIR/gateway/dakota-gateway" "$STAGE_DIR/gateway/control/server.py" 2>/dev/null || true
 
-# Remove caches Python do stage (não são artefatos oficiais)
+# Remove caches Python e arquivos de estado do stage (não são artefatos oficiais)
 rm -rf \
   "$STAGE_DIR/gateway/__pycache__" \
   "$STAGE_DIR/gateway/dakota_gateway/__pycache__" \
+  "$STAGE_DIR/gateway/control/__pycache__" \
   "$STAGE_DIR/gateway/tests/__pycache__" \
-  "$STAGE_DIR/dashboard/__pycache__" 2>/dev/null || true
+  "$STAGE_DIR/tests/__pycache__" 2>/dev/null || true
 
-OUT="$DIST_DIR/${APP_NAME}-${VERSION}.tar.gz"
+# Remove arquivos de banco de dados e estado local
+find "$STAGE_DIR" \
+  -name "*.db" \
+  -o -name "*.db-wal" \
+  -o -name "*.db-shm" \
+  -o -name "*.pyc" \
+  2>/dev/null | xargs rm -f || true
+
+# Remove diretório gateway/state se existir vazio, ou deixa estrutura limpa
+if [ -d "$STAGE_DIR/gateway/state" ]; then
+  find "$STAGE_DIR/gateway/state" -maxdepth 1 -type f \
+    \( -name "*.db" -o -name "*.db-*" \) \
+    -delete 2>/dev/null || true
+fi
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="$DIST_DIR/${APP_NAME}-${VERSION}-${TIMESTAMP}.tar.gz"
 info "Gerando: $OUT"
 
 (cd "$STAGE_PARENT" && {

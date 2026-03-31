@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{title}}</title>
+<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
+<link rel="stylesheet" href="/assets/tailwind.css" />
+<link rel="stylesheet" href="/assets/control.css" />
+</head>
+<body class="r2ctl-theme-shell min-h-screen text-stone-100">
+<div class="fixed inset-0 pointer-events-none overflow-hidden">
+  <div class="r2ctl-theme-glow-top absolute -top-24 -left-16 h-72 w-72 rounded-full blur-3xl"></div>
+  <div class="r2ctl-theme-glow-bottom absolute bottom-0 right-0 h-80 w-80 rounded-full blur-3xl"></div>
+</div>
+<div id="sidebar_overlay" class="r2ctl-sidebar-overlay"></div>
+<main class="relative min-h-screen px-4 py-4 sm:px-6 lg:px-8">
+  <section class="r2ctl-shell-panel mx-auto max-w-[1580px] overflow-hidden rounded-[28px] backdrop-blur-md">
+    <div class="r2ctl-app-shell">
+      {{sidebar}}
+      <div class="r2ctl-app-main">
+        {{topbar}}
+        {{statusbar}}
+        <div class="r2ctl-page-content">
+          {{content}}
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<script type="module" src="/assets/js/core/navigation.js"></script>
+{{scripts}}
+</body>
+</html>

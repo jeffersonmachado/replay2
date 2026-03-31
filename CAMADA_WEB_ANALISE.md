@@ -485,11 +485,11 @@ def verify_cookie(secret: bytes, cookie_val: str) -> tuple[str, str, int] | None
 
 ---
 
-## 4. Dashboard Opcional (dashboard/server.py)
+## 4. UI Operacional Oficial (gateway/control/server.py)
 
 ### 4.1 Propósito
 
-**Visualização simples, em tempo real, de eventos da engine de automação (sem RBAC).**
+**Interface oficial para operação, captura, replay e observabilidade com autenticação.**
 
 ```
 Caso de Uso:
@@ -1005,12 +1005,12 @@ curl -X POST http://localhost:8090/api/runs \
 # Terminal 1: engine automação
 expect bin/main.exp --log-format json --log-stream stdout > replay2.jsonl &
 
-# Terminal 2: dashboard
-python3 dashboard/server.py \
-  --events-file ./replay2.jsonl \
-  --listen 127.0.0.1:8080
+# Terminal 2: UI operacional
+python3 gateway/control/server.py \
+  --listen 127.0.0.1:8090 \
+  --db gateway/state/replay.db
 
-# Browser: http://localhost:8080
+# Browser: http://localhost:8090
 ```
 
 ---

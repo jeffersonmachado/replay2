@@ -1,0 +1,102 @@
+Observability
+<div class="space-y-6" data-page-group="observability">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao de observabilidade">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/observability/overview" class="r2ctl-btn-soft" data-tab-link="overview">Overview</a>
+      <a href="/observability/sla" class="r2ctl-btn-soft" data-tab-link="sla">SLA</a>
+      <a href="/observability/regressions" class="r2ctl-btn-soft" data-tab-link="regressions">Regressoes</a>
+      <a href="/observability/reprocess" class="r2ctl-btn-soft" data-tab-link="reprocess">Reprocessamentos</a>
+      <a href="/observability/trends" class="r2ctl-btn-soft" data-tab-link="trends">Tendencias</a>
+      <a href="/observability/flows" class="r2ctl-btn-soft" data-tab-link="flows">Fluxos</a>
+      <a href="/observability/signatures" class="r2ctl-btn-soft" data-tab-link="signatures">Assinaturas</a>
+      <a href="/observability/automation" class="r2ctl-btn-soft" data-tab-link="automation">Automacao</a>
+    </div>
+  </nav>
+
+  <section id="obs-overview" data-section="overview" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+      <div class="space-y-3">
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <input id="obs_log_dir" placeholder="log_dir do gateway" class="r2ctl-input xl:col-span-2" />
+          <button id="obs_refresh_btn" class="r2ctl-btn-soft">Atualizar</button>
+          <label class="r2ctl-inline-chip inline-flex items-center gap-2 rounded-full px-4 py-2">
+            <input id="obs_auto_refresh" type="checkbox" checked class="r2ctl-checkbox h-4 w-4 rounded border-stone-600 bg-stone-900 text-pink-500" />
+            auto-refresh
+          </label>
+          <div id="obs_status" class="text-sm text-stone-300"></div>
+        </div>
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <input id="obs_env_filter" placeholder="ambiente" class="r2ctl-input" />
+          <input id="obs_created_from" placeholder="created_at_ms de" class="r2ctl-input" />
+          <input id="obs_created_to" placeholder="created_at_ms até" class="r2ctl-input" />
+          <input id="obs_run_limit" placeholder="limite de runs" class="r2ctl-input" value="50" />
+        </div>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl p-4">
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Cenário analítico</div>
+        <div class="mt-3 space-y-3">
+          <input id="obs_scenario_name" placeholder="nome do cenário analítico" class="r2ctl-input r2ctl-input-full" />
+          <input id="obs_scenario_tags" placeholder="tags csv" class="r2ctl-input r2ctl-input-full" />
+          <select id="obs_scenario_visibility" title="Visibilidade do cenário" class="r2ctl-input r2ctl-input-full"><option value="private">private</option><option value="shared">shared</option></select>
+          <button id="obs_save_scenario_btn" class="r2ctl-btn-soft">Salvar cenário</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section data-section="overview" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="r2ctl-metric-brand rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-brand text-xs uppercase tracking-[0.2em]">Eventos</p><p id="obs_metric_events" class="mt-2 text-3xl font-semibold text-stone-50">0</p></div>
+    <div class="r2ctl-metric-success rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-success text-xs uppercase tracking-[0.2em]">Sessões</p><p id="obs_metric_sessions" class="mt-2 text-3xl font-semibold text-emerald-100">0</p></div>
+    <div class="r2ctl-metric-warning rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-warning text-xs uppercase tracking-[0.2em]">Runs abertas</p><p id="obs_metric_open_runs" class="mt-2 text-3xl font-semibold text-amber-100">0</p></div>
+    <div class="r2ctl-metric-danger rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-danger text-xs uppercase tracking-[0.2em]">Falhas</p><p id="obs_metric_failures" class="mt-2 text-3xl font-semibold text-rose-100">0</p></div>
+  </section>
+
+  <section id="obs-sla" data-section="sla" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">SLA estourado</h3><div id="obs_sla_breaches" class="mt-3 space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">SLA em alerta</h3><div id="obs_sla_warnings" class="mt-3 space-y-3"></div></div>
+  </section>
+
+  <section data-section="overview" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Top tipos do gateway</h3><div id="obs_gateway_types" class="mt-3 space-y-2 text-sm text-stone-200"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Status das runs</h3><div id="obs_run_status" class="mt-3 space-y-2 text-sm text-stone-200"></div></div>
+  </section>
+
+  <section data-section="overview" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Falhas recentes</h3><pre id="obs_failures" class="max-h-80 overflow-auto text-xs leading-6 whitespace-pre-wrap"></pre></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Runs recentes</h3><div id="obs_runs" class="max-h-80 overflow-auto space-y-3"></div></div>
+  </section>
+
+  <section data-section="overview" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4">
+      <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Cenários salvos</h3>
+      <div class="mb-3 grid gap-3 md:grid-cols-2">
+        <select id="obs_scenario_visibility_filter" title="Filtrar por visibilidade" class="r2ctl-input"><option value="">todos</option><option value="private">private</option><option value="shared">shared</option></select>
+        <input id="obs_scenario_tag_filter" placeholder="filtrar por tag" class="r2ctl-input" />
+      </div>
+      <div id="obs_scenarios" class="space-y-3"></div>
+    </div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Tipos de falha</h3><div id="obs_failure_types" class="mt-3 space-y-2 text-sm text-stone-200"></div></div>
+  </section>
+
+  <section id="obs-regressions" data-section="regressions" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Regressões recentes</h3><div id="obs_regressions" class="space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Filtros ativos</h3><div id="obs_active_filters" class="space-y-3"></div></div>
+  </section>
+
+  <section id="obs-reprocess" data-section="reprocess" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Reprocessamentos por fluxo</h3><div id="obs_reprocess_flows" class="space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Assinaturas que repetem</h3><div id="obs_reprocess_signatures" class="space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Recuperação por ambiente</h3><div id="obs_reprocess_environments" class="space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Candidatas a automação</h3><div id="obs_reprocess_candidates" class="space-y-3"></div></div>
+  </section>
+
+  <section id="obs-trends" data-section="trends" class="grid gap-4 lg:grid-cols-2">
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Tendência por ambiente</h3><div id="obs_trend_environments" class="space-y-3"></div></div>
+    <div class="r2ctl-detail-surface rounded-2xl p-4"><h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Fluxos mais sensíveis</h3><div id="obs_trend_flows" class="space-y-3"></div></div>
+  </section>
+
+  <section data-section="reprocess" class="r2ctl-detail-surface rounded-2xl p-4">
+    <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Fila pendente / reincidente</h3>
+    <div id="obs_reprocess_queue" class="mt-3 space-y-3"></div>
+  </section>
+</div>

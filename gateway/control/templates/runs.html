@@ -1,0 +1,158 @@
+<div class="space-y-6" data-page-group="runs">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao de execucoes">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/runs" class="r2ctl-btn-soft" data-tab-link="queue">Fila</a>
+      <a href="/runs/history" class="r2ctl-btn-soft" data-tab-link="history">Historico</a>
+      <a href="/runs/failures" class="r2ctl-btn-soft" data-tab-link="failures">Falhas</a>
+      <a href="/runs/comparison" class="r2ctl-btn-soft" data-tab-link="comparison">Comparacao</a>
+      <a href="/runs/compliance" class="r2ctl-btn-soft" data-tab-link="compliance">Compliance</a>
+    </div>
+  </nav>
+
+  <section data-section="queue" class="space-y-4">
+    <div class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Fila</h2>
+          <p class="r2ctl-section-copy text-sm">Execuções ativas e pendentes com filtros e ações operacionais.</p>
+        </div>
+        <div class="flex flex-col gap-3 sm:flex-row">
+          <input id="runs_filter_status" placeholder="filtrar status" class="r2ctl-input" />
+          <input id="runs_filter_compliance" placeholder="filtrar compliance" class="r2ctl-input" />
+          <a href="/runs/new" class="r2ctl-btn-primary text-center">Nova run</a>
+        </div>
+      </div>
+    </div>
+    <div class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Visíveis</div>
+          <div id="runs_visible_count" class="mt-2 text-2xl font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Falhas</div>
+          <div id="runs_failed_count" class="mt-2 text-2xl font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Compliance bloqueado</div>
+          <div id="runs_blocked_count" class="mt-2 text-2xl font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Atualização</div>
+          <div id="runs_refresh_status" class="mt-2 text-sm text-stone-300">manual</div>
+        </div>
+      </div>
+      <div class="r2ctl-table-shell overflow-hidden rounded-3xl">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-stone-800 text-sm">
+            <thead class="r2ctl-table-head text-left text-xs uppercase tracking-[0.18em]">
+              <tr>
+                <th class="px-4 py-4">run</th>
+                <th class="px-4 py-4">status</th>
+                <th class="px-4 py-4">destino</th>
+                <th class="px-4 py-4">progresso</th>
+                <th class="px-4 py-4">compliance</th>
+                <th class="px-4 py-4">ações</th>
+              </tr>
+            </thead>
+            <tbody id="runs_rows" class="divide-y divide-stone-800"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section data-section="history" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Histórico</h2>
+        <p class="r2ctl-section-copy text-sm">Todas as runs concluídas ou canceladas em ordem cronológica inversa.</p>
+      </div>
+      <span id="history_refresh_status" class="text-xs text-stone-400">carregando</span>
+    </div>
+    <div class="r2ctl-table-shell overflow-hidden rounded-3xl">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-stone-800 text-sm">
+          <thead class="r2ctl-table-head text-left text-xs uppercase tracking-[0.18em]">
+            <tr>
+              <th class="px-4 py-4">run</th>
+              <th class="px-4 py-4">status</th>
+              <th class="px-4 py-4">destino</th>
+              <th class="px-4 py-4">progresso</th>
+              <th class="px-4 py-4">compliance</th>
+              <th class="px-4 py-4">ações</th>
+            </tr>
+          </thead>
+          <tbody id="history_rows" class="divide-y divide-stone-800"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section data-section="failures" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Falhas</h2>
+        <p class="r2ctl-section-copy text-sm">Runs com status de falha ou cancelamento para diagnóstico e reprocessamento.</p>
+      </div>
+      <span id="failures_refresh_status" class="text-xs text-stone-400">carregando</span>
+    </div>
+    <div class="r2ctl-table-shell overflow-hidden rounded-3xl">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-stone-800 text-sm">
+          <thead class="r2ctl-table-head text-left text-xs uppercase tracking-[0.18em]">
+            <tr>
+              <th class="px-4 py-4">run</th>
+              <th class="px-4 py-4">status</th>
+              <th class="px-4 py-4">destino</th>
+              <th class="px-4 py-4">progresso</th>
+              <th class="px-4 py-4">compliance</th>
+              <th class="px-4 py-4">ações</th>
+            </tr>
+          </thead>
+          <tbody id="failures_rows" class="divide-y divide-stone-800"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section data-section="comparison" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Comparação</h2>
+      <p class="r2ctl-section-copy text-sm">Compare duas runs para identificar regressões e divergências.</p>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+      <input id="compare_run_a" placeholder="ID da run base" class="r2ctl-input" />
+      <input id="compare_run_b" placeholder="ID da run comparada" class="r2ctl-input" />
+      <button id="compare_btn" class="r2ctl-btn-soft">Comparar</button>
+    </div>
+    <div id="compare_result" class="mt-4 space-y-3"></div>
+  </section>
+
+  <section data-section="compliance" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Compliance</h2>
+        <p class="r2ctl-section-copy text-sm">Runs com violação de compliance por sessão e por política ativa.</p>
+      </div>
+      <span id="compliance_refresh_status" class="text-xs text-stone-400">carregando</span>
+    </div>
+    <div class="r2ctl-table-shell overflow-hidden rounded-3xl">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-stone-800 text-sm">
+          <thead class="r2ctl-table-head text-left text-xs uppercase tracking-[0.18em]">
+            <tr>
+              <th class="px-4 py-4">run</th>
+              <th class="px-4 py-4">status</th>
+              <th class="px-4 py-4">destino</th>
+              <th class="px-4 py-4">progresso</th>
+              <th class="px-4 py-4">compliance</th>
+              <th class="px-4 py-4">ações</th>
+            </tr>
+          </thead>
+          <tbody id="compliance_rows" class="divide-y divide-stone-800"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>

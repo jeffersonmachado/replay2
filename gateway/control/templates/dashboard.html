@@ -1,0 +1,106 @@
+<div class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+  <section class="space-y-6">
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="r2ctl-metric-brand rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-brand text-xs uppercase tracking-[0.2em]">Total de runs</p>
+        <p id="metric_total_runs" class="mt-2 text-3xl font-semibold text-stone-50">0</p>
+      </div>
+      <div class="r2ctl-metric-success rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-success text-xs uppercase tracking-[0.2em]">Em execução</p>
+        <p id="metric_running_runs" class="mt-2 text-3xl font-semibold text-emerald-100">0</p>
+      </div>
+      <div class="r2ctl-metric-warning rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-warning text-xs uppercase tracking-[0.2em]">Na fila</p>
+        <p id="metric_queued_runs" class="mt-2 text-3xl font-semibold text-amber-100">0</p>
+      </div>
+      <div class="r2ctl-metric-danger rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-danger text-xs uppercase tracking-[0.2em]">Com falha</p>
+        <p id="metric_failed_runs" class="mt-2 text-3xl font-semibold text-rose-100">0</p>
+      </div>
+    </div>
+
+    <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Resumo de execuções</h2>
+          <p class="r2ctl-section-copy text-sm">Leitura rápida da fila, histórico recente e alertas operacionais.</p>
+        </div>
+        <a href="/runs" class="r2ctl-btn-soft">Abrir Execuções</a>
+      </div>
+      <div id="dashboard_runs_summary" class="grid gap-3 sm:grid-cols-2"></div>
+      <div class="mt-4">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Últimas runs</h3>
+          <span id="dashboard_runs_status" class="text-xs text-stone-500">carregando</span>
+        </div>
+        <div id="dashboard_recent_runs" class="space-y-3"></div>
+      </div>
+    </section>
+
+    <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Alertas recentes</h2>
+          <p class="r2ctl-section-copy text-sm">Falhas recentes e regressões com maior potencial de impacto.</p>
+        </div>
+        <a href="/observability" class="r2ctl-btn-soft">Ir para Observabilidade</a>
+      </div>
+      <div id="dashboard_alerts" class="space-y-3"></div>
+    </section>
+  </section>
+
+  <section class="space-y-6">
+    <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Gateway</h2>
+          <p class="r2ctl-section-copy text-sm">Status resumido do serviço e dos eventos mais recentes.</p>
+        </div>
+        <a href="/gateway" class="r2ctl-btn-soft">Abrir Gateway</a>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Serviço</div>
+          <div id="dashboard_gateway_service" class="mt-2 text-lg font-semibold text-stone-100">-</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Eventos</div>
+          <div id="dashboard_gateway_events" class="mt-2 text-lg font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Sessões</div>
+          <div id="dashboard_gateway_sessions" class="mt-2 text-lg font-semibold text-stone-100">0</div>
+        </div>
+      </div>
+      <div class="mt-4">
+        <label for="dashboard_log_dir" class="mb-2 block text-xs uppercase tracking-[0.14em] text-stone-500">Log dir do gateway</label>
+        <div class="flex flex-col gap-3 sm:flex-row">
+          <input id="dashboard_log_dir" placeholder="/var/log/dakota-gateway" class="r2ctl-input r2ctl-input-full" />
+          <button id="dashboard_refresh_gateway" class="r2ctl-btn-soft">Atualizar</button>
+        </div>
+      </div>
+      <div class="mt-4">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Tipos mais frequentes</h3>
+          <span id="dashboard_gateway_status" class="text-xs text-stone-500">aguardando fonte</span>
+        </div>
+        <div id="dashboard_gateway_types" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Acesso rápido</h2>
+          <p class="r2ctl-section-copy text-sm">Separação entre operação diária, catálogo e administração.</p>
+        </div>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <a href="/runs/new" class="r2ctl-quick-link">Criar nova run</a>
+        <a href="/catalog" class="r2ctl-quick-link">Gerenciar catálogo</a>
+        <a href="/runs" class="r2ctl-quick-link">Fila e histórico</a>
+        <a href="/admin" class="r2ctl-quick-link">Administração</a>
+      </div>
+    </section>
+  </section>
+</div>

@@ -18,7 +18,6 @@
 ### ❌ Testes Faltando
 
 - [ ] **Control Server API** (gateway/control/server.py)
-- [ ] **Dashboard** (dashboard/server.py)
 - [ ] **Web UI (browser tests)**
 - [ ] **E2E (end-to-end)**
 
@@ -304,11 +303,11 @@ class TestControlServer(unittest.TestCase):
         self.assertEqual(run["status"], "queued")
 
 
-class TestDashboardServer(unittest.TestCase):
-    """Tests para dashboard/server.py"""
+class TestControlServerUI(unittest.TestCase):
+    """Tests para gateway/control/server.py"""
     
-    def test_dashboard_start(self):
-        """Test: Dashboard pode ser iniciado"""
+    def test_control_server_start(self):
+        """Test: UI operacional pode ser iniciada"""
         # Note: Isso é mais um smoke test
         # Para testes mais completos, usar Selenium
         pass
@@ -631,18 +630,18 @@ expect bin/main.exp \
   --log-stream stdout > /tmp/replay2-test/events.jsonl &
 ```
 
-**Terminal 2: Dashboard**
+**Terminal 2: UI operacional**
 
 ```bash
-python3 dashboard/server.py \
-  --events-file /tmp/replay2-test/events.jsonl \
-  --listen 127.0.0.1:8080
+python3 gateway/control/server.py \
+  --listen 127.0.0.1:8090 \
+  --db gateway/state/replay.db
 ```
 
 **Terminal 3: Browser**
 
 ```
-http://localhost:8080
+http://localhost:8090
 ```
 
 ---

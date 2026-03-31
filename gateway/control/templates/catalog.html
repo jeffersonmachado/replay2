@@ -1,0 +1,138 @@
+<div class="space-y-6" data-page-group="catalog">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao do catalogo">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/catalog/targets" class="r2ctl-btn-soft" data-tab-link="targets">Ambientes</a>
+      <a href="/catalog/profiles" class="r2ctl-btn-soft" data-tab-link="profiles">Perfis</a>
+      <a href="/catalog/policies" class="r2ctl-btn-soft" data-tab-link="policies">Politicas</a>
+      <a href="/catalog/scenarios" class="r2ctl-btn-soft" data-tab-link="scenarios">Cenarios</a>
+    </div>
+  </nav>
+
+<div class="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+  <section class="space-y-6">
+    <section id="catalog-targets" data-section="targets" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Ambientes</h2>
+          <p class="r2ctl-section-copy text-sm">Cadastro operacional de ambientes alvo e suas políticas.</p>
+        </div>
+        <button id="catalog_refresh_targets_btn" class="r2ctl-btn-soft">Atualizar</button>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <input id="target_env_name" placeholder="nome do ambiente" class="r2ctl-input" />
+        <input id="target_env_host" placeholder="host" class="r2ctl-input" />
+        <input id="target_env_env_id" placeholder="env_id opcional" class="r2ctl-input" />
+        <input id="target_env_port" type="number" min="1" placeholder="porta" class="r2ctl-input" />
+        <select id="target_env_platform" title="Plataforma" class="r2ctl-input"><option value="linux">linux</option><option value="aix">aix</option></select>
+        <select id="target_env_transport_hint" title="Transporte" class="r2ctl-input"><option value="ssh">ssh</option><option value="telnet">telnet</option></select>
+        <select id="target_env_direct_ssh_policy" title="Política SSH direto" class="r2ctl-input"><option value="unrestricted">ssh direto irrestrito</option><option value="gateway_only">gateway only</option><option value="admin_only">somente admin</option><option value="disabled">desabilitado</option></select>
+        <select id="target_env_capture_start_mode" title="Modo de início de captura" class="r2ctl-input"><option value="session_start_required">captura exige session_start</option><option value="login_required">captura exige login</option></select>
+        <select id="target_env_capture_compliance_mode" title="Modo de compliance de captura" class="r2ctl-input"><option value="off">compliance off</option><option value="warn">warn</option><option value="strict">strict</option></select>
+        <input id="target_env_gateway_host" placeholder="gateway host" class="r2ctl-input" />
+        <input id="target_env_gateway_user" placeholder="gateway user" class="r2ctl-input" />
+        <input id="target_env_gateway_port" type="number" min="1" placeholder="gateway port" class="r2ctl-input" />
+      </div>
+      <div class="mt-3 flex flex-wrap gap-3 text-xs text-stone-300">
+        <label class="r2ctl-inline-chip inline-flex items-center gap-2 rounded-full px-4 py-2"><input id="target_env_gateway_required" type="checkbox" class="r2ctl-checkbox h-4 w-4 rounded border-stone-600 bg-stone-900 text-pink-500" />target gateway-only</label>
+        <label class="r2ctl-inline-chip inline-flex items-center gap-2 rounded-full px-4 py-2"><input id="target_env_allow_admin_direct_access" type="checkbox" class="r2ctl-checkbox h-4 w-4 rounded border-stone-600 bg-stone-900 text-pink-500" />permitir admin direto</label>
+      </div>
+      <div class="mt-3"><input id="target_env_description" placeholder="descrição operacional" class="r2ctl-input r2ctl-input-full" /></div>
+      <div class="mt-3 flex flex-wrap gap-3">
+        <button id="catalog_create_target_btn" class="r2ctl-btn-soft">Salvar ambiente</button>
+        <span id="targets_status" class="text-xs text-stone-500">carregando</span>
+      </div>
+      <div id="catalog_targets_list" class="mt-4 space-y-3"></div>
+    </section>
+
+    <section id="catalog-profiles" data-section="profiles" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Perfis</h2>
+          <p class="r2ctl-section-copy text-sm">Perfis de transporte, credencial e comando padrão.</p>
+        </div>
+        <button id="catalog_refresh_profiles_btn" class="r2ctl-btn-soft">Atualizar</button>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <input id="connection_profile_name" placeholder="nome do perfil" class="r2ctl-input" />
+        <input id="connection_profile_profile_id" placeholder="profile_id opcional" class="r2ctl-input" />
+        <select id="connection_profile_transport" title="Transporte do perfil" class="r2ctl-input"><option value="ssh">ssh</option><option value="telnet">telnet</option></select>
+        <input id="connection_profile_username" placeholder="usuário padrão" class="r2ctl-input" />
+        <input id="connection_profile_port" type="number" min="1" placeholder="porta" class="r2ctl-input" />
+        <input id="connection_profile_command" placeholder="comando padrão" class="r2ctl-input" />
+      </div>
+      <div class="mt-3"><input id="connection_profile_credential_ref" placeholder="credential_ref" class="r2ctl-input r2ctl-input-full" /></div>
+      <div class="mt-3 flex flex-wrap gap-3">
+        <button id="catalog_create_profile_btn" class="r2ctl-btn-soft">Salvar perfil</button>
+        <span id="profiles_status" class="text-xs text-stone-500">carregando</span>
+      </div>
+      <div id="catalog_profiles_list" class="mt-4 space-y-3"></div>
+    </section>
+  </section>
+
+  <section class="space-y-6">
+    <section id="catalog-policies" data-section="policies" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4">
+        <h2 class="r2ctl-section-title text-lg font-semibold">Políticas de acesso</h2>
+        <p class="r2ctl-section-copy text-sm">Resumo das políticas ativas derivadas dos ambientes cadastrados.</p>
+      </div>
+      <div id="catalog_policies_list" class="space-y-3"></div>
+    </section>
+
+    <section id="catalog-scenarios" data-section="scenarios" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Cenários operacionais</h2>
+          <p class="r2ctl-section-copy text-sm">Catálogo reutilizável de runs replay e stress com contexto operacional.</p>
+        </div>
+        <button id="catalog_refresh_scenarios_btn" class="r2ctl-btn-soft">Atualizar</button>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <input id="ops_scenario_name" placeholder="nome do cenário" class="r2ctl-input xl:col-span-2" />
+        <select id="ops_scenario_type" title="Tipo do cenário" class="r2ctl-input"><option value="replay">replay</option><option value="stress">stress</option></select>
+        <button id="save_operational_scenario_btn" class="r2ctl-btn-soft">Salvar cenário</button>
+      </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <input id="log_dir" placeholder="log_dir" class="r2ctl-input xl:col-span-2" />
+        <select id="ops_target_env_id" title="Ambiente alvo" class="r2ctl-input">
+          <option value="">ambiente alvo (opcional)</option>
+        </select>
+        <select id="ops_connection_profile_id" title="Perfil de conexão" class="r2ctl-input">
+          <option value="">perfil de conexão (opcional)</option>
+        </select>
+        <input id="target_host" placeholder="host alvo" class="r2ctl-input" />
+        <input id="target_user" placeholder="usuário alvo" class="r2ctl-input" />
+        <input id="target_cmd" placeholder="comando alvo opcional" class="r2ctl-input xl:col-span-2" />
+        <select id="mode" title="Modo de execução" class="r2ctl-input"><option value="strict-global">sequencial estrito</option><option value="parallel-sessions">paralelo por sessão</option></select>
+        <input id="concurrency" placeholder="concorrência" class="r2ctl-input" />
+        <input id="speed" placeholder="aceleração" class="r2ctl-input" />
+        <input id="jitter" placeholder="jitter" class="r2ctl-input" />
+        <select id="match_mode" title="Modo de matching" class="r2ctl-input"><option value="strict">matching estrito</option><option value="contains">contains</option><option value="regex">regex</option><option value="fuzzy">fuzzy</option></select>
+        <input id="match_threshold" type="number" min="0" max="1" step="0.01" placeholder="limiar fuzzy" class="r2ctl-input" />
+      </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <input id="ops_scenario_squad" placeholder="squad responsável" class="r2ctl-input" />
+        <input id="ops_scenario_area" placeholder="área operacional" class="r2ctl-input" />
+        <input id="ops_scenario_tags" placeholder="tags csv" class="r2ctl-input xl:col-span-2" />
+      </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <input id="ops_scenario_owner_name" placeholder="responsável" class="r2ctl-input" />
+        <input id="ops_scenario_owner_contact" placeholder="contato" class="r2ctl-input" />
+        <input id="ops_scenario_sla_failure_rate" type="number" min="0" max="100" step="0.1" placeholder="limite de falha (%)" class="r2ctl-input" />
+        <input id="ops_scenario_sla_criticality" type="number" min="0" max="100" step="0.1" placeholder="limite de criticidade" class="r2ctl-input" />
+      </div>
+      <div class="mt-3"><textarea id="ops_scenario_description" placeholder="descrição" class="r2ctl-input w-full min-h-[84px]"></textarea></div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <input id="ops_filter_environment" placeholder="filtrar ambiente/host" class="r2ctl-input" />
+        <input id="ops_filter_usage_user" placeholder="filtrar executor" class="r2ctl-input" />
+        <select id="ops_filter_type" title="Filtrar por tipo" class="r2ctl-input"><option value="">todos os tipos</option><option value="replay">replay</option><option value="stress">stress</option></select>
+        <select id="ops_sort_by" title="Ordenar por" class="r2ctl-input"><option value="updated">mais recentes</option><option value="most-used">mais executados</option><option value="criticality">maior criticidade</option><option value="highest-failure-rate">maior taxa de falha</option><option value="recent-use">uso mais recente</option><option value="name">nome</option></select>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-3">
+        <button id="clear_operational_editor_btn" class="r2ctl-btn-soft">Limpar editor</button>
+        <span id="ops_scenarios_status" class="text-xs text-stone-500">carregando catálogo</span>
+      </div>
+      <div id="ops_scenarios" class="mt-4 space-y-3"></div>
+    </section>
+  </section>
+</div>
+</div>

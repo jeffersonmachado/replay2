@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .screen import normalize_screen, signature_from_screen
+from .screen import build_screen_snapshot_from_bytes
 
 
 @dataclass
@@ -19,10 +19,17 @@ class ReplayConfig:
     target_host: str
     target_user: str = ""
     target_command: str = ""  # empty => shell
+    transport: str = "ssh"
+    target_port: int = 0
+    gateway_host: str = ""
+    gateway_user: str = ""
+    gateway_port: int = 0
 
     checkpoint_quiet_ms: int = 250
     checkpoint_timeout_ms: int = 5000
     max_screen_bytes: int = 65535
+    input_mode: str = "raw"
+    on_deterministic_mismatch: str = "fail-fast"
 
 
 class ReplayError(Exception):
@@ -50,11 +57,31 @@ class _TargetSession:
     def _ssh_argv(self) -> list[str]:
         if not self.cfg.target_host:
             raise ValueError("target_host required")
+        transport = str(self.cfg.transport or "ssh").strip().lower()
+        if transport == "telnet":
+            argv = ["telnet", self.cfg.target_host]
+            if int(self.cfg.target_port or 0) > 0:
+                argv.append(str(int(self.cfg.target_port)))
+            return argv
+        if transport != "ssh":
+            raise ValueError(f"unsupported transport: {transport}")
         dest = self.cfg.target_host
         user = self.target_user_override if self.target_user_override is not None else self.cfg.target_user
         if user:
             dest = f"{user}@{dest}"
-        argv = ["ssh", "-tt", "-o", "BatchMode=yes", dest]
+        argv = ["ssh", "-tt", "-o", "BatchMode=yes"]
+        gateway_host = str(self.cfg.gateway_host or "").strip()
+        if gateway_host:
+            gateway_dest = gateway_host
+            gateway_user = str(self.cfg.gateway_user or "").strip()
+            if gateway_user:
+                gateway_dest = f"{gateway_user}@{gateway_dest}"
+            if int(self.cfg.gateway_port or 0) > 0:
+                gateway_dest = f"{gateway_dest}:{int(self.cfg.gateway_port)}"
+            argv += ["-J", gateway_dest]
+        if int(self.cfg.target_port or 0) > 0:
+            argv += ["-p", str(int(self.cfg.target_port))]
+        argv.append(dest)
         if self.cfg.target_command:
             argv += ["--", self.cfg.target_command]
         return argv
@@ -82,9 +109,75 @@ class _TargetSession:
         return data
 
     def signature_now(self) -> str:
-        raw_text = self.screen_buf.decode("utf-8", errors="replace")
-        norm = normalize_screen(raw_text)
-        return signature_from_screen(norm)
+        return build_screen_snapshot_from_bytes(self.screen_buf).screen_sig
+
+
+def _decode_replay_input(ev: dict) -> bytes:
+    if str(ev.get("type") or "") == "deterministic_input":
+        return base64.b64decode(ev.get("key_b64") or "")
+    return base64.b64decode(ev.get("data_b64") or "")
+
+
+def _normalize_deterministic_mismatch_mode(value: str) -> str:
+    mode = str(value or "fail-fast").strip().lower()
+    return mode if mode in {"fail-fast", "skip", "send-anyway"} else "fail-fast"
+
+
+def _wait_for_screen_signature(
+    s: _TargetSession,
+    sel: selectors.BaseSelector,
+    expected_sig: str,
+    *,
+    checkpoint_quiet_ms: int,
+    checkpoint_timeout_ms: int,
+ ) -> dict:
+    deadline = int(time.time() * 1000) + checkpoint_timeout_ms
+    start_ms = int(time.time() * 1000)
+    last_observed = ""
+    while int(time.time() * 1000) < deadline:
+        events = sel.select(timeout=0.05)
+        for key, _ in events:
+            sid2 = key.data
+            try:
+                _ = s.read_out() if sid2 == s.session_id else None
+            except Exception:
+                pass
+        quiet = int(time.time() * 1000) - s.last_out_ms
+        if quiet >= checkpoint_quiet_ms:
+            last_observed = s.signature_now()
+            if last_observed == expected_sig:
+                return {
+                    "matched": True,
+                    "expected_sig": expected_sig,
+                    "observed_sig": last_observed,
+                    "waited_ms": int(time.time() * 1000) - start_ms,
+                    "quiet_ms": quiet,
+                }
+        time.sleep(0.02)
+    got = s.signature_now() or last_observed
+    return {
+        "matched": False,
+        "expected_sig": expected_sig,
+        "observed_sig": got,
+        "waited_ms": int(time.time() * 1000) - start_ms,
+        "quiet_ms": max(0, int(time.time() * 1000) - s.last_out_ms),
+    }
+
+
+def _handle_deterministic_mismatch(cfg: ReplayConfig, sid: str, match: dict) -> bool:
+    mode = _normalize_deterministic_mismatch_mode(cfg.on_deterministic_mismatch)
+    if match.get("matched"):
+        return True
+    message = (
+        f"deterministic screen mismatch session={sid}: expected={match.get('expected_sig')!r} "
+        f"got={match.get('observed_sig')!r} waited_ms={int(match.get('waited_ms') or 0)} "
+        f"mode={mode}"
+    )
+    if mode == "skip":
+        return False
+    if mode == "send-anyway":
+        return True
+    raise ReplayError(message)
 
 
 def _iter_jsonl_files(log_dir: str) -> list[Path]:
@@ -146,8 +239,26 @@ def replay_strict_global(cfg: ReplayConfig) -> None:
                     sid = ev.get("session_id") or ""
                     typ = ev.get("type") or ""
 
-                    if typ == "bytes" and ev.get("dir") == "in":
-                        data = base64.b64decode(ev.get("data_b64") or "")
+                    if cfg.input_mode == "deterministic":
+                        if typ != "deterministic_input":
+                            continue
+                        expected_sig = str(ev.get("screen_sig") or "")
+                        if expected_sig:
+                            match = _wait_for_screen_signature(
+                                get_sess(sid),
+                                sel,
+                                expected_sig,
+                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                                checkpoint_timeout_ms=cfg.checkpoint_timeout_ms,
+                            )
+                            if not _handle_deterministic_mismatch(cfg, sid, match):
+                                continue
+                        data = _decode_replay_input(ev)
+                    elif typ == "bytes" and ev.get("dir") == "in":
+                        data = _decode_replay_input(ev)
+                    else:
+                        data = b""
+                    if data:
                         if not sid:
                             continue
                         s = get_sess(sid)
@@ -213,8 +324,25 @@ def replay_parallel_sessions(cfg: ReplayConfig) -> None:
         try:
             for ev in events:
                 typ = ev.get("type") or ""
-                if typ == "bytes" and ev.get("dir") == "in":
-                    data = base64.b64decode(ev.get("data_b64") or "")
+                if cfg.input_mode == "deterministic":
+                    if typ != "deterministic_input":
+                        continue
+                    expected_sig = str(ev.get("screen_sig") or "")
+                    if expected_sig:
+                        match = _wait_for_screen_signature(
+                            s,
+                            sel,
+                            expected_sig,
+                            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                            checkpoint_timeout_ms=cfg.checkpoint_timeout_ms,
+                        )
+                        if not _handle_deterministic_mismatch(cfg, sid, match):
+                            continue
+                    data = _decode_replay_input(ev)
+                    if data:
+                        s.write_in(data)
+                elif typ == "bytes" and ev.get("dir") == "in":
+                    data = _decode_replay_input(ev)
                     if data:
                         s.write_in(data)
                 elif typ == "checkpoint":
@@ -258,4 +386,3 @@ def replay_parallel_sessions(cfg: ReplayConfig) -> None:
             except Exception:
                 pass
             s.close()
-

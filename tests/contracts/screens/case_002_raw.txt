@@ -1,0 +1,7 @@
+
+[31m== Menu Principal ==[0m
+Opção: 1
+Cliente: ABC   
+
+
+Status: OK

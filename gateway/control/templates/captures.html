@@ -1,0 +1,107 @@
+<div class="space-y-6" data-page-group="captures">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao de capturas">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/captures" class="r2ctl-btn-soft" data-tab-link="list">Lista</a>
+    </div>
+  </nav>
+
+  <!-- Lista de capturas -->
+  <section id="captures-list" data-section="list" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Capturas</h2>
+        <p class="r2ctl-section-copy text-sm">Sessoes de captura registradas pela UI.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="reload_captures_btn" class="r2ctl-btn-soft">Atualizar</button>
+      </div>
+    </div>
+    <div class="mb-3 rounded-2xl px-4 py-3 text-sm bg-sky-900/30 text-sky-200 border border-sky-700/40">
+      A captura inicia automaticamente quando o gateway é ativado.
+    </div>
+    <div id="captures_gateway_alert" class="hidden mb-3 rounded-2xl px-4 py-3 text-sm bg-amber-900/40 text-amber-200 border border-amber-700/40">
+      Gateway inativo. <a href="/gateway" class="underline">Ative o gateway</a> para iniciar capturas.
+    </div>
+    <div id="captures_list_content" class="space-y-3">
+      <div class="text-sm text-stone-400">Carregando...</div>
+    </div>
+  </section>
+
+  <!-- Detalhe de captura (carregado via JS para /captures/:id) -->
+  <section id="captures-detail" data-section="detail" class="hidden r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Detalhe da Captura</h2>
+        <p id="cap_detail_id" class="r2ctl-section-copy text-sm">-</p>
+      </div>
+      <button id="cap_stop_btn" class="r2ctl-btn-pill r2ctl-btn-pill-neutral hidden">Encerrar Captura</button>
+    </div>
+
+    <!-- Cabecalho -->
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 mb-4">
+      <div class="r2ctl-metric-brand rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-brand text-xs uppercase tracking-[0.2em]">Status</p>
+        <p id="cap_detail_status" class="mt-2 text-lg font-semibold text-stone-50">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-4">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400">Criado por</p>
+        <p id="cap_detail_by" class="mt-2 text-sm font-semibold text-stone-200">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-4">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400">Iniciado em</p>
+        <p id="cap_detail_started" class="mt-2 text-sm font-semibold text-stone-200">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-4">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400">Encerrado em</p>
+        <p id="cap_detail_ended" class="mt-2 text-sm font-semibold text-stone-200">-</p>
+      </div>
+    </div>
+
+    <!-- Contexto -->
+    <div class="grid gap-3 sm:grid-cols-3 mb-4">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Ambiente</p>
+        <p id="cap_detail_env" class="text-sm text-stone-200 font-mono">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Perfil</p>
+        <p id="cap_detail_profile" class="text-sm text-stone-200">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">log_dir</p>
+        <p id="cap_detail_logdir" class="text-sm text-stone-200 font-mono text-xs break-all">-</p>
+      </div>
+    </div>
+
+    <!-- Acoes de replay -->
+    <div id="cap_detail_replay_panel" class="mb-4 hidden">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+        <span id="cap_detail_replay_copy" class="text-sm text-stone-300">Criar replay a partir desta captura.</span>
+        <div class="flex items-center gap-2">
+          <a id="cap_detail_view_link" href="#" class="r2ctl-btn-soft text-xs hidden">View</a>
+          <a id="cap_detail_replay_link" href="/runs/new" class="r2ctl-btn-soft text-xs hidden">Criar Replay</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessoes da captura -->
+    <div class="mb-4">
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Sessoes da captura</h3>
+        <span id="cap_sessions_summary" class="text-xs text-stone-400">Carregando sessões...</span>
+      </div>
+      <div id="cap_sessions_list" class="space-y-3">
+        <div class="r2ctl-detail-surface rounded-2xl px-4 py-3 text-sm text-stone-400">Carregando sessões...</div>
+      </div>
+    </div>
+
+    <!-- Timeline de eventos -->
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Timeline de eventos</h3>
+      <button id="cap_load_events_btn" class="r2ctl-btn-soft text-xs">Carregar eventos</button>
+    </div>
+    <div id="cap_events_panel" class="space-y-2">
+      <pre id="cap_events_content" class="r2ctl-detail-surface max-h-[520px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Clique em "Carregar eventos" para visualizar a timeline.</pre>
+    </div>
+  </section>
+</div>

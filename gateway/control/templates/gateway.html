@@ -1,0 +1,179 @@
+<div class="space-y-6" data-page-group="gateway">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao do gateway">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a href="/gateway/status" class="r2ctl-btn-soft" data-tab-link="status">Status</a>
+      <a href="/gateway/monitor" class="r2ctl-btn-soft" data-tab-link="monitor">Monitor</a>
+      <a href="/gateway/events" class="r2ctl-btn-soft" data-tab-link="events">Eventos</a>
+      <a href="/gateway/sessions" class="r2ctl-btn-soft" data-tab-link="sessions">Sessoes</a>
+      <a href="/gateway/compliance" class="r2ctl-btn-soft" data-tab-link="compliance">Compliance</a>
+    </div>
+  </nav>
+
+  <!-- Painel de controle do gateway -->
+  <section id="gateway-status" data-section="status" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Gateway</h2>
+        <p class="r2ctl-section-copy text-sm">Controle centralizado de ativacao e captura.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="gateway_activate_btn" class="r2ctl-btn-pill r2ctl-btn-pill-emerald hidden">Ativar Gateway</button>
+        <button id="gateway_deactivate_btn" class="r2ctl-btn-pill r2ctl-btn-pill-neutral hidden">Desativar Gateway</button>
+      </div>
+    </div>
+
+    <!-- Estado atual -->
+    <div id="gateway_state_panel" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 mb-4">
+      <div id="gw_state_card" class="r2ctl-metric-brand rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-brand text-xs uppercase tracking-[0.2em]">Estado</p>
+        <p id="gw_state_active" class="mt-2 text-xl font-semibold text-stone-50">verificando...</p>
+      </div>
+      <div class="r2ctl-metric-success rounded-2xl px-4 py-4">
+        <p class="r2ctl-metric-label-success text-xs uppercase tracking-[0.2em]">Ambiente</p>
+        <p id="gw_state_env" class="mt-2 text-sm font-semibold text-emerald-100 truncate">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-4">
+        <p class="text-xs uppercase tracking-[0.2em] text-stone-400">Ativado por</p>
+        <p id="gw_state_by" class="mt-2 text-sm font-semibold text-stone-200 truncate">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-4">
+        <p class="text-xs uppercase tracking-[0.2em] text-stone-400">Ativado em</p>
+        <p id="gw_state_at" class="mt-2 text-sm font-semibold text-stone-200">-</p>
+      </div>
+    </div>
+
+    <!-- Detalhes de perfil e captura ativa -->
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 mb-4">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Perfil selecionado</p>
+        <p id="gw_state_profile" class="text-sm text-stone-200">nenhum</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Captura ativa</p>
+        <p id="gw_state_capture" class="text-sm text-stone-200">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Hostname</p>
+        <p id="gw_state_hostname" class="text-sm text-stone-200 font-mono truncate">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Política</p>
+        <p id="gw_state_policy" class="text-sm text-stone-200">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Rota SSH (desejada)</p>
+        <p id="gw_state_ssh" class="text-sm text-stone-200 font-mono">-</p>
+      </div>
+    </div>
+
+    <!-- Feedback de operações -->
+    <div id="gateway_feedback" class="text-sm text-stone-400 mb-4">verificando estado do gateway...</div>
+
+    <!-- Opcoes avancadas colapsaveis -->
+    <details class="r2ctl-detail-surface rounded-2xl">
+      <summary class="cursor-pointer px-4 py-3 text-xs uppercase tracking-[0.18em] text-stone-400 select-none">
+        Opcoes avancadas (opcional)
+      </summary>
+      <div class="px-4 pb-4 pt-2 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs text-stone-400 mb-1">Perfil de conexao (opcional)</label>
+          <select id="gw_profile_select" class="r2ctl-input w-full">
+            <option value="">— nenhum —</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-stone-400 mb-1">Usuario operacional (opcional)</label>
+          <select id="gw_opuser_select" class="r2ctl-input w-full">
+            <option value="">— nenhum —</option>
+          </select>
+        </div>
+      </div>
+    </details>
+
+    <!-- Link rapido para captura -->
+    <div id="gw_capture_link_panel" class="mt-4 hidden">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+        <span class="text-sm text-stone-300">Gateway ativo — a captura é iniciada automaticamente na conexão.</span>
+        <a href="/captures" class="r2ctl-btn-soft text-xs">Ver Capturas</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="gateway-monitor" data-section="monitor" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Monitor</h2>
+        <p class="r2ctl-section-copy text-sm">Acompanhamento dos eventos recentes do gateway sem poluir a tela principal.</p>
+      </div>
+      <div class="flex flex-col gap-3 sm:flex-row">
+        <input id="monitor_log_dir" placeholder="log_dir do gateway para monitorar" class="r2ctl-input min-w-[280px]" />
+        <button id="load_gateway_monitor_btn" class="r2ctl-btn-soft">Atualizar monitor</button>
+      </div>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="r2ctl-metric-brand rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-brand text-xs uppercase tracking-[0.2em]">Eventos</p><p id="gw_metric_events" class="mt-2 text-3xl font-semibold text-stone-50">0</p></div>
+      <div class="r2ctl-metric-success rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-success text-xs uppercase tracking-[0.2em]">Sessões</p><p id="gw_metric_sessions" class="mt-2 text-3xl font-semibold text-emerald-100">0</p></div>
+      <div class="r2ctl-metric-warning rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-warning text-xs uppercase tracking-[0.2em]">Checkpoints</p><p id="gw_metric_checkpoints" class="mt-2 text-3xl font-semibold text-amber-100">0</p></div>
+      <div class="r2ctl-metric-danger rounded-2xl px-4 py-4"><p class="r2ctl-metric-label-danger text-xs uppercase tracking-[0.2em]">Atenção</p><p id="gw_metric_attention" class="mt-2 text-3xl font-semibold text-rose-100">0</p></div>
+    </div>
+    <div class="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <div class="r2ctl-detail-surface rounded-2xl p-4">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Tipos mais frequentes</h3>
+          <span id="gw_monitor_status" class="text-xs text-stone-400">aguardando log_dir</span>
+        </div>
+        <div id="gw_top_types" class="space-y-2 text-sm text-stone-200"></div>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl p-4">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Último sinal</h3>
+          <span id="gw_last_seen" class="text-xs text-stone-400">-</span>
+        </div>
+        <div id="gw_last_signal" class="space-y-2 text-sm text-stone-200"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="gateway-events" data-section="events" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Eventos recentes</h2>
+      <span class="text-xs text-stone-400">Últimos 40 eventos</span>
+    </div>
+    <pre id="gw_recent_events" class="r2ctl-detail-surface max-h-80 overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap"></pre>
+  </section>
+
+  <section id="gateway-sessions" data-section="sessions" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Sessões</h2>
+        <p class="r2ctl-section-copy text-sm">Sessões, eventos e compliance por sessão em uma área separada.</p>
+      </div>
+      <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        <input id="gw_session_actor" placeholder="ator" class="r2ctl-input" />
+        <input id="gw_session_id_filter" placeholder="session_id" class="r2ctl-input" />
+        <input id="gw_session_event_type" placeholder="tipo de evento" class="r2ctl-input" />
+        <input id="gw_session_q" placeholder="busca livre" class="r2ctl-input" />
+      </div>
+    </div>
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <span id="gw_sessions_status" class="text-xs text-stone-400">aguardando log_dir</span>
+      <button id="load_gateway_sessions_btn" class="r2ctl-btn-soft">Atualizar sessões</button>
+    </div>
+    <div id="gw_sessions" class="space-y-3"></div>
+  </section>
+
+  <section id="gateway-compliance" data-section="compliance" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Timeline e compliance</h2>
+      <span class="text-xs text-stone-400">Selecione uma sessão para aprofundar</span>
+    </div>
+    <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+      <input id="gw_detail_seq_from" placeholder="seq_global de" class="r2ctl-input" />
+      <input id="gw_detail_seq_to" placeholder="seq_global até" class="r2ctl-input" />
+      <input id="gw_detail_ts_from" placeholder="ts_ms de" class="r2ctl-input" />
+      <input id="gw_detail_ts_to" placeholder="ts_ms até" class="r2ctl-input" />
+      <input id="gw_detail_limit" placeholder="limite timeline" class="r2ctl-input" value="200" />
+    </div>
+    <pre id="gw_session_detail" class="r2ctl-detail-surface mt-4 max-h-[480px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma sessão para ver a timeline detalhada.</pre>
+  </section>
+</div>

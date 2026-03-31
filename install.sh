@@ -202,12 +202,16 @@ fi
 sudo_or_die_prefix mkdir -p "$PREFIX"
 sudo_or_die_prefix cp -R "$SRC_ROOT/bin" "$SRC_ROOT/lib" "$SRC_ROOT/screens" "$PREFIX/"
 if [ -d "$SRC_ROOT/gateway" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/gateway" "$PREFIX/"; fi
-if [ -d "$SRC_ROOT/dashboard" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/dashboard" "$PREFIX/"; fi
+if [ -d "$SRC_ROOT/scripts" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/scripts" "$PREFIX/"; fi
+if [ -d "$SRC_ROOT/tests" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/tests" "$PREFIX/"; fi
 if [ -f "$SRC_ROOT/README.md" ]; then sudo_or_die_prefix cp -f "$SRC_ROOT/README.md" "$PREFIX/"; fi
 if [ -f "$SRC_ROOT/VERSION" ]; then sudo_or_die_prefix cp -f "$SRC_ROOT/VERSION" "$PREFIX/"; fi
 sudo_or_die_prefix cp -f "$SRC_ROOT/uninstall.sh" "$PREFIX/uninstall.sh"
 
 sudo_or_die_prefix chmod +x "$PREFIX/bin/main.exp" "$PREFIX/bin/replay2.exp" "$PREFIX/uninstall.sh"
+if [ -d "$PREFIX/scripts" ]; then
+  find "$PREFIX/scripts" -maxdepth 1 -name "*.sh" -exec chmod +x {} \;
+fi
 
 # Artefatos Python: tornar executáveis e remover caches, se existirem
 if [ -f "$PREFIX/gateway/dakota-gateway" ]; then
@@ -216,14 +220,20 @@ fi
 if [ -f "$PREFIX/gateway/control/server.py" ]; then
   sudo_or_die_prefix chmod +x "$PREFIX/gateway/control/server.py" || true
 fi
-if [ -f "$PREFIX/dashboard/server.py" ]; then
-  sudo_or_die_prefix chmod +x "$PREFIX/dashboard/server.py" || true
-fi
 sudo_or_die_prefix rm -rf \
   "$PREFIX/gateway/__pycache__" \
   "$PREFIX/gateway/dakota_gateway/__pycache__" \
+  "$PREFIX/gateway/control/__pycache__" \
   "$PREFIX/gateway/tests/__pycache__" \
-  "$PREFIX/dashboard/__pycache__" 2>/dev/null || true
+  "$PREFIX/tests/__pycache__" 2>/dev/null || true
+
+# Remove arquivos de banco de dados e estado local que possam ter vindo com tarball
+find "$PREFIX" \
+  -name "*.db" \
+  -o -name "*.db-wal" \
+  -o -name "*.db-shm" \
+  -o -name "*.pyc" \
+  2>/dev/null | xargs rm -f || true
 
 # Wrapper replay2
 WRAPPER="$PREFIX/bin/replay2"
@@ -270,28 +280,6 @@ exit 127
 EOF
 ' sh "$GW_WRAPPER"
 sudo_or_die_prefix chmod +x "$GW_WRAPPER"
-
-# Wrapper replay-dashboard (opcional)
-DASH_WRAPPER="$PREFIX/bin/replay2-dashboard"
-sudo_or_die_prefix sh -c '
-cat >"$1" <<'"'"'EOF'"'"'
-#!/bin/sh
-set -eu
-
-PREFIX_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-
-if command -v python3 >/dev/null 2>&1; then
-  if [ -f "$PREFIX_DIR/gateway/control/server.py" ]; then
-    PYTHONPATH="$PREFIX_DIR/gateway${PYTHONPATH:+:$PYTHONPATH}"
-    export PYTHONPATH
-    exec python3 "$PREFIX_DIR/gateway/control/server.py" "$@"
-  fi
-fi
-printf "%s\n" "Erro: dashboard não encontrado ou python3 indisponível." >&2
-exit 127
-EOF
-' sh "$DASH_WRAPPER"
-sudo_or_die_prefix chmod +x "$DASH_WRAPPER"
 
 # Symlink opcional
 if [ -z "$LINK_DIR" ] && is_root && [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then

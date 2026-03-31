@@ -48,6 +48,11 @@ paths:
         - in: query
           name: limit
           schema: { type: integer, default: 200 }
+        - in: query
+          name: compliance_status
+          schema:
+            type: string
+            enum: [compliant, warning, non_compliant, rejected, not_applicable]
       responses:
         '200': { description: Runs listed }
         '401': { description: Unauthorized }
@@ -59,21 +64,206 @@ paths:
           application/json:
             schema:
               type: object
-              required: [log_dir, target_host, target_user, mode]
+              required: [log_dir, mode]
               properties:
                 log_dir: { type: string }
                 target_host: { type: string }
                 target_user: { type: string }
                 target_command: { type: string }
+                target_env_id: { type: integer }
+                connection_profile_id: { type: integer }
                 mode:
                   type: string
                   enum: [strict-global, parallel-sessions]
                 params:
                   type: object
+                  properties:
+                    transport:
+                      type: string
+                      enum: [ssh, telnet]
+                    gateway_host: { type: string }
+                    gateway_user: { type: string }
+                    gateway_port: { type: integer }
+                    gateway_route_mode:
+                      type: string
+                      enum: [proxyjump]
       responses:
         '200': { description: Created }
         '401': { description: Unauthorized }
         '403': { description: Forbidden }
+        '400': { description: Invalid payload }
+  /api/runs/{id}:
+    get:
+      summary: Get replay run detail with compliance and failure summary
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Run detail }
+        '401': { description: Unauthorized }
+  /api/runs/{id}/compliance:
+    get:
+      summary: Get run compliance evidence
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Run compliance returned }
+        '401': { description: Unauthorized }
+  /api/targets:
+    get:
+      summary: List reusable target environments
+      parameters:
+        - in: query
+          name: gateway_required
+          schema: { type: boolean }
+      responses:
+        '200': { description: Targets listed }
+        '401': { description: Unauthorized }
+    post:
+      summary: Create reusable target environment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, host]
+              properties:
+                env_id: { type: string }
+                name: { type: string }
+                host: { type: string }
+                port: { type: integer }
+                platform: { type: string }
+                transport_hint:
+                  type: string
+                  enum: [ssh, telnet]
+                gateway_required: { type: boolean }
+                direct_ssh_policy:
+                  type: string
+                  enum: [gateway_only, admin_only, unrestricted, disabled]
+                capture_start_mode:
+                  type: string
+                  enum: [login_required, session_start_required]
+                capture_compliance_mode:
+                  type: string
+                  enum: [strict, warn, off]
+                allow_admin_direct_access: { type: boolean }
+                gateway_host: { type: string }
+                gateway_user: { type: string }
+                gateway_port: { type: integer }
+                description: { type: string }
+                metadata: { type: object }
+      responses:
+        '200': { description: Target created }
+        '400': { description: Invalid input }
+  /api/targets/{id}:
+    get:
+      summary: Get reusable target environment detail with policy
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Target detail }
+        '401': { description: Unauthorized }
+  /api/targets/{id}/policy:
+    post:
+      summary: Update target gateway/compliance policy
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gateway_required: { type: boolean }
+                direct_ssh_policy:
+                  type: string
+                  enum: [gateway_only, admin_only, unrestricted, disabled]
+                capture_start_mode:
+                  type: string
+                  enum: [login_required, session_start_required]
+                capture_compliance_mode:
+                  type: string
+                  enum: [strict, warn, off]
+                allow_admin_direct_access: { type: boolean }
+                gateway_host: { type: string }
+                gateway_user: { type: string }
+                gateway_port: { type: integer }
+      responses:
+        '200': { description: Target policy updated }
+        '400': { description: Invalid input }
+  /api/connection-profiles:
+    get:
+      summary: List reusable connection profiles
+      responses:
+        '200': { description: Connection profiles listed }
+        '401': { description: Unauthorized }
+    post:
+      summary: Create reusable connection profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                profile_id: { type: string }
+                name: { type: string }
+                transport:
+                  type: string
+                  enum: [ssh, telnet]
+                username: { type: string }
+                port: { type: integer }
+                command: { type: string }
+                credential_ref: { type: string }
+                auth_mode: { type: string }
+                options: { type: object }
+      responses:
+        '200': { description: Connection profile created }
+        '400': { description: Invalid input }
+  /api/gateway/sessions:
+    get:
+      summary: List gateway sessions with compliance summary
+      parameters:
+        - in: query
+          name: log_dir
+          schema: { type: string }
+        - in: query
+          name: target_env_id
+          schema: { type: integer }
+      responses:
+        '200': { description: Sessions listed }
+        '401': { description: Unauthorized }
+  /api/gateway/sessions/{session_id}/compliance:
+    get:
+      summary: Get compliance evidence for one captured session
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: log_dir
+          schema: { type: string }
+        - in: query
+          name: target_env_id
+          schema: { type: integer }
+      responses:
+        '200': { description: Session compliance returned }
+        '401': { description: Unauthorized }
   /api/runs/{id}/events:
     get:
       summary: List run events
@@ -95,6 +285,7 @@ paths:
           schema: { type: integer }
       responses:
         '200': { description: Started }
+        '409': { description: Blocked by gateway/compliance policy }
   /api/runs/{id}/pause:
     post:
       summary: Pause running run

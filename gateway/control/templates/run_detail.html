@@ -1,0 +1,24 @@
+<div class="space-y-6">
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Detalhe da run</h2>
+        <p class="r2ctl-section-copy text-sm">Contexto completo, comparação, compliance, falhas e exportações.</p>
+      </div>
+      <div class="flex gap-3">
+        <input id="detail_id" placeholder="id da run" class="r2ctl-input r2ctl-input-id" />
+        <button id="load_detail_btn" class="r2ctl-btn-soft">Carregar</button>
+      </div>
+    </div>
+  </section>
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div id="detail" class="space-y-4"></div>
+  </section>
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Eventos e falhas</h2>
+      <a href="/runs" class="r2ctl-btn-soft">Voltar para Execuções</a>
+    </div>
+    <pre id="events" class="r2ctl-detail-surface max-h-[420px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma run para carregar eventos.</pre>
+  </section>
+</div>

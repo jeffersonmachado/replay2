@@ -1,0 +1,6 @@
+
+== Menu Principal ==
+Opção: 1
+Cliente: ABC
+
+Status: OK

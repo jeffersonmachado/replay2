@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dakota Calçados | Replay Control</title>
+<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
+<link rel="stylesheet" href="/assets/tailwind.css" />
+<link rel="stylesheet" href="/assets/control.css" />
+</head>
+<body class="r2ctl-theme-shell flex items-center justify-center min-h-screen">
+  <div class="r2ctl-theme-glow-top fixed top-0 left-0 w-96 h-96 rounded-full blur-3xl"></div>
+  <div class="r2ctl-theme-glow-bottom fixed bottom-0 right-0 w-96 h-96 rounded-full blur-3xl"></div>
+  
+  <div class="relative w-full max-w-md mx-auto px-6 fade-in">
+    <div class="r2ctl-shell-panel rounded-3xl p-8 space-y-8">
+      <div class="text-center space-y-4">
+        <div class="flex justify-center mb-2">
+          <div class="r2ctl-logo-chip rounded-2xl px-5 py-4">
+            <img
+              src="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg"
+              alt="Dakota"
+              class="h-7 w-auto"
+              loading="eager"
+              referrerpolicy="no-referrer"
+            />
+          </div>
+        </div>
+        <p class="r2ctl-kicker text-xs font-medium uppercase tracking-[0.24em]">Replay Control</p>
+        <h1 class="text-3xl font-semibold tracking-[0.18em] uppercase text-stone-50">Replay Control</h1>
+        <p class="text-stone-300 text-sm">Sistema interno de automação para Dakota Calçados</p>
+        <div class="text-xs uppercase tracking-[0.18em] text-stone-500">Acesso ao control plane reorganizado por domínio</div>
+      </div>
+      
+      <form id="loginForm" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-stone-200 mb-2">Usuário</label>
+          <input id="u" type="text" placeholder="seu usuário" class="r2ctl-input r2ctl-input-full"/>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-stone-200 mb-2">Senha</label>
+          <input id="p" type="password" placeholder="sua senha" class="r2ctl-input r2ctl-input-full"/>
+        </div>
+        
+        <div id="msg" class="r2ctl-error-banner hidden text-sm px-4 py-3 rounded-xl"></div>
+        
+        <button id="loginSubmit" type="submit" class="r2ctl-btn-primary r2ctl-btn-primary-login">Entrar</button>
+      </form>
+      
+      <div class="pt-6 border-t border-stone-700/50 space-y-2 text-center">
+        <p class="text-stone-500 text-xs uppercase tracking-[0.18em]">Desenvolvido por</p>
+        <div class="flex justify-center text-sm">
+          <a href="https://www.results.com.br/" target="_blank" rel="noopener noreferrer" class="r2ctl-link-brand font-medium">Results</a>
+        </div>
+      </div>
+    </div>
+    
+    <p class="text-center text-stone-500 text-xs mt-8">Sistema seguro - Acesso restrito</p>
+  </div>
+  <script type="module" src="/assets/js/pages/login.js"></script>
+</body></html>

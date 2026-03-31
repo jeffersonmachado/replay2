@@ -1,0 +1,37 @@
+<div class="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+  <section class="space-y-6">
+    <section id="admin-session" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4">
+        <h2 class="r2ctl-section-title text-lg font-semibold">Sessão atual</h2>
+        <p class="r2ctl-section-copy text-sm">Identidade atual e status do gateway para o operador conectado.</p>
+      </div>
+      <div id="admin_session_card" class="space-y-3"></div>
+    </section>
+    <section id="admin-settings" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4">
+        <h2 class="r2ctl-section-title text-lg font-semibold">Parâmetros globais</h2>
+        <p class="r2ctl-section-copy text-sm">Resumo mínimo das configurações operacionais disponíveis nesta instância.</p>
+      </div>
+      <div id="admin_settings_card" class="space-y-3"></div>
+    </section>
+  </section>
+  <section id="admin-users" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Usuários</h2>
+        <p class="r2ctl-section-copy text-sm">Lista administrativa e criação rápida de usuários quando o perfil permitir.</p>
+      </div>
+      <button id="load_users_btn" class="r2ctl-btn-soft">Atualizar usuários</button>
+    </div>
+    <div class="grid gap-3 md:grid-cols-3">
+      <input id="new_user_username" placeholder="username" class="r2ctl-input" />
+      <input id="new_user_password" type="password" placeholder="senha" class="r2ctl-input" />
+      <select id="new_user_role" title="Papel do usuário" class="r2ctl-input"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-3">
+      <button id="create_user_btn" class="r2ctl-btn-soft">Criar usuário</button>
+      <span id="admin_users_status" class="text-xs text-stone-500">carregando</span>
+    </div>
+    <div id="admin_users_list" class="mt-4 space-y-3"></div>
+  </section>
+</div>

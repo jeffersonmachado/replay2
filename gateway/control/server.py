@@ -4,9 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import re
 import secrets
+import socket
 import sqlite3
+import subprocess
+import shutil
 import time
+import threading
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,462 +20,101 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dakota_gateway import auth
+from dakota_gateway.compliance import (
+    normalize_direct_ssh_policy_payload,
+    normalize_target_policy,
+)
 from dakota_gateway.replay_control import (
     Runner,
-    add_run_event,
-    cancel_run,
-    create_run,
-    get_run,
-    pause_run,
     query_all,
     query_one,
-    resume_run,
     retry_run,
 )
-from dakota_gateway.state_db import connect, init_db, now_ms
+from dakota_gateway.state_db import connect, exec1, init_db, now_ms
 from dakota_gateway.state_db import ConnectionPool
+from control.routes import (
+    handle_admin_get_route,
+    handle_admin_post_route,
+    handle_capture_get_route,
+    handle_capture_post_route,
+    handle_catalog_get_route,
+    handle_catalog_post_route,
+    handle_gateway_get_route,
+    handle_gateway_post_route,
+    handle_observability_delete_route,
+    handle_observability_get_route,
+    handle_observability_post_route,
+    handle_operational_delete_route,
+    handle_operational_get_route,
+    handle_operational_post_route,
+    handle_run_get_route,
+    handle_run_post_route,
+    handle_ui_get_route,
+)
+from control.services.environment_service import (
+    list_target_environments as _list_target_environments,
+    resolve_run_target_request as _resolve_run_target_request,
+)
+from control.services.gateway_observability_service import (
+    read_gateway_monitor as _read_gateway_monitor,
+    read_gateway_session_detail as _read_gateway_session_detail,
+    read_gateway_sessions as _read_gateway_sessions,
+)
+from control.services.scenario_service import (
+    delete_analytics_scenario as _delete_analytics_scenario,
+    delete_operational_scenario as _delete_operational_scenario,
+    instantiate_run_from_scenario as _instantiate_run_from_scenario,
+    list_analytics_scenarios as _list_analytics_scenarios,
+    list_operational_scenarios as _list_operational_scenarios,
+    save_analytics_scenario as _save_analytics_scenario,
+    save_operational_scenario as _save_operational_scenario,
+    set_analytics_scenario_favorite as _set_analytics_scenario_favorite,
+    set_operational_scenario_favorite as _set_operational_scenario_favorite,
+)
+from control.services.report_service import (
+    build_observability_overview as _build_observability_overview,
+    build_reprocess_analytics as _build_reprocess_analytics,
+    build_reprocess_trace as _build_reprocess_trace,
+    build_run_family as _build_run_family,
+    build_run_comparison as _build_run_comparison,
+    build_run_report as _build_run_report,
+    build_runs_trend_report as _build_runs_trend_report,
+    create_reprocess_run_from_failure as _create_reprocess_run_from_failure,
+    report_to_csv as _report_to_csv,
+    report_to_markdown as _report_to_markdown,
+)
+from control.services.run_service import (
+    export_run_report_payload as _export_run_report_payload,
+    get_run_comparison_payload as _get_run_comparison_payload,
+    get_run_compliance_payload as _get_run_compliance_payload,
+    get_run_events_payload as _get_run_events_payload,
+    get_run_failures_payload as _get_run_failures_payload,
+    get_run_report_payload as _get_run_report_payload,
+)
+from control.services.capture_service import (
+    ensure_active_capture_for_gateway as _ensure_active_capture_for_gateway,
+)
+from control.services.capture_service import interrupt_stale_captures as _interrupt_stale_captures
 
 
-INDEX_HTML = """<!doctype html>
-<html><head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dakota Calçados | Replay Control</title>
-<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
-<link rel="stylesheet" href="/assets/tailwind.css" />
-</head>
-<body class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.12),_transparent_28%),linear-gradient(135deg,_#1c1917_0%,_#292524_46%,_#111827_100%)] text-stone-100">
-<div class="fixed inset-0 pointer-events-none overflow-hidden">
-  <div class="absolute -top-24 -left-16 h-72 w-72 rounded-full bg-amber-300/10 blur-3xl"></div>
-  <div class="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-orange-400/10 blur-3xl"></div>
-</div>
-
-<main class="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-  <section class="rounded-[28px] border border-stone-700/50 bg-stone-950/65 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-md overflow-hidden">
-    <div class="border-b border-stone-800/80 px-6 py-5 sm:px-8">
-      <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div class="flex items-center gap-4">
-          <div class="rounded-2xl bg-white px-5 py-4 ring-1 ring-stone-200/80 shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
-            <img src="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" alt="Dakota" class="h-7 w-auto" loading="eager" referrerpolicy="no-referrer" />
-          </div>
-          <div>
-            <p class="text-xs font-medium uppercase tracking-[0.24em] text-amber-200/80">Replay Control</p>
-            <h1 class="mt-1 text-2xl font-semibold tracking-[0.18em] text-stone-50 sm:text-3xl">Painel Operacional</h1>
-            <p class="mt-1 text-sm text-stone-300">Automação e governança de execuções para Dakota Calçados.</p>
-          </div>
-        </div>
-        <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-          <div class="rounded-full border border-stone-700 bg-stone-900/70 px-4 py-2 text-sm text-stone-300" id="me"></div>
-          <button onclick="logout()" class="rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-medium text-amber-100 transition hover:bg-amber-300/20">Logout</button>
-        </div>
-      </div>
-
-      <div class="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div class="rounded-2xl border border-stone-800 bg-stone-900/55 px-4 py-4">
-          <p class="text-xs uppercase tracking-[0.2em] text-stone-500">Total de runs</p>
-          <p id="metric_total" class="mt-2 text-3xl font-semibold text-stone-50">0</p>
-          <p class="mt-1 text-sm text-stone-400">Volume atual monitorado</p>
-        </div>
-        <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-4">
-          <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Em execução</p>
-          <p id="metric_running" class="mt-2 text-3xl font-semibold text-emerald-100">0</p>
-          <p class="mt-1 text-sm text-emerald-100/70">Runs ativas agora</p>
-        </div>
-        <div class="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-4">
-          <p class="text-xs uppercase tracking-[0.2em] text-amber-200/80">Na fila</p>
-          <p id="metric_queued" class="mt-2 text-3xl font-semibold text-amber-100">0</p>
-          <p class="mt-1 text-sm text-amber-100/70">Aguardando processamento</p>
-        </div>
-        <div class="rounded-2xl border border-rose-500/20 bg-rose-500/8 px-4 py-4">
-          <p class="text-xs uppercase tracking-[0.2em] text-rose-200/80">Com falha</p>
-          <p id="metric_failed" class="mt-2 text-3xl font-semibold text-rose-100">0</p>
-          <p class="mt-1 text-sm text-rose-100/70">Exigem atenção operacional</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="grid gap-6 px-6 py-6 sm:px-8 lg:grid-cols-[1.2fr_0.8fr]">
-      <section class="rounded-3xl border border-stone-800 bg-stone-900/60 p-5 shadow-inner shadow-black/20">
-        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 class="text-lg font-semibold text-stone-100">Criar nova run</h2>
-            <p class="text-sm text-stone-400">Configure a execução e envie para a fila operacional.</p>
-          </div>
-          <div class="text-sm text-stone-400" id="status"></div>
-        </div>
-
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <input id="log_dir" placeholder="log_dir (ex: /var/log/dakota-gateway)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 xl:col-span-2"/>
-          <input id="target_host" placeholder="target_host" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="target_user" placeholder="target_user" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="target_cmd" placeholder="target_command (opcional)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 md:col-span-2 xl:col-span-2"/>
-          <select id="mode" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40">
-            <option value="strict-global">strict-global</option>
-            <option value="parallel-sessions">parallel-sessions</option>
-          </select>
-          <select id="on_mismatch" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40">
-            <option value="continue">on mismatch: continue</option>
-            <option value="fail-fast">on mismatch: fail-fast</option>
-          </select>
-          <input id="concurrency" placeholder="concurrency (ex: 20)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="ramp" placeholder="ramp-up/s (ex: 2)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="speed" placeholder="speed (ex: 4)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="jitter" placeholder="jitter ms" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <input id="user_pool" placeholder="user pool csv (replay01,replay02,...)" class="rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40 md:col-span-2 xl:col-span-2"/>
-        </div>
-
-        <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex flex-wrap items-center gap-3 text-sm text-stone-300">
-            <input id="filter_status" placeholder="filtrar status (running, failed...)" class="min-w-[240px] rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-            <label class="inline-flex items-center gap-2 rounded-full border border-stone-700 bg-stone-950/70 px-4 py-2">
-              <input id="auto_refresh" type="checkbox" checked class="h-4 w-4 rounded border-stone-600 bg-stone-900 text-amber-300 focus:ring-amber-300/40"/>
-              auto-refresh
-            </label>
-          </div>
-          <button onclick="createRun()" class="rounded-xl bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 px-5 py-3 text-sm font-semibold text-stone-950 shadow-lg shadow-orange-950/30 transition hover:brightness-105">Criar run</button>
-        </div>
-      </section>
-
-      <section class="rounded-3xl border border-stone-800 bg-stone-900/60 p-5 shadow-inner shadow-black/20">
-        <div class="mb-4">
-          <h2 class="text-lg font-semibold text-stone-100">Detalhe da run</h2>
-          <p class="text-sm text-stone-400">Carregue o contexto e os últimos eventos de uma execução específica.</p>
-        </div>
-        <div class="flex gap-3">
-          <input id="detail_id" placeholder="run id" class="w-28 rounded-xl border border-stone-700 bg-stone-950/80 px-4 py-3 text-sm text-stone-100 placeholder-stone-500 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300/40"/>
-          <button onclick="loadDetail()" class="rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm font-medium text-amber-100 transition hover:bg-amber-300/20">Carregar</button>
-        </div>
-        <div class="mt-4 space-y-4">
-          <pre id="detail" class="max-h-64 overflow-auto rounded-2xl border border-stone-800 bg-stone-950/90 p-4 text-xs leading-6 text-stone-300 whitespace-pre-wrap"></pre>
-          <pre id="events" class="max-h-64 overflow-auto rounded-2xl border border-stone-800 bg-stone-950/90 p-4 text-xs leading-6 text-stone-300 whitespace-pre-wrap"></pre>
-        </div>
-      </section>
-    </div>
-
-    <div class="border-t border-stone-800/80 px-6 py-6 sm:px-8">
-      <div class="mb-4 flex items-center justify-between">
-        <div>
-          <h2 class="text-lg font-semibold text-stone-100">Fila de execuções</h2>
-          <p class="text-sm text-stone-400">Visão consolidada dos runs criados, andamento, progresso e ações operacionais.</p>
-        </div>
-      </div>
-
-      <div class="overflow-hidden rounded-3xl border border-stone-800 bg-stone-950/70">
-        <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-stone-800 text-sm">
-            <thead class="bg-stone-900/95 text-left text-xs uppercase tracking-[0.18em] text-stone-400">
-              <tr>
-                <th class="px-4 py-4">id</th>
-                <th class="px-4 py-4">status</th>
-                <th class="px-4 py-4">created_at</th>
-                <th class="px-4 py-4">progresso</th>
-                <th class="px-4 py-4">params</th>
-                <th class="px-4 py-4">ações</th>
-              </tr>
-            </thead>
-            <tbody id="rows" class="divide-y divide-stone-800"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </section>
-</main>
-
-<script>
-async function api(path, opts={}) {
-  const resp = await fetch(path, {credentials:'include', ...opts});
-  if (resp.status === 401) { window.location = '/login'; return null; }
-  return resp;
-}
-
-async function loadMe() {
-  const r = await api('/api/me');
-  if (!r) return;
-  const d = await r.json();
-  document.getElementById('me').textContent = `user=${d.username} role=${d.role}`;
-}
-
-async function loadRuns() {
-  const r = await api('/api/runs?limit=200');
-  if (!r) return;
-  const d = await r.json();
-  const rows = document.getElementById('rows');
-  rows.innerHTML='';
-    const allRuns = d.runs || [];
-    const statusFilter = (document.getElementById('filter_status').value || '').trim().toLowerCase();
-    const filteredRuns = statusFilter
-        ? allRuns.filter(r => String(r.status || '').toLowerCase().includes(statusFilter))
-        : allRuns;
-
-    const runningCount = allRuns.filter(r => ['running', 'resuming'].includes(String(r.status || '').toLowerCase())).length;
-    const queuedCount = allRuns.filter(r => ['queued', 'pending'].includes(String(r.status || '').toLowerCase())).length;
-    const failedCount = allRuns.filter(r => ['failed', 'canceled', 'cancelled'].includes(String(r.status || '').toLowerCase())).length;
-    document.getElementById('metric_total').textContent = String(allRuns.length);
-    document.getElementById('metric_running').textContent = String(runningCount);
-    document.getElementById('metric_queued').textContent = String(queuedCount);
-    document.getElementById('metric_failed').textContent = String(failedCount);
-
-    if (!filteredRuns.length) {
-      rows.innerHTML = `
-        <tr>
-          <td colspan="6" class="px-6 py-14 text-center">
-            <div class="mx-auto max-w-md rounded-3xl border border-dashed border-stone-700 bg-stone-900/40 px-6 py-10">
-              <p class="text-sm font-medium uppercase tracking-[0.2em] text-stone-500">Sem resultados</p>
-              <p class="mt-2 text-lg font-semibold text-stone-200">Nenhuma run encontrada para o filtro atual.</p>
-              <p class="mt-2 text-sm text-stone-400">Ajuste o filtro ou crie uma nova execução para visualizar dados operacionais.</p>
-            </div>
-          </td>
-        </tr>`;
-      document.getElementById('status').textContent = `runs: 0/${allRuns.length}`;
-      return;
-    }
-
-    for (const run of filteredRuns) {
-    const tr = document.createElement('tr');
-    tr.className = 'align-top text-stone-200 hover:bg-white/[0.02]';
-    const created = new Date(run.created_at_ms).toLocaleString();
-    let extra = '';
-    let progressValue = 0;
-    let sessionsOk = 0;
-    let sessionsFailed = 0;
-    try {
-      if (run.params_json) {
-        const pj = JSON.parse(run.params_json);
-        if (pj.concurrency) extra += `<br/>concurrency=${escapeHtml(pj.concurrency)}`;
-        if (pj.ramp_up_per_sec) extra += `<br/>ramp=${escapeHtml(pj.ramp_up_per_sec)}/s`;
-        if (pj.speed) extra += `<br/>speed=${escapeHtml(pj.speed)}`;
-      }
-      if (run.metrics_json) {
-        const mj = JSON.parse(run.metrics_json);
-        progressValue = Number(mj.last_seq_global_applied || 0);
-        sessionsOk = Number(mj.sessions_success || 0);
-        sessionsFailed = Number(mj.sessions_failed || 0);
-        extra += `<br/>progress=${escapeHtml(progressValue)}`;
-        extra += `<br/>sess_ok=${escapeHtml(sessionsOk)} fail=${escapeHtml(sessionsFailed)}`;
-      }
-    } catch(e) {}
-    const params = `<div class="font-mono text-xs leading-6 text-stone-400">log_dir=${escapeHtml(run.log_dir)}<br/>target=${escapeHtml(run.target_user)}@${escapeHtml(run.target_host)}<br/>mode=${escapeHtml(run.mode)}${extra}</div>`;
-    const statusValue = String(run.status || '').toLowerCase();
-    const statusClass = statusValue === 'running' || statusValue === 'resuming'
-      ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100'
-      : statusValue === 'queued' || statusValue === 'pending'
-      ? 'border-amber-300/20 bg-amber-300/10 text-amber-100'
-      : statusValue === 'failed' || statusValue === 'canceled' || statusValue === 'cancelled'
-      ? 'border-rose-300/20 bg-rose-300/10 text-rose-100'
-      : 'border-sky-300/20 bg-sky-300/10 text-sky-100';
-    const progressPercent = Math.max(0, Math.min(100, progressValue > 0 ? progressValue % 101 : 0));
-    const progress = `
-      <div class="min-w-[170px]">
-        <div class="flex items-center justify-between text-xs text-stone-400">
-          <span>seq ${escapeHtml(progressValue)}</span>
-          <span>${escapeHtml(progressPercent)}%</span>
-        </div>
-        <div class="mt-2 h-2 overflow-hidden rounded-full bg-stone-800">
-          <div class="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" style="width:${progressPercent}%"></div>
-        </div>
-        <div class="mt-2 flex gap-3 text-[11px] uppercase tracking-[0.14em] text-stone-500">
-          <span>ok ${escapeHtml(sessionsOk)}</span>
-          <span>fail ${escapeHtml(sessionsFailed)}</span>
-        </div>
-      </div>`;
-    const actions = `
-      <div class="flex flex-wrap gap-2">
-        <button class="rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-400/20" onclick="startRun(${run.id})">start</button>
-        <button class="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-400/20" onclick="pauseRun(${run.id})">pause</button>
-        <button class="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-400/20" onclick="resumeRun(${run.id})">resume</button>
-        <button class="rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition hover:bg-rose-400/20" onclick="cancelRun(${run.id})">cancel</button>
-        <button class="rounded-lg border border-violet-400/20 bg-violet-400/10 px-3 py-1.5 text-xs font-medium text-violet-200 transition hover:bg-violet-400/20" onclick="retryRun(${run.id})">retry</button>
-      </div>
-    `;
-    tr.innerHTML = `
-      <td class="px-4 py-4"><code class="rounded-lg bg-stone-800 px-2 py-1 text-amber-200">${run.id}</code></td>
-      <td class="px-4 py-4"><span class="inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusClass}">${escapeHtml(run.status)}</span></td>
-      <td class="px-4 py-4 text-stone-300">${created}</td>
-      <td class="px-4 py-4">${progress}</td>
-      <td class="px-4 py-4">${params}</td>
-      <td class="px-4 py-4">${actions}</td>
-    `;
-    rows.appendChild(tr);
+def _is_weak_password(password: str) -> bool:
+  p = (password or "").strip()
+  if len(p) < 8:
+    return True
+  lower = p.lower()
+  common = {
+    "admin123",
+    "password",
+    "password123",
+    "12345678",
+    "qwerty123",
+    "dakota123",
   }
-    document.getElementById('status').textContent = `runs: ${filteredRuns.length}/${allRuns.length}`;
-}
-
-function escapeHtml(s) {
-  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
-}
-
-async function createRun() {
-  const mode = document.getElementById('mode').value;
-  const params = {};
-  if (mode === 'parallel-sessions') {
-    const c = parseInt(document.getElementById('concurrency').value || '0', 10);
-    const ramp = parseFloat(document.getElementById('ramp').value || '1');
-    const speed = parseFloat(document.getElementById('speed').value || '1');
-    const jitter = parseInt(document.getElementById('jitter').value || '0', 10);
-    const pool = (document.getElementById('user_pool').value || '').split(',').map(s=>s.trim()).filter(Boolean);
-    const onm = document.getElementById('on_mismatch').value;
-    if (isFinite(c) && c > 0) params.concurrency = c;
-    if (isFinite(ramp) && ramp > 0) params.ramp_up_per_sec = ramp;
-    if (isFinite(speed) && speed > 0) params.speed = speed;
-    if (isFinite(jitter) && jitter >= 0) params.jitter_ms = jitter;
-    if (pool.length) params.target_user_pool = pool;
-    params.on_checkpoint_mismatch = onm;
-  }
-  const payload = {
-    log_dir: document.getElementById('log_dir').value,
-    target_host: document.getElementById('target_host').value,
-    target_user: document.getElementById('target_user').value,
-    target_command: document.getElementById('target_cmd').value,
-    mode,
-    params
-  };
-  const r = await api('/api/runs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-  if (!r) return;
-  await loadRuns();
-}
-
-async function startRun(id){ const r=await api(`/api/runs/${id}/start`, {method:'POST'}); if(!r)return; await loadRuns(); }
-async function pauseRun(id){ const r=await api(`/api/runs/${id}/pause`, {method:'POST'}); if(!r)return; await loadRuns(); }
-async function resumeRun(id){ const r=await api(`/api/runs/${id}/resume`, {method:'POST'}); if(!r)return; await loadRuns(); }
-async function cancelRun(id){ const r=await api(`/api/runs/${id}/cancel`, {method:'POST'}); if(!r)return; await loadRuns(); }
-async function retryRun(id){ const r=await api(`/api/runs/${id}/retry`, {method:'POST'}); if(!r)return; await loadRuns(); }
-
-async function loadDetail(){
-  const id = document.getElementById('detail_id').value.trim();
-  if (!id) return;
-  const rr = await api('/api/runs?limit=200');
-  if (!rr) return;
-  const dd = await rr.json();
-  const run = (dd.runs || []).find(x => String(x.id) === String(id));
-  document.getElementById('detail').textContent = JSON.stringify(run || {}, null, 2);
-  const r2 = await api(`/api/runs/${id}/events`);
-  if (!r2) return;
-  const evs = await r2.json();
-  document.getElementById('events').textContent = JSON.stringify(evs.events || [], null, 2);
-}
-
-async function logout(){
-  await fetch('/api/logout', {method:'POST', credentials:'include'});
-  window.location='/login';
-}
-
-loadMe();
-loadRuns();
-setInterval(() => {
-    const ar = document.getElementById('auto_refresh');
-    if (ar && ar.checked) loadRuns();
-}, 1000);
-document.getElementById('filter_status').addEventListener('input', loadRuns);
-</script>
-</body></html>
-"""
-
-
-LOGIN_HTML = """<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Dakota Calçados | Replay Control</title>
-<link rel="icon" type="image/svg+xml" href="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg" />
-<link rel="stylesheet" href="/assets/tailwind.css" />
-<style>
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  .fade-in { animation: fadeIn 0.5s ease-in; }
-</style>
-</head>
-<body class="bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_32%),linear-gradient(135deg,_#1c1917_0%,_#292524_42%,_#111827_100%)] flex items-center justify-center min-h-screen">
-  <!-- Decorative elements -->
-  <div class="fixed top-0 left-0 w-96 h-96 bg-amber-300/10 rounded-full blur-3xl"></div>
-  <div class="fixed bottom-0 right-0 w-96 h-96 bg-orange-400/10 rounded-full blur-3xl"></div>
-  
-  <div class="relative w-full max-w-md mx-auto px-6 fade-in">
-    <!-- Card Container -->
-    <div class="bg-stone-950/65 backdrop-blur-md border border-stone-700/50 rounded-3xl shadow-[0_30px_80px_rgba(0,0,0,0.45)] p-8 space-y-8">
-      <!-- Header -->
-      <div class="text-center space-y-4">
-        <div class="flex justify-center mb-2">
-          <div class="bg-white rounded-2xl px-5 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.28)] ring-1 ring-stone-200/80">
-            <img
-              src="https://dakota.vtexassets.com/assets/vtex/assets-builder/dakota.dakota-theme/6.0.129/svg/logo-dakota___9e5024e768762611d1260e2e2d5e1aa5.svg"
-              alt="Dakota"
-              class="h-7 w-auto"
-              loading="eager"
-              referrerpolicy="no-referrer"
-            />
-          </div>
-        </div>
-        <h1 class="text-3xl font-semibold tracking-[0.18em] uppercase text-stone-50">Replay Control</h1>
-        <p class="text-stone-300 text-sm">Sistema interno de automação para Dakota Calçados</p>
-      </div>
-      
-      <!-- Form -->
-      <form id="loginForm" class="space-y-4">
-        <!-- Username -->
-        <div>
-          <label class="block text-sm font-medium text-stone-200 mb-2">Usuário</label>
-          <input id="u" type="text" placeholder="seu usuário" class="w-full px-4 py-3 bg-stone-900/70 border border-stone-700 rounded-xl text-stone-50 placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300 transition" required/>
-        </div>
-        
-        <!-- Password -->
-        <div>
-          <label class="block text-sm font-medium text-stone-200 mb-2">Senha</label>
-          <input id="p" type="password" placeholder="sua senha" class="w-full px-4 py-3 bg-stone-900/70 border border-stone-700 rounded-xl text-stone-50 placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300 transition" required/>
-        </div>
-        
-        <!-- Error Message -->
-        <div id="msg" class="hidden bg-red-500/10 border border-red-400/40 text-red-300 text-sm px-4 py-3 rounded-xl"></div>
-        
-        <!-- Submit Button -->
-        <button type="button" onclick="go()" class="w-full mt-6 bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 hover:from-amber-300 hover:via-orange-300 hover:to-rose-300 text-stone-950 font-semibold py-3 px-4 rounded-xl transition transform hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-amber-300/60 shadow-lg shadow-orange-950/30">Entrar</button>
-      </form>
-      
-      <!-- Footer -->
-      <div class="pt-6 border-t border-stone-700/50 space-y-2 text-center">
-        <p class="text-stone-500 text-xs uppercase tracking-[0.18em]">Desenvolvido por</p>
-        <div class="flex justify-center text-sm">
-          <a href="https://www.results.com.br/" target="_blank" class="text-amber-200 hover:text-amber-100 transition font-medium">Results</a>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Footer text -->
-    <p class="text-center text-stone-500 text-xs mt-8">Sistema seguro • Acesso restrito</p>
-  </div>
-  
-  <script>
-    async function go(){
-      const u = document.getElementById('u').value.trim();
-      const p = document.getElementById('p').value;
-      const msg = document.getElementById('msg');
-      
-      if (!u || !p) {
-        msg.classList.remove('hidden');
-        msg.textContent = 'Preencha todos os campos';
-        return;
-      }
-      
-      const r = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p }),
-        credentials: 'include'
-      });
-      
-      if (r.status === 200) {
-        window.location = '/';
-        return;
-      }
-      
-      msg.classList.remove('hidden');
-      msg.textContent = 'Usuário ou senha inválidos';
-    }
-    
-    // Allow Enter key to submit
-    document.getElementById('loginForm').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') go();
-    });
-  </script>
-</body></html>
-"""
-
+  if lower in common:
+    return True
+  if lower.startswith("admin") and len(lower) <= 10:
+    return True
+  return False
 
 def _read_json(req: BaseHTTPRequestHandler) -> dict:
     ln = int(req.headers.get("Content-Length") or "0")
@@ -480,20 +125,458 @@ def _read_json(req: BaseHTTPRequestHandler) -> dict:
     except Exception:
         return {}
 
+def _run_cmd(cmd: list[str]) -> tuple[int, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
+        return p.returncode, out.strip()
+    except FileNotFoundError:
+        return 127, f"comando não encontrado: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return 124, "timeout executando comando"
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "y", "on", "sim"}
+
+
+def _linux_find_systemd_unit(candidates: tuple[str, ...]) -> str | None:
+    for candidate in candidates:
+        rc_probe, out_probe = _run_cmd(["systemctl", "status", candidate, "--no-pager"])
+        if "could not be found" not in out_probe.lower():
+            return candidate
+    return None
+
+
+def _linux_service_is_active(unit: str) -> tuple[bool, str]:
+    rc, out = _run_cmd(["systemctl", "is-active", unit])
+    return out.strip() == "active" and rc == 0, out.strip() or out
+
+
+def _linux_gateway_units() -> tuple[str | None, str | None]:
+    service = _linux_find_systemd_unit(("sshd", "ssh"))
+    socket = _linux_find_systemd_unit(("sshd.socket", "ssh.socket"))
+    return service, socket
+
+
+def _gateway_service_status() -> dict:
+    system = platform.system().lower()
+
+    if "aix" in system:
+        if not shutil.which("lssrc"):
+            return {"platform": "aix", "service": "sshd", "running": False, "available": False, "error": "lssrc não encontrado"}
+        rc, out = _run_cmd(["lssrc", "-s", "sshd"])
+        running = ("active" in out.lower()) and rc == 0
+        return {
+            "platform": "aix",
+            "service": "sshd",
+            "running": running,
+            "available": True,
+            "error": None if running else (out or "sshd inativo"),
+        }
+
+    if "linux" in system:
+        if not shutil.which("systemctl"):
+            return {"platform": "linux", "service": "sshd", "running": False, "available": False, "error": "systemctl não encontrado"}
+
+        service, socket = _linux_gateway_units()
+        if not service and not socket:
+            return {
+                "platform": "linux",
+                "service": "unavailable",
+                "socket": "unavailable",
+                "running": False,
+                "available": False,
+                "error": "serviço ssh/sshd não encontrado neste host",
+            }
+
+        service_running = False
+        service_state = "not-found"
+        if service:
+            service_running, service_state = _linux_service_is_active(service)
+
+        socket_running = False
+        socket_state = "not-found"
+        if socket:
+            socket_running, socket_state = _linux_service_is_active(socket)
+
+        running = service_running or socket_running
+        return {
+            "platform": "linux",
+            "service": service or "unavailable",
+            "socket": socket or "unavailable",
+            "running": running,
+            "service_running": service_running,
+            "socket_running": socket_running,
+            "available": True,
+            "error": None,
+        }
+
+    return {"platform": system or "unknown", "service": "unknown", "running": False, "available": False, "error": "sistema não suportado"}
+
+
+def _gateway_toggle(enabled: bool) -> dict:
+    st = _gateway_service_status()
+    platform_name = st.get("platform", "")
+    service = st.get("service", "sshd")
+    socket = st.get("socket")
+
+    if not st.get("available", True):
+        return {**st, "error": st.get("error") or "gateway indisponível para alternância"}
+
+    if bool(st.get("running")) == enabled and not st.get("error"):
+        return {**st, "changed": False}
+
+    if platform_name == "aix":
+        cmd = ["startsrc", "-s", "sshd"] if enabled else ["stopsrc", "-s", "sshd"]
+    elif platform_name == "linux":
+        units = [unit for unit in (socket, service) if unit and unit != "unavailable"]
+        action = "start" if enabled else "stop"
+        preferred = ["sudo", "-n", "systemctl", action, *units]
+        fallback = ["systemctl", action, *units]
+        rc, out = _run_cmd(preferred)
+        if rc != 0 and not out:
+            out = "falha executando systemctl"
+        if rc != 0 and ("password is required" in out.lower() or "a password is required" in out.lower()):
+            out = "permissão negada: configure sudo sem senha para controlar o gateway"
+        elif rc != 0 and "sudo:" in out.lower():
+            out = f"sudo falhou: {out}"
+        if rc != 0 and ("not in the sudoers" in out.lower() or "permission denied" in out.lower()):
+            out = "permissão negada: configure sudo sem senha para controlar o gateway"
+        if rc != 0 and "sudo" in preferred[0]:
+            rc, direct_out = _run_cmd(fallback)
+            if rc == 0:
+                out = direct_out
+            elif direct_out:
+                out = direct_out
+        new_state = _gateway_service_status()
+        if rc != 0 or new_state.get("running") != enabled:
+            new_state["error"] = out or new_state.get("error") or "falha ao alterar estado do gateway"
+        return new_state
+    else:
+        return {**st, "error": st.get("error") or "plataforma não suportada para toggle"}
+
+    rc, out = _run_cmd(cmd)
+    new_state = _gateway_service_status()
+    if rc != 0 or new_state.get("running") != enabled:
+        new_state["error"] = out or new_state.get("error") or "falha ao alterar estado do gateway"
+    return new_state
+
+
+class _Port22CaptureSampler:
+    def __init__(self):
+        self._thread = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._capture = None
+        self._seq = 0
+        self._seen = set()
+        self._file_path = ""
+
+    def start(self, capture: dict | None) -> dict:
+        if not capture:
+            return {"started": False, "reason": "capture ausente"}
+        with self._lock:
+            self.stop()
+            self._capture = dict(capture)
+            log_dir = str(self._capture.get("log_dir") or "").strip()
+            session_uuid = str(self._capture.get("session_uuid") or "").strip()
+            if not log_dir or not session_uuid:
+                return {"started": False, "reason": "capture sem log_dir/session_uuid"}
+            os.makedirs(log_dir, exist_ok=True)
+            self._seq = 0
+            self._seen = set()
+            self._file_path = os.path.join(log_dir, f"audit-{time.strftime('%Y%m%d-%H%M%S')}.part001.jsonl")
+            self._stop.clear()
+            self._emit("session_start")
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
+            return {"started": True, "file": self._file_path}
+
+    def stop(self) -> dict:
+        if self._thread is None:
+            return {"stopped": False, "reason": "sampler inativo"}
+        self._stop.set()
+        self._thread.join(timeout=2)
+        self._thread = None
+        self._emit("session_end")
+        self._capture = None
+        self._file_path = ""
+        return {"stopped": True}
+
+    def _emit(self, event_type: str, **extra) -> None:
+        capture = self._capture or {}
+        if not self._file_path:
+            return
+        self._seq += 1
+        payload = {
+            "v": "v1",
+            "seq_global": self._seq,
+            "ts_ms": int(time.time() * 1000),
+            "type": event_type,
+            "actor": "gateway",
+            "session_id": str(capture.get("session_uuid") or ""),
+            "seq_session": self._seq,
+            "capture_id": capture.get("id"),
+            "source_port": 22,
+        }
+        payload.update(extra)
+        try:
+            with open(self._file_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            return
+
+    @staticmethod
+    def _decode_proc_ipv4(hex_addr: str) -> str:
+        raw = bytes.fromhex(hex_addr)
+        return socket.inet_ntoa(raw[::-1])
+
+    def _sample_established_ssh_proc(self) -> set[tuple[str, str]]:
+        tcp_path = "/proc/net/tcp"
+        if not os.path.exists(tcp_path):
+            return set()
+        conns = set()
+        try:
+            with open(tcp_path, "r", encoding="utf-8") as fh:
+                lines = [line.strip() for line in fh.readlines()[1:] if line.strip()]
+        except Exception:
+            return set()
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            local_raw = parts[1]
+            peer_raw = parts[2]
+            state = parts[3]
+            if state != "01" or ":" not in local_raw or ":" not in peer_raw:
+                continue
+            local_hex, local_port_hex = local_raw.split(":", 1)
+            peer_hex, peer_port_hex = peer_raw.split(":", 1)
+            try:
+                local_port = int(local_port_hex, 16)
+                peer_port = int(peer_port_hex, 16)
+            except ValueError:
+                continue
+            if local_port != 22:
+                continue
+            try:
+                local_ip = self._decode_proc_ipv4(local_hex)
+                peer_ip = self._decode_proc_ipv4(peer_hex)
+            except Exception:
+                continue
+            conns.add((f"{local_ip}:{local_port}", f"{peer_ip}:{peer_port}"))
+        return conns
+
+    def _sample_established_ssh(self) -> set[tuple[str, str]]:
+        rc, out = _run_cmd(["ss", "-tn", "state", "established", "sport", "=", ":22"])
+        conns = set()
+        if rc == 0 and out:
+            lines = [line.strip() for line in out.splitlines() if line.strip()]
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                local = parts[-2]
+                peer = parts[-1]
+                if ":" not in local or ":" not in peer:
+                    continue
+                conns.add((local, peer))
+        conns.update(self._sample_established_ssh_proc())
+        return conns
+
+    def _loop(self) -> None:
+        while not self._stop.wait(1.0):
+            current = self._sample_established_ssh()
+            opened = current - self._seen
+            closed = self._seen - current
+            for local, peer in sorted(opened):
+                self._emit("port22_connection_open", local=local, peer=peer)
+            for local, peer in sorted(closed):
+                self._emit("port22_connection_close", local=local, peer=peer)
+            self._seen = current
+
+
+class _RuntimeContentCaptureRunner:
+    def __init__(self, *, project_root: str, hmac_key_file: str = ""):
+        self._project_root = project_root
+        self._hmac_key_file = str(hmac_key_file or "").strip()
+        self._lock = threading.Lock()
+        self._proc = None
+        self._capture_id = None
+        self._log_handle = None
+
+    def _resolve_runtime_config(self, body: dict) -> dict:
+        payload = body.get("runtime_capture") if isinstance(body, dict) else None
+        cfg = payload if isinstance(payload, dict) else {}
+
+        enabled = bool(cfg.get("enabled", _env_bool("DAKOTA_RUNTIME_CAPTURE_ENABLED", False)))
+        if not enabled:
+            return {"enabled": False, "reason": "runtime desabilitado"}
+
+        source_host = str(cfg.get("source_host") or os.environ.get("DAKOTA_RUNTIME_SOURCE_HOST") or "").strip()
+        source_user = str(cfg.get("source_user") or os.environ.get("DAKOTA_RUNTIME_SOURCE_USER") or "").strip()
+        source_command = str(cfg.get("source_command") or os.environ.get("DAKOTA_RUNTIME_SOURCE_COMMAND") or "").strip()
+        ssh_batch_mode = str(cfg.get("ssh_batch_mode") or os.environ.get("DAKOTA_RUNTIME_SSH_BATCH_MODE") or "yes").strip().lower()
+        if ssh_batch_mode not in {"yes", "no"}:
+            ssh_batch_mode = "yes"
+
+        if not source_host:
+            return {"enabled": False, "reason": "runtime sem source_host"}
+        if not source_command:
+            return {"enabled": False, "reason": "runtime sem source_command"}
+
+        return {
+            "enabled": True,
+            "source_host": source_host,
+            "source_user": source_user,
+            "source_command": source_command,
+            "ssh_batch_mode": ssh_batch_mode,
+            "gateway_endpoint": str(cfg.get("gateway_endpoint") or os.environ.get("DAKOTA_RUNTIME_GATEWAY_ENDPOINT") or "").strip(),
+        }
+
+    def start(self, capture: dict | None, body: dict | None = None) -> dict:
+        if not capture:
+            return {"started": False, "reason": "capture ausente"}
+        runtime_cfg = self._resolve_runtime_config(body or {})
+        if not runtime_cfg.get("enabled"):
+            return {"started": False, "reason": runtime_cfg.get("reason") or "runtime desabilitado"}
+        if not self._hmac_key_file:
+            return {"started": False, "reason": "hmac_key_file ausente"}
+
+        log_dir = str(capture.get("log_dir") or "").strip()
+        if not log_dir:
+            return {"started": False, "reason": "capture sem log_dir"}
+        os.makedirs(log_dir, exist_ok=True)
+
+        gateway_wrapper = os.path.join(self._project_root, "gateway", "dakota-gateway")
+        if not os.path.exists(gateway_wrapper):
+            return {"started": False, "reason": "wrapper dakota-gateway não encontrado"}
+
+        cmd = [
+            "python3",
+            gateway_wrapper,
+            "start",
+            "--log-dir",
+            log_dir,
+            "--hmac-key-file",
+            self._hmac_key_file,
+            "--source-host",
+            runtime_cfg["source_host"],
+            "--source-command",
+            runtime_cfg["source_command"],
+            "--ssh-batch-mode",
+            runtime_cfg["ssh_batch_mode"],
+        ]
+        if runtime_cfg["source_user"]:
+            cmd += ["--source-user", runtime_cfg["source_user"]]
+        if runtime_cfg["gateway_endpoint"]:
+            cmd += ["--gateway-endpoint", runtime_cfg["gateway_endpoint"]]
+
+        self.stop()
+        with self._lock:
+            runtime_log_path = os.path.join(log_dir, "runtime-capture.log")
+            self._log_handle = open(runtime_log_path, "a", encoding="utf-8")
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=self._project_root,
+                stdout=self._log_handle,
+                stderr=self._log_handle,
+                close_fds=True,
+            )
+            self._capture_id = capture.get("id")
+            return {
+                "started": True,
+                "pid": int(self._proc.pid),
+                "capture_id": self._capture_id,
+                "mode": "runtime_content",
+                "log": runtime_log_path,
+            }
+
+    def stop(self) -> dict:
+        with self._lock:
+            if self._proc is None:
+                return {"stopped": False, "reason": "runtime inativo"}
+            proc = self._proc
+            self._proc = None
+            capture_id = self._capture_id
+            self._capture_id = None
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2)
+            finally:
+                if self._log_handle is not None:
+                    try:
+                        self._log_handle.flush()
+                    except Exception:
+                        pass
+                    try:
+                        self._log_handle.close()
+                    except Exception:
+                        pass
+                    self._log_handle = None
+            return {
+                "stopped": True,
+                "capture_id": capture_id,
+                "returncode": proc.returncode,
+            }
+
 
 class ControlServer(ThreadingHTTPServer):
-    def __init__(self, addr, handler, *, db_path: str, cookie_secret: bytes, hmac_key: bytes):
+    def __init__(
+        self,
+        addr,
+        handler,
+        *,
+        db_path: str,
+        cookie_secret: bytes,
+        hmac_key: bytes,
+        capture_log_dir: str = "",
+        hmac_key_file: str = "",
+    ):
         super().__init__(addr, handler)
         self.db_path = db_path
         self.cookie_secret = cookie_secret
         self.hmac_key = hmac_key
+        self.capture_log_dir = capture_log_dir or os.path.join(os.path.dirname(db_path), "captures")
+        os.makedirs(self.capture_log_dir, exist_ok=True)
         self.db_pool = ConnectionPool(db_path, min_size=1, max_size=16)
         con = self.db_pool.acquire()
         try:
             init_db(con)
+            stale = _interrupt_stale_captures(con, now_ms_fn=now_ms)
+            if stale:
+                print(f"[startup] {stale} captura(s) ativa(s) marcada(s) como interrupted (processo anterior encerrado)")
         finally:
             self.db_pool.release(con)
         self.runner = Runner(db_path, hmac_key)
+        self.port22_sampler = _Port22CaptureSampler()
+        self.runtime_capture = _RuntimeContentCaptureRunner(
+            project_root=str(Path(__file__).resolve().parents[2]),
+            hmac_key_file=hmac_key_file,
+        )
+        con = self.db_pool.acquire()
+        try:
+            startup_capture = _ensure_active_capture_for_gateway(
+                con,
+                log_dir_base=self.capture_log_dir,
+                now_ms_fn=now_ms,
+            )
+        finally:
+            self.db_pool.release(con)
+        if startup_capture:
+            self.port22_sampler.start(startup_capture)
+            self.runtime_capture.start(startup_capture, {})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -538,14 +621,21 @@ class Handler(BaseHTTPRequestHandler):
       token_hash = auth.sha256_hex(token.encode("utf-8"))
       con = self._db()
       try:
-        row = query_one(
-          con,
-          "SELECT u.id,u.username,u.role,s.expires_at_ms "
-          "FROM users u JOIN sessions s ON s.user_id=u.id "
-          "WHERE u.username=? AND s.token_hash=? "
-          "ORDER BY s.id DESC LIMIT 1",
-          (username, token_hash),
-        )
+        try:
+          row = query_one(
+            con,
+            "SELECT u.id,u.username,u.role,s.expires_at_ms "
+            "FROM users u JOIN sessions s ON s.user_id=u.id "
+            "WHERE u.username=? AND s.token_hash=? "
+            "ORDER BY s.id DESC LIMIT 1",
+            (username, token_hash),
+          )
+        except sqlite3.OperationalError as exc:
+          # Se o DB foi removido em runtime, recria schema e trata como sessão inválida.
+          if "no such table" in str(exc).lower():
+            init_db(con)
+            return None
+          raise
         if not row:
           return None
         if int(row["expires_at_ms"]) < int(time.time() * 1000):
@@ -568,36 +658,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = urlparse(self.path)
-        if p.path == "/assets/tailwind.css":
-            css_path = Path(__file__).resolve().parent / "static" / "tailwind.css"
-            if not css_path.exists():
-                self.send_response(404)
-                self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/css; charset=utf-8")
-            self.send_header("Cache-Control", "public, max-age=3600")
-            self.end_headers()
-            self.wfile.write(css_path.read_bytes())
-            return
-        if p.path == "/login":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(LOGIN_HTML.encode("utf-8"))
-            return
-        if p.path == "/":
-            u = self._auth()
-            if not u:
-                # Redirect to login instead of 401
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(INDEX_HTML.encode("utf-8"))
+        if handle_ui_get_route(self, p):
             return
         if p.path == "/api/me":
             u = self._require()
@@ -608,61 +669,32 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(u).encode("utf-8"))
             return
-        if p.path == "/api/runs":
-            u = self._require()
-            if not u:
-                return
-            qs = parse_qs(p.query or "")
-            limit = int((qs.get("limit") or ["200"])[0])
-            limit = max(1, min(limit, 2000))
-            con = self._db()
-            try:
-                rows = query_all(con, "SELECT * FROM replay_runs ORDER BY id DESC LIMIT ?", (limit,))
-                runs = [dict(r) for r in rows]
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"runs": runs}, ensure_ascii=False).encode("utf-8"))
+        if handle_admin_get_route(self, p, gateway_service_status=_gateway_service_status, query_all_fn=query_all):
             return
-
-        if p.path.startswith("/api/runs/") and p.path.endswith("/events"):
-            u = self._require()
-            if not u:
-                return
-            parts = p.path.split("/")
-            if len(parts) < 5:
-                self.send_response(404)
-                self.end_headers()
-                return
-            run_id = int(parts[3])
-            con = self._db()
-            try:
-                rows = query_all(con, "SELECT * FROM replay_run_events WHERE run_id=? ORDER BY id DESC LIMIT 200", (run_id,))
-                evs = [dict(r) for r in rows]
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"events": evs}, ensure_ascii=False).encode("utf-8"))
+        if handle_catalog_get_route(self, p):
             return
-
-        if p.path == "/api/users":
-            u = self._require(roles={"admin"})
-            if not u:
-                return
-            con = self._db()
-            try:
-                rows = query_all(con, "SELECT id,username,role,created_at_ms FROM users ORDER BY id", ())
-                users = [dict(r) for r in rows]
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"users": users}, ensure_ascii=False).encode("utf-8"))
+        if handle_observability_get_route(self, p):
+            return
+        if handle_operational_get_route(self, p, parse_qs):
+            return
+        if handle_gateway_get_route(
+            self,
+            p,
+            parse_qs_fn=parse_qs,
+            query_one_fn=query_one,
+            read_gateway_monitor_fn=_read_gateway_monitor,
+            read_gateway_sessions_fn=_read_gateway_sessions,
+            read_gateway_session_detail_fn=_read_gateway_session_detail,
+        ):
+            return
+        if handle_capture_get_route(
+            self,
+            p,
+            parse_qs_fn=parse_qs,
+            read_gateway_monitor_fn=_read_gateway_monitor,
+        ):
+            return
+        if handle_run_get_route(self, p):
             return
 
         self.send_response(404)
@@ -670,127 +702,55 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path)
-        if p.path == "/api/login":
-            body = _read_json(self)
-            username = str(body.get("username") or "")
-            password = str(body.get("password") or "")
-            con = self._db()
-            try:
-                row = query_one(con, "SELECT id,username,role,password_hash FROM users WHERE username=?", (username,))
-                if not row or not auth.verify_password(password, row["password_hash"]):
-                    self.send_response(401)
-                    self.end_headers()
-                    return
-                token = auth.new_session_token()
-                token_hash = auth.sha256_hex(token.encode("utf-8"))
-                exp = int(time.time() * 1000) + 12 * 3600 * 1000
-                con.execute("INSERT INTO sessions(user_id, token_hash, created_at_ms, expires_at_ms) VALUES(?,?,?,?)",
-                            (int(row["id"]), token_hash, now_ms(), exp))
-                cookie = auth.sign_cookie(self.server.cookie_secret, username, token, exp)
-                self.send_response(200)
-                self._set_cookie("dakota_session", cookie)
-                self.end_headers()
-                return
-            finally:
-                self._db_release(con)
-
-        if p.path == "/api/logout":
-            u = self._auth()
-            self.send_response(200)
-            self._clear_cookie("dakota_session")
-            self.end_headers()
+        body = _read_json(self)
+        if handle_admin_post_route(
+            self,
+            p,
+            body,
+            auth_module=auth,
+            query_one_fn=query_one,
+            now_ms_fn=now_ms,
+            gateway_toggle_fn=_gateway_toggle,
+        ):
             return
 
-        if p.path == "/api/runs":
-            u = self._require(roles={"admin", "operator"})
-            if not u:
-                return
-            body = _read_json(self)
-            log_dir = str(body.get("log_dir") or "")
-            target_host = str(body.get("target_host") or "")
-            target_user = str(body.get("target_user") or "")
-            target_command = str(body.get("target_command") or "")
-            mode = str(body.get("mode") or "strict-global")
-            params = body.get("params") if isinstance(body.get("params"), dict) else {}
-            con = self._db()
-            try:
-                rid = create_run(con, u["id"], log_dir, target_host, target_user, target_command, mode)
-                if params:
-                    con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (json.dumps(params, ensure_ascii=False), rid))
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"id": rid}).encode("utf-8"))
+        if handle_gateway_post_route(
+            self,
+            p,
+            body,
+            now_ms_fn=now_ms,
+            capture_log_dir=self.server.capture_log_dir,
+            start_port22_capture_fn=self.server.port22_sampler.start,
+            stop_port22_capture_fn=self.server.port22_sampler.stop,
+            start_runtime_capture_fn=self.server.runtime_capture.start,
+            stop_runtime_capture_fn=self.server.runtime_capture.stop,
+        ):
+            return
+        if handle_capture_post_route(
+            self,
+            p,
+            body,
+            now_ms_fn=now_ms,
+            log_dir_base=self.server.capture_log_dir,
+        ):
+            return
+        if handle_run_post_route(self, p, body):
+            return
+        if handle_observability_post_route(self, p, body):
+            return
+        if handle_catalog_post_route(self, p, body):
+            return
+        if handle_operational_post_route(self, p, body):
             return
 
-        if p.path == "/api/users":
-            u = self._require(roles={"admin"})
-            if not u:
-                return
-            body = _read_json(self)
-            username = str(body.get("username") or "")
-            password = str(body.get("password") or "")
-            role = str(body.get("role") or "")
-            if role not in ("admin", "operator", "viewer"):
-                self.send_response(400)
-                self.end_headers()
-                return
-            ph = auth.pbkdf2_hash_password(password)
-            con = self._db()
-            try:
-                con.execute(
-                    "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
-                    (username, ph, role, now_ms()),
-                )
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.end_headers()
-            return
+        self.send_response(404)
+        self.end_headers()
 
-        # run actions
-        if p.path.startswith("/api/runs/"):
-            u = self._require(roles={"admin", "operator"})
-            if not u:
-                return
-            parts = p.path.split("/")
-            if len(parts) < 5:
-                self.send_response(404)
-                self.end_headers()
-                return
-            run_id = int(parts[3])
-            action = parts[4]
-            con = self._db()
-            try:
-                if action == "start":
-                    # mark running and start thread
-                    con.execute("UPDATE replay_runs SET status='running' WHERE id=? AND status='queued'", (run_id,))
-                    add_run_event(con, run_id, "api", "start solicitado", {"by": u["username"]})
-                    self.server.runner.start_run_async(run_id)
-                elif action == "pause":
-                    pause_run(con, run_id)
-                elif action == "resume":
-                    resume_run(con, run_id)
-                    self.server.runner.start_run_async(run_id)
-                elif action == "cancel":
-                    cancel_run(con, run_id)
-                elif action == "retry":
-                    nid = retry_run(con, run_id, created_by=u["id"])
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"id": nid}).encode("utf-8"))
-                    return
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-            finally:
-                self._db_release(con)
-            self.send_response(200)
-            self.end_headers()
+    def do_DELETE(self):
+        p = urlparse(self.path)
+        if handle_observability_delete_route(self, p):
+            return
+        if handle_operational_delete_route(self, p):
             return
 
         self.send_response(404)
@@ -801,48 +761,72 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--listen", default="127.0.0.1:8090")
-    ap.add_argument("--db", default="")
-    ap.add_argument("--cookie-secret-file", required=True)
-    ap.add_argument("--hmac-key-file", required=True)
-    ap.add_argument("--bootstrap-admin", default="")  # username:password
-    args = ap.parse_args()
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--listen", default="127.0.0.1:8090")
+        ap.add_argument("--db", default="")
+        ap.add_argument("--capture-log-dir", default="")
+        ap.add_argument("--cookie-secret-file", required=True)
+        ap.add_argument("--hmac-key-file", required=True)
+        ap.add_argument("--bootstrap-admin", default="")  # username:password
+        args = ap.parse_args()
 
-    host, port_s = args.listen.rsplit(":", 1)
-    port = int(port_s)
-    db_path = args.db or (Path(__file__).resolve().parents[1] / "state" / "replay.db")
-    db_path = str(db_path)
+        host, port_s = args.listen.rsplit(":", 1)
+        port = int(port_s)
+        db_path = args.db or (Path(__file__).resolve().parents[1] / "state" / "replay.db")
+        db_path = str(db_path)
 
-    cookie_secret = Path(args.cookie_secret_file).read_bytes().strip()
-    hmac_key = Path(args.hmac_key_file).read_bytes().strip()
-    if not cookie_secret:
-        raise SystemExit("cookie secret vazio")
-    if not hmac_key:
-        raise SystemExit("hmac key vazio")
+        cookie_secret = Path(args.cookie_secret_file).read_bytes().strip()
+        hmac_key = Path(args.hmac_key_file).read_bytes().strip()
+        if not cookie_secret:
+                raise SystemExit("cookie secret vazio")
+        if not hmac_key:
+                raise SystemExit("hmac key vazio")
 
-    con = connect(db_path)
-    init_db(con)
-    if args.bootstrap_admin:
-        if ":" not in args.bootstrap_admin:
-            raise SystemExit("--bootstrap-admin deve ser username:password")
-        u, p = args.bootstrap_admin.split(":", 1)
-        ph = auth.pbkdf2_hash_password(p)
-        try:
-            con.execute(
-                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?, 'admin', ?)",
-                (u, ph, now_ms()),
-            )
-            print(f"Admin criado: {u}")
-        except sqlite3.IntegrityError:
-            print("Admin já existe")
-    con.close()
+        env_admin = os.environ.get("DAKOTA_ADMIN", "").strip()
+        bootstrap_admin = (args.bootstrap_admin or env_admin).strip()
+        if args.bootstrap_admin and env_admin:
+                print("Aviso: DAKOTA_ADMIN foi ignorada porque --bootstrap-admin foi informado.")
 
-    srv = ControlServer((host, port), Handler, db_path=db_path, cookie_secret=cookie_secret, hmac_key=hmac_key)
-    print(f"listening on http://{host}:{port}")
-    srv.serve_forever()
+        con = connect(db_path)
+        init_db(con)
+        print(f"Banco inicializado: {db_path}")
+
+        existing_admin = con.execute(
+                "SELECT username FROM users WHERE role='admin' ORDER BY id LIMIT 1"
+        ).fetchone()
+        if existing_admin:
+                print(f"Admin já existente: {existing_admin['username']}")
+        elif bootstrap_admin:
+                if ":" not in bootstrap_admin:
+                        raise SystemExit("bootstrap admin deve ser username:password (via --bootstrap-admin ou DAKOTA_ADMIN)")
+                u, p = bootstrap_admin.split(":", 1)
+                u = u.strip()
+                if not u:
+                        raise SystemExit("bootstrap admin inválido: username vazio")
+                if _is_weak_password(p):
+                        print("Aviso: senha de bootstrap parece fraca. Use uma senha forte em produção.")
+                ph = auth.pbkdf2_hash_password(p)
+                con.execute(
+                        "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?, 'admin', ?)",
+                        (u, ph, now_ms()),
+                )
+                print(f"Admin criado: {u}")
+        else:
+                print("Admin não criado: informe --bootstrap-admin ou DAKOTA_ADMIN para bootstrap inicial.")
+        con.close()
+
+        srv = ControlServer(
+                (host, port),
+                Handler,
+                db_path=db_path,
+                cookie_secret=cookie_secret,
+                hmac_key=hmac_key,
+                capture_log_dir=args.capture_log_dir,
+            hmac_key_file=args.hmac_key_file,
+        )
+        print(f"listening on http://{host}:{port}")
+        srv.serve_forever()
 
 
 if __name__ == "__main__":
     main()
-

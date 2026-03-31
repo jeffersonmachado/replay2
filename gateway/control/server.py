@@ -7,7 +7,6 @@ import os
 import platform
 import re
 import secrets
-import socket
 import sqlite3
 import subprocess
 import shutil
@@ -90,9 +89,6 @@ from control.services.run_service import (
     get_run_events_payload as _get_run_events_payload,
     get_run_failures_payload as _get_run_failures_payload,
     get_run_report_payload as _get_run_report_payload,
-)
-from control.services.capture_service import (
-    ensure_active_capture_for_gateway as _ensure_active_capture_for_gateway,
 )
 from control.services.capture_service import interrupt_stale_captures as _interrupt_stale_captures
 
@@ -332,62 +328,19 @@ class _Port22CaptureSampler:
         except Exception:
             return
 
-    @staticmethod
-    def _decode_proc_ipv4(hex_addr: str) -> str:
-        raw = bytes.fromhex(hex_addr)
-        return socket.inet_ntoa(raw[::-1])
-
-    def _sample_established_ssh_proc(self) -> set[tuple[str, str]]:
-        tcp_path = "/proc/net/tcp"
-        if not os.path.exists(tcp_path):
+    def _sample_established_ssh(self) -> set[tuple[str, str]]:
+        rc, out = _run_cmd(["ss", "-tn", "state", "established", "sport", "=", ":22"])
+        if rc != 0 or not out:
             return set()
         conns = set()
-        try:
-            with open(tcp_path, "r", encoding="utf-8") as fh:
-                lines = [line.strip() for line in fh.readlines()[1:] if line.strip()]
-        except Exception:
-            return set()
-        for line in lines:
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        for line in lines[1:]:
             parts = line.split()
             if len(parts) < 4:
                 continue
-            local_raw = parts[1]
-            peer_raw = parts[2]
-            state = parts[3]
-            if state != "01" or ":" not in local_raw or ":" not in peer_raw:
-                continue
-            local_hex, local_port_hex = local_raw.split(":", 1)
-            peer_hex, peer_port_hex = peer_raw.split(":", 1)
-            try:
-                local_port = int(local_port_hex, 16)
-                peer_port = int(peer_port_hex, 16)
-            except ValueError:
-                continue
-            if local_port != 22:
-                continue
-            try:
-                local_ip = self._decode_proc_ipv4(local_hex)
-                peer_ip = self._decode_proc_ipv4(peer_hex)
-            except Exception:
-                continue
-            conns.add((f"{local_ip}:{local_port}", f"{peer_ip}:{peer_port}"))
-        return conns
-
-    def _sample_established_ssh(self) -> set[tuple[str, str]]:
-        rc, out = _run_cmd(["ss", "-tn", "state", "established", "sport", "=", ":22"])
-        conns = set()
-        if rc == 0 and out:
-            lines = [line.strip() for line in out.splitlines() if line.strip()]
-            for line in lines[1:]:
-                parts = line.split()
-                if len(parts) < 4:
-                    continue
-                local = parts[-2]
-                peer = parts[-1]
-                if ":" not in local or ":" not in peer:
-                    continue
-                conns.add((local, peer))
-        conns.update(self._sample_established_ssh_proc())
+            local = parts[-2]
+            peer = parts[-1]
+            conns.add((local, peer))
         return conns
 
     def _loop(self) -> None:
@@ -565,18 +518,6 @@ class ControlServer(ThreadingHTTPServer):
             project_root=str(Path(__file__).resolve().parents[2]),
             hmac_key_file=hmac_key_file,
         )
-        con = self.db_pool.acquire()
-        try:
-            startup_capture = _ensure_active_capture_for_gateway(
-                con,
-                log_dir_base=self.capture_log_dir,
-                now_ms_fn=now_ms,
-            )
-        finally:
-            self.db_pool.release(con)
-        if startup_capture:
-            self.port22_sampler.start(startup_capture)
-            self.runtime_capture.start(startup_capture, {})
 
 
 class Handler(BaseHTTPRequestHandler):

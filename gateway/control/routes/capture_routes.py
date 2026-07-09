@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+from control.routes.route_helpers import write_json
 from control.services.capture_service import (
     get_capture as _get_capture,
     list_captures as _list_captures,
@@ -20,16 +21,10 @@ from control.services.capture_service import (
 )
 from control.services.gateway_observability_service import (
     read_gateway_sessions as _read_gateway_sessions,
+)
+from control.services.session_replay_service import (
     prepare_session_replay_data as _prepare_session_replay_data,
 )
-
-
-def _write_json(handler, status_code: int, payload) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
 
 def handle_capture_get_route(
     handler,
@@ -51,7 +46,7 @@ def handle_capture_get_route(
             items = _list_captures(con, limit=limit)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"captures": items, "total": len(items)})
+        write_json(handler, 200, {"captures": items, "total": len(items)})
         return True
 
     # GET /api/captures/{id}/events — lê todos os eventos do log_dir da sessão
@@ -83,7 +78,7 @@ def handle_capture_get_route(
         log_dir = capture.get("log_dir") or ""
         limit = max(1, min(int((qs.get("limit") or ["300"])[0] or 300), 1000))
         payload = read_gateway_monitor_fn(log_dir, limit=limit)
-        _write_json(handler, 200, {**payload, "capture_id": capture_id})
+        write_json(handler, 200, {**payload, "capture_id": capture_id})
         return True
 
     # GET /api/captures/{id}/sessions — lista sessões dentro de uma captura
@@ -115,7 +110,7 @@ def handle_capture_get_route(
         log_dir = capture.get("log_dir") or ""
         limit = max(1, min(int((qs.get("limit") or ["100"])[0] or 100), 500))
         sessions_payload = _read_gateway_sessions(log_dir, limit=limit)
-        _write_json(handler, 200, {**sessions_payload, "capture_id": capture_id})
+        write_json(handler, 200, {**sessions_payload, "capture_id": capture_id})
         return True
 
     # GET /api/captures/{id}/replay?session_id=... — dados para view/replay de uma sessão
@@ -146,11 +141,11 @@ def handle_capture_get_route(
         qs = parse_qs_fn(parsed_path.query or "")
         session_id = str((qs.get("session_id") or [""])[0] or "").strip()
         if not session_id:
-            _write_json(handler, 400, {"error": "session_id obrigatório"})
+            write_json(handler, 400, {"error": "session_id obrigatório"})
             return True
         log_dir = capture.get("log_dir") or ""
         replay_data = _prepare_session_replay_data(log_dir, session_id)
-        _write_json(handler, 200, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
+        write_json(handler, 200, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
         return True
 
     # GET /api/captures/{id}
@@ -175,11 +170,10 @@ def handle_capture_get_route(
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, capture)
+        write_json(handler, 200, capture)
         return True
 
     return False
-
 
 def handle_capture_post_route(
     handler,
@@ -221,14 +215,14 @@ def handle_capture_post_route(
                 now_ms_fn=now_ms_fn,
             )
         except ValueError as exc:
-            _write_json(handler, 409, {"error": str(exc)})
+            write_json(handler, 409, {"error": str(exc)})
             return True
         except Exception as exc:
-            _write_json(handler, 500, {"error": str(exc)})
+            write_json(handler, 500, {"error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, capture)
+        write_json(handler, 200, capture)
         return True
 
     # POST /api/captures/{id}/stop
@@ -252,14 +246,42 @@ def handle_capture_post_route(
                 now_ms_fn=now_ms_fn,
             )
         except ValueError as exc:
-            _write_json(handler, 409, {"error": str(exc)})
+            write_json(handler, 409, {"error": str(exc)})
             return True
         except Exception as exc:
-            _write_json(handler, 500, {"error": str(exc)})
+            write_json(handler, 500, {"error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, capture)
+        write_json(handler, 200, capture)
         return True
 
     return False
+
+
+def handle_capture_delete_route(handler, parsed_path) -> bool:
+    """DELETE /api/captures/{id} — exclui captura (apenas se nao ativa)."""
+    path = parsed_path.path
+    if not path.startswith("/api/captures/") or path.count("/") != 3:
+        return False
+    user = handler._require(roles={"admin", "operator"})
+    if not user:
+        return True
+    capture_id = int(path.split("/")[3])
+    con = handler._db()
+    try:
+        row = con.execute(
+            "SELECT id, status FROM capture_sessions WHERE id=?", (capture_id,)
+        ).fetchone()
+        if not row:
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        if row["status"] == "active":
+            write_json(handler, 409, {"ok": False, "error": "captura ativa deve ser parada antes de excluir"})
+            return True
+        con.execute("DELETE FROM capture_sessions WHERE id=?", (capture_id,))
+        write_json(handler, 200, {"ok": True, "deleted_capture_id": capture_id})
+    finally:
+        handler._db_release(con)
+    return True

@@ -5,7 +5,7 @@ export function runSummaryCards(items) {
     .map(
       (item) => `
         <div class="r2ctl-detail-surface rounded-2xl p-4">
-          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">${escapeHtml(item.label)}</div>
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">${escapeHtml(item.label)}</div>
           <div class="mt-2 text-2xl font-semibold text-stone-100">${formatCount(item.value)}</div>
           ${item.copy ? `<div class="mt-2 text-xs text-stone-400">${escapeHtml(item.copy)}</div>` : ""}
         </div>
@@ -22,7 +22,7 @@ export function runLinkCard(run) {
         <span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </div>
       <div class="mt-2 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
-      <div class="mt-1 text-xs text-stone-500">compliance=${escapeHtml(run.compliance_status || "-")} • ${formatAgo(run.created_at_ms)}</div>
+      <div class="mt-1 text-xs text-stone-400">compliance=${escapeHtml(run.compliance_status || "-")} • ${formatAgo(run.created_at_ms)}</div>
     </a>
   `;
 }
@@ -45,7 +45,7 @@ export function runTableRow(run) {
       <td class="px-4 py-4"><span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span></td>
       <td class="px-4 py-4 text-stone-300">
         <div>${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
-        <div class="mt-1 text-xs text-stone-500">${formatDate(run.created_at_ms)}</div>
+        <div class="mt-1 text-xs text-stone-400">${formatDate(run.created_at_ms)}</div>
       </td>
       <td class="px-4 py-4 text-stone-300">${formatCount(run.last_seq_global_applied || 0)}</td>
       <td class="px-4 py-4">

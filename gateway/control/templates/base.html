@@ -13,14 +13,15 @@
   <div class="r2ctl-theme-glow-top absolute -top-24 -left-16 h-72 w-72 rounded-full blur-3xl"></div>
   <div class="r2ctl-theme-glow-bottom absolute bottom-0 right-0 h-80 w-80 rounded-full blur-3xl"></div>
 </div>
-<div id="sidebar_overlay" class="r2ctl-sidebar-overlay"></div>
 <main class="relative min-h-screen px-4 py-4 sm:px-6 lg:px-8">
   <section class="r2ctl-shell-panel mx-auto max-w-[1580px] overflow-hidden rounded-[28px] backdrop-blur-md">
     <div class="r2ctl-app-shell">
+      <div id="sidebar_overlay" class="r2ctl-sidebar-overlay"></div>
       {{sidebar}}
       <div class="r2ctl-app-main">
         {{topbar}}
         {{statusbar}}
+        {{scripts}}
         <div class="r2ctl-page-content">
           {{content}}
         </div>
@@ -29,6 +30,5 @@
   </section>
 </main>
 <script type="module" src="/assets/js/core/navigation.js"></script>
-{{scripts}}
 </body>
 </html>

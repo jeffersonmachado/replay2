@@ -10,14 +10,7 @@ from control.services.gateway_state_service import (
 )
 from control.services.capture_service import start_capture as _start_capture
 from control.services.capture_service import get_capture as _get_capture
-
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
+from control.routes.route_helpers import write_json
 
 def _resolve_target_policy(handler, target_env_id: int, *, query_one_fn):
     if int(target_env_id or 0) <= 0:
@@ -28,7 +21,6 @@ def _resolve_target_policy(handler, target_env_id: int, *, query_one_fn):
         return dict(row) if row else None
     finally:
         handler._db_release(con)
-
 
 def handle_gateway_get_route(
     handler,
@@ -51,7 +43,7 @@ def handle_gateway_get_route(
             state = _get_gateway_state(con)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, state)
+        write_json(handler, 200, state)
         return True
 
     if path == "/api/gateway/monitor":
@@ -62,7 +54,7 @@ def handle_gateway_get_route(
         log_dir = str((qs.get("log_dir") or [""])[0])
         limit = int((qs.get("limit") or ["40"])[0] or 40)
         limit = max(1, min(limit, 200))
-        _write_json(handler, 200, read_gateway_monitor_fn(log_dir, limit=limit))
+        write_json(handler, 200, read_gateway_monitor_fn(log_dir, limit=limit))
         return True
 
     if path == "/api/gateway/sessions":
@@ -75,13 +67,18 @@ def handle_gateway_get_route(
         payload = read_gateway_sessions_fn(
             str((qs.get("log_dir") or [""])[0]),
             actor=str((qs.get("actor") or [""])[0]),
+            logname=str((qs.get("logname") or [""])[0]),
             session_id=str((qs.get("session_id") or [""])[0]),
             event_type=str((qs.get("event_type") or [""])[0]),
             q=str((qs.get("q") or [""])[0]),
+            uid=str((qs.get("uid") or [""])[0]),
+            gid=str((qs.get("gid") or [""])[0]),
+            ts_from=int((qs.get("ts_from") or ["0"])[0] or 0),
+            ts_to=int((qs.get("ts_to") or ["0"])[0] or 0),
             limit=max(1, min(int((qs.get("limit") or ["60"])[0] or 60), 500)),
             target_policy=target_policy,
         )
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/gateway/sessions/") and path.endswith("/compliance"):
@@ -108,7 +105,7 @@ def handle_gateway_get_route(
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(
+        write_json(
             handler,
             200,
             {
@@ -146,11 +143,10 @@ def handle_gateway_get_route(
             )
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
-
 
 def handle_gateway_post_route(
     handler,
@@ -212,11 +208,11 @@ def handle_gateway_post_route(
             if callable(start_runtime_capture_fn):
                 state["runtime_capture"] = start_runtime_capture_fn(state.get("auto_capture") or {}, body or {})
         except Exception as exc:
-            _write_json(handler, 400, {"error": str(exc)})
+            write_json(handler, 400, {"error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, state)
+        write_json(handler, 200, state)
         return True
 
     if path == "/api/gateway/deactivate":
@@ -232,7 +228,7 @@ def handle_gateway_post_route(
             )
             force = bool(body.get("force", False))
             if active_capture and not force:
-                _write_json(
+                write_json(
                     handler,
                     409,
                     {
@@ -272,11 +268,11 @@ def handle_gateway_post_route(
             if interrupted_capture_ids:
                 state["interrupted_capture_ids"] = interrupted_capture_ids
         except Exception as exc:
-            _write_json(handler, 400, {"error": str(exc)})
+            write_json(handler, 400, {"error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, state)
+        write_json(handler, 200, state)
         return True
 
     return False

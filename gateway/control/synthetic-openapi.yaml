@@ -1,0 +1,265 @@
+openapi: "3.0.3"
+info:
+  title: Dakota Replay - Synthetic API
+  description: |
+    API completa de geração de massa sintética, jornadas, stress e homologação.
+    Todos os comandos CLI têm equivalente REST.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8090
+    description: Replay2 Control Plane (synthetic API)
+
+paths:
+  # ── Status ──
+  /api/synthetic/status:
+    get:
+      operationId: getStatus
+      summary: Status resumido
+      responses:
+        "200":
+          description: Contagem de screens, entities, datasets, journeys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  screens: { type: integer }
+                  entities: { type: integer }
+                  datasets: { type: integer }
+                  journeys: { type: integer }
+
+  # ── Screens ──
+  /api/synthetic/screens:
+    get:
+      operationId: listScreens
+      summary: Listar telas descobertas
+      responses:
+        "200":
+          description: Lista de telas com campos
+  /api/synthetic/screens/{screen_id}:
+    get:
+      operationId: getScreen
+      summary: Detalhes de uma tela
+      parameters:
+        - name: screen_id
+          in: path
+          required: true
+          schema: { type: integer }
+
+  # ── Analyze ──
+  /api/synthetic/analyze-source:
+    post:
+      operationId: analyzeSource
+      summary: Analisar código-fonte
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_dir]
+              properties:
+                source_dir: { type: string, description: "Diretório com .prg, .sql, etc." }
+      responses:
+        "200":
+          description: Telas e entidades descobertas
+
+  # ── Generate ──
+  /api/synthetic/generate:
+    post:
+      operationId: generateDataset
+      summary: Gerar dataset sintético
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [screen]
+              properties:
+                screen: { type: string }
+                quantity: { type: integer, default: 100 }
+                seed: { type: integer, default: 0 }
+
+  # ── Stress ──
+  /api/synthetic/stress:
+    post:
+      operationId: runStress
+      summary: Executar stress sintético
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scenario]
+              properties:
+                scenario: { type: string, description: "Journey ID" }
+                concurrency: { type: integer, default: 10 }
+                max_sessions: { type: integer }
+                seed: { type: integer }
+
+  # ── Datasets ──
+  /api/synthetic/datasets:
+    get:
+      operationId: listDatasets
+      summary: Listar datasets gerados
+  /api/synthetic/datasets/{dataset_id}:
+    get:
+      operationId: getDataset
+      summary: Detalhes de dataset com amostra
+      parameters:
+        - name: dataset_id
+          in: path
+          required: true
+          schema: { type: integer }
+
+  # ── Entities ──
+  /api/synthetic/entities:
+    get:
+      operationId: listEntities
+      summary: Listar entidades descobertas
+
+  # ── Journeys ──
+  /api/synthetic/journeys:
+    get:
+      operationId: listJourneys
+      summary: Listar jornadas
+    post:
+      operationId: inferJourneysFromSource
+      summary: Inferir jornadas do código-fonte
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_dir: { type: string }
+
+  /api/synthetic/journeys/infer:
+    post:
+      operationId: inferJourneys
+      summary: Inferir e salvar jornadas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_dir]
+              properties:
+                source_dir: { type: string }
+
+  /api/synthetic/journeys/infer-menu:
+    post:
+      operationId: inferMenu
+      summary: Inferir jornada de arquivo de menu
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [menu_file]
+              properties:
+                menu_file: { type: string }
+
+  /api/synthetic/journeys/{journey_id}:
+    get:
+      operationId: getJourney
+      summary: Detalhes de jornada com passos
+      parameters:
+        - name: journey_id
+          in: path
+          required: true
+          schema: { type: string }
+
+  /api/synthetic/journeys/{journey_id}/run:
+    post:
+      operationId: runJourney
+      summary: Executar jornada
+      parameters:
+        - name: journey_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessions: { type: integer, default: 10 }
+                seed: { type: integer }
+                concurrency: { type: integer }
+
+  /api/synthetic/journeys/{journey_id}/verify:
+    get:
+      operationId: verifyJourney
+      summary: Verificar jornada (sem executar)
+      parameters:
+        - name: journey_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sessions
+          in: query
+          schema: { type: integer, default: 5 }
+        - name: seed
+          in: query
+          schema: { type: integer }
+
+  /api/synthetic/journeys/{journey_id}/report:
+    get:
+      operationId: getReport
+      summary: Relatório de homologação
+      parameters:
+        - name: journey_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sessions
+          in: query
+          schema: { type: integer }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, html], default: json }
+
+  # ── Error Patterns ──
+  /api/synthetic/error-patterns:
+    get:
+      operationId: getErrorPatterns
+      summary: Catálogo de padrões de erro
+
+  # ── Screen Diff ──
+  /api/synthetic/diff:
+    get:
+      operationId: screenDiff
+      summary: Diff visual entre duas telas
+      parameters:
+        - name: expected
+          in: query
+          required: true
+          schema: { type: string }
+        - name: observed
+          in: query
+          required: true
+          schema: { type: string }
+
+  # ── Quickstart ──
+  /api/synthetic/quickstart:
+    post:
+      operationId: quickstart
+      summary: Pipeline completo (analyze→infer→stress→report→junit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_dir]
+              properties:
+                source_dir: { type: string }
+                concurrency: { type: integer }
+                sessions: { type: integer }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from urllib.parse import parse_qs
 
+from control.routes.route_helpers import write_json
 from control.services.run_service import (
     apply_run_action,
     create_run_request_payload,
@@ -16,20 +17,11 @@ from control.services.run_service import (
     list_runs_payload,
 )
 
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
-
 def _write_text(handler, status_code: int, *, content_type: str, content: str) -> None:
     handler.send_response(status_code)
     handler.send_header("Content-Type", content_type)
     handler.end_headers()
     handler.wfile.write(content.encode("utf-8"))
-
 
 def handle_run_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
@@ -45,7 +37,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             payload = list_runs_payload(con, limit=limit, compliance_status=compliance_status_filter)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.count("/") == 3:
@@ -62,7 +54,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.endswith("/compliance"):
@@ -84,7 +76,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.endswith("/report"):
@@ -106,7 +98,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.endswith("/report/export"):
@@ -156,7 +148,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.endswith("/events"):
@@ -174,7 +166,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             payload = get_run_events_payload(con, run_id)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/") and path.endswith("/failures"):
@@ -192,11 +184,10 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             payload = get_run_failures_payload(con, run_id)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
-
 
 def handle_run_post_route(handler, parsed_path, body: dict) -> bool:
     path = parsed_path.path
@@ -215,7 +206,7 @@ def handle_run_post_route(handler, parsed_path, body: dict) -> bool:
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/runs/"):
@@ -241,14 +232,43 @@ def handle_run_post_route(handler, parsed_path, body: dict) -> bool:
         if result.get("start_async"):
             handler.server.runner.start_run_async(run_id)
         if result.get("status_code") == 409:
-            _write_json(handler, 409, result.get("payload") or {})
+            write_json(handler, 409, result.get("payload") or {})
             return True
         payload = result.get("payload")
         if payload is None:
             handler.send_response(200)
             handler.end_headers()
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
+
+
+def handle_run_delete_route(handler, parsed_path) -> bool:
+    """DELETE /api/runs/{id} — exclui uma run e seus eventos/falhas (cascade)."""
+    path = parsed_path.path
+    if not path.startswith("/api/runs/") or path.count("/") != 3:
+        return False
+    user = handler._require(roles={"admin", "operator"})
+    if not user:
+        return True
+    run_id = int(path.split("/")[3])
+    con = handler._db()
+    try:
+        row = con.execute(
+            "SELECT id, status FROM replay_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        if not row:
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        if row["status"] in ("running", "queued"):
+            write_json(handler, 409, {"ok": False, "error": "nao e possivel excluir run em execucao ou na fila"})
+            return True
+        con.execute("DELETE FROM journey_reports WHERE run_id=?", (run_id,))
+        con.execute("DELETE FROM replay_runs WHERE id=?", (run_id,))
+        write_json(handler, 200, {"ok": True, "deleted_run_id": run_id})
+    finally:
+        handler._db_release(con)
+    return True

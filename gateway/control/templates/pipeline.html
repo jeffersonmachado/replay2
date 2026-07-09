@@ -1,0 +1,260 @@
+<!-- pipeline.html — Pipeline Discovery→Journey→Synthetic -->
+<div class="r2ctl-section">
+  <h2 class="r2ctl-section-title">Pipeline — Discovery → Journey → Synthetic</h2>
+  <p class="r2ctl-section-copy text-sm">Executa analise de codigo-fonte, gera jornadas e dados sinteticos em uma unica chamada.</p>
+</div>
+
+<!-- Ultima execucao persistida (renderizado no servidor) -->
+<div id="pipeline_last_run" class="hidden">
+  <div class="r2ctl-report-card r2ctl-report-card-success mb-4">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="text-sm font-medium text-emerald-200">Ultima execucao do Pipeline</h3>
+      <span id="pipeline_last_date" class="text-xs text-stone-400"></span>
+    </div>
+    <div id="pipeline_last_summary" class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5"></div>
+  </div>
+</div>
+
+<div class="r2ctl-card mb-4">
+  <div class="p-4">
+    <label class="block text-sm text-stone-300 mb-1">Diretorio do codigo-fonte</label>
+    <input id="pipeline_source_dir" type="text" placeholder="/caminho/para/codigo/fonte" class="r2ctl-input w-full mb-3">
+
+    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-3">
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Sessoes</label>
+        <input id="pipeline_sessions" type="number" value="10" min="1" max="1000" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Seed</label>
+        <input id="pipeline_seed" type="number" value="0" class="r2ctl-input w-full">
+      </div>
+      <div class="flex items-end">
+        <label class="flex items-center text-sm text-stone-300">
+          <input id="pipeline_dry_run" type="checkbox" class="mr-2"> Dry run (nao salvar)
+        </label>
+      </div>
+    </div>
+
+    <button id="pipeline_run_btn" class="r2ctl-btn-brand" onclick="runPipeline()">
+      ▶ Executar Pipeline
+    </button>
+    <span id="pipeline_status" class="ml-3 text-sm text-stone-400"></span>
+  </div>
+
+  <!-- Barra de progresso -->
+  <div id="pipeline_progress_container" class="hidden mt-4">
+    <div class="flex justify-between text-xs text-stone-400 mb-1">
+      <span id="pipeline_progress_phase">...</span>
+      <span id="pipeline_progress_pct">0%</span>
+    </div>
+    <div class="w-full bg-stone-700 rounded-full h-2.5 overflow-hidden">
+      <div id="pipeline_progress_bar" class="bg-emerald-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+    </div>
+    <div id="pipeline_progress_step" class="text-xs text-stone-400 mt-1">iniciando...</div>
+  </div>
+</div>
+
+<div id="pipeline_result" class="hidden">
+  <div class="r2ctl-card mb-3">
+    <div class="p-4">
+      <h3 class="text-sm font-medium text-stone-200 mb-2">Resultado</h3>
+      <div id="pipeline_summary" class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"></div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="r2ctl-card">
+      <div class="p-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-2">Discovery</h3>
+        <div id="pipeline_discovery" class="text-sm text-stone-300"></div>
+      </div>
+    </div>
+    <div class="r2ctl-card">
+      <div class="p-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-2">Journeys</h3>
+        <div id="pipeline_journeys" class="text-sm text-stone-300"></div>
+      </div>
+    </div>
+    <div class="r2ctl-card">
+      <div class="p-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-2">Validacao</h3>
+        <div id="pipeline_validation" class="text-sm text-stone-300"></div>
+      </div>
+    </div>
+    <div class="r2ctl-card">
+      <div class="p-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-2">Warnings</h3>
+        <div id="pipeline_warnings" class="text-sm text-amber-300"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Dados injetados pelo servidor (ultima execucao persistida)
+var _d = window.__R2CTL_PAGE_STATE__ || {};
+
+// Exibe ultima execucao se disponivel
+if (_d.last_execution) {
+  var le = _d.last_execution;
+  var container = document.getElementById('pipeline_last_run');
+  var summary = document.getElementById('pipeline_last_summary');
+  var dateEl = document.getElementById('pipeline_last_date');
+  
+  container.classList.remove('hidden');
+  dateEl.textContent = le.created_at || '';
+  summary.innerHTML = [
+    { label: 'Regras avaliadas', value: le.rules_evaluated || 0 },
+    { label: 'Regras OK', value: le.rules_ok || 0, cls: 'text-emerald-200' },
+    { label: 'Gaps', value: le.gaps_count || 0, cls: (le.gaps_count ? 'text-rose-200' : 'text-emerald-200') },
+    { label: 'Entidades', value: (_d.entities_count || 0) },
+    { label: 'Jornadas', value: (_d.journeys_count || 0) },
+  ].map(function(m) {
+    return '<div><span class="text-stone-400">' + m.label + '</span><br><span class="text-lg ' + (m.cls||'') + '">' + m.value + '</span></div>';
+  }).join('');
+  
+  // Preenche source_dir com o ultimo diretorio ou hash como dica
+  if (le.source_dir) {
+    document.getElementById('pipeline_source_dir').value = le.source_dir;
+    document.getElementById('pipeline_source_dir').placeholder = 'Ultimo diretorio (' + le.source_hash + ')';
+  } else if (le.source_hash) {
+    document.getElementById('pipeline_source_dir').placeholder = 'Ultimo: source hash ' + le.source_hash + ' (informe o diretorio)';
+  }
+}
+
+async function runPipeline() {
+  const btn = document.getElementById('pipeline_run_btn');
+  const status = document.getElementById('pipeline_status');
+  const result = document.getElementById('pipeline_result');
+  const progressBar = document.getElementById('pipeline_progress_bar');
+  const progressPct = document.getElementById('pipeline_progress_pct');
+  const progressPhase = document.getElementById('pipeline_progress_phase');
+  const progressStep = document.getElementById('pipeline_progress_step');
+  const progressContainer = document.getElementById('pipeline_progress_container');
+
+  btn.disabled = true;
+  result.classList.add('hidden');
+  progressContainer.classList.remove('hidden');
+  status.textContent = 'Iniciando...';
+  progressBar.style.width = '0%';
+  progressPct.textContent = '0%';
+
+  const body = {
+    source_dir: document.getElementById('pipeline_source_dir').value,
+    sessions: parseInt(document.getElementById('pipeline_sessions').value) || 10,
+    seed: parseInt(document.getElementById('pipeline_seed').value) || 0,
+    dry_run: document.getElementById('pipeline_dry_run').checked,
+  };
+
+  try {
+    const resp = await fetch('/api/synthetic/pipeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const startData = await resp.json();
+
+    if (!resp.ok || !startData.run_id) {
+      status.textContent = 'Erro: ' + (startData.error || 'Falha ao iniciar');
+      btn.disabled = false;
+      return;
+    }
+
+    const runId = startData.run_id;
+
+    // Polling ate completar
+    const poll = async () => {
+      const pr = await fetch('/api/synthetic/pipeline/' + runId + '/status');
+      const ps = await pr.json();
+
+      // Atualiza barra de progresso
+      progressBar.style.width = ps.progress_pct + '%';
+      progressPct.textContent = ps.progress_pct + '%';
+      progressPhase.textContent = ps.phase || '...';
+      var stepText = ps.step || '...';
+      if (ps.entities_found > 0) {
+        stepText += ' (' + ps.entities_found + ' ent.)';
+      }
+      progressStep.textContent = stepText;
+      status.textContent = 'Executando (' + ps.progress_pct + '%)...';
+
+      if (ps.status === 'running') {
+        setTimeout(poll, 800);
+        return;
+      }
+
+      if (ps.status === 'failed') {
+        progressBar.classList.remove('bg-emerald-500');
+        progressBar.classList.add('bg-rose-500');
+        status.textContent = 'Falhou: ' + (ps.error_message || 'erro desconhecido');
+        btn.disabled = false;
+        return;
+      }
+
+      // Completed
+      progressBar.style.width = '100%';
+      progressPct.textContent = '100%';
+      progressPhase.textContent = 'concluido';
+      progressStep.textContent = 'concluido';
+      status.textContent = 'Concluido';
+
+      if (ps.result) {
+        var data = ps.result;
+        document.getElementById('pipeline_summary').innerHTML = [
+          { label: 'Duracao', value: (data.duration_ms / 1000).toFixed(1) + 's' },
+          { label: 'Entidades', value: data.discovery?.entities || 0 },
+          { label: 'Jornadas', value: data.journeys?.generated || 0 },
+          { label: 'Datasets', value: data.synthetic?.datasets_generated || 0 },
+          { label: 'Regras', value: (data.business_eval?.rules_evaluated || 0) },
+          { label: 'Score', value: (data.validation?.average_score || '-') },
+        ].map(m => '<div><span class=\"text-stone-400 text-xs\">' + m.label + '</span><br><span class=\"text-lg font-semibold\">' + m.value + '</span></div>').join('');
+
+        document.getElementById('pipeline_discovery').innerHTML = [
+          '<span class=\"font-medium\">Discovery</span>',
+          'Arquivos: ' + (data.discovery?.entities || 0) + ' entidades',
+          'Telas: ' + (data.discovery?.screens || 0),
+          'CRUD completo: ' + (data.discovery?.crud?.completeness_pct || 0) + '%',
+          'Relacionamentos: ' + (data.discovery?.relationships || 0),
+          'Programas menu: ' + (data.discovery?.menu_programs || 0),
+        ].join('<br>');
+
+        document.getElementById('pipeline_journeys').innerHTML = [
+          '<span class=\"font-medium\">Journeys</span>',
+          'Geradas: ' + (data.journeys?.generated || 0),
+          'Salvas: ' + (data.journeys?.saved || 0),
+          'Datasets sinteticos: ' + (data.synthetic?.datasets_generated || 0),
+        ].join('<br>');
+
+        var be = data.business_eval || {};
+        document.getElementById('pipeline_validation').innerHTML = [
+          '<span class=\"font-medium\">Regras de Negocio</span>',
+          'Avaliadas: ' + (be.rules_evaluated || 0),
+          'OK: ' + (be.rules_ok || 0),
+          'Quebradas: ' + (be.rules_broken || 0),
+          'Gaps: ' + (be.gaps ? be.gaps.length : 0),
+        ].join('<br>');
+
+        var warnings = data.warnings || [];
+        document.getElementById('pipeline_warnings').innerHTML = warnings.length
+          ? '<span class=\"font-medium\">Warnings</span><br>' + warnings.map(function(w) { return '⚠ ' + w; }).join('<br>')
+          : '<span class=\"font-medium\">Warnings</span><br><span class=\"text-emerald-400\">✓ Nenhum warning</span>';
+
+        result.classList.remove('hidden');
+      }
+
+      btn.disabled = false;
+      progressPhase.textContent = 'concluido';
+      progressStep.textContent = ps.result?.duration_ms ? 'concluido em ' + (ps.result.duration_ms / 1000).toFixed(1) + 's' : 'concluido';
+
+      // Recarrega apos 6s para sincronizar card "Ultima execucao"
+      setTimeout(function() { location.reload(); }, 6000);
+    };
+
+    setTimeout(poll, 500);
+  } catch (e) {
+    status.textContent = 'Erro: ' + e.message;
+    btn.disabled = false;
+  }
+}
+</script>

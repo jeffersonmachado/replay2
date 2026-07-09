@@ -139,6 +139,9 @@ def summarize_capture_sessions(log_dir: str, *, target_policy: dict | None = Non
             {
                 "session_id": session_id,
                 "actor": str(item.get("actor") or "").strip(),
+                "logname": str(item.get("logname") or "").strip(),
+                "uid": item.get("uid"),
+                "gid": item.get("gid"),
                 "started_at_ms": ts_ms or None,
                 "ended_at_ms": None,
                 "last_ts_ms": ts_ms or None,

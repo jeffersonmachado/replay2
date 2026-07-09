@@ -12,8 +12,10 @@
 # - Handlers isolados por tela
 
 ########################################################################
-## Configuração inicial
+## Configuração inicial — CRÍTICO: encoding antes de qualquer source
 ########################################################################
+
+encoding system utf-8
 
 if {[catch {package require Expect} err]} {
     puts stderr "Erro: pacote Expect não encontrado: $err"

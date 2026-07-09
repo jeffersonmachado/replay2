@@ -1,0 +1,526 @@
+<div id="audit-results" class="space-y-3">
+  <p class="r2ctl-section-copy text-sm">Carregando dados de auditoria...</p>
+</div>
+
+<script>
+// Dados injetados pelo servidor (estado persistido)
+var _d = window.__R2CTL_PAGE_STATE__ || {};
+
+function scoreClass(score) {
+  if (score >= 8) return 'r2ctl-score-high';
+  if (score >= 3) return 'r2ctl-score-mid';
+  return 'r2ctl-score-low';
+}
+
+function confidenceCardClass(conf) {
+  if (conf >= 0.9) return 'r2ctl-report-card-success';
+  if (conf >= 0.7) return 'r2ctl-report-card-success';
+  if (conf >= 0.5) return '';
+  return 'r2ctl-report-card-neutral';
+}
+
+function depRelClass(rel) {
+  if (!rel) return 'r2ctl-badge-neutral';
+  if (rel.indexOf('campo') >= 0) return 'r2ctl-badge-warning';
+  return 'r2ctl-badge-info';
+}
+
+function renderAuditEntities(entities) {
+  var container = document.getElementById('audit-results');
+  if (!entities || !entities.length) {
+    container.innerHTML = '<div class="r2ctl-report-card"><p>Nenhuma entidade encontrada. Execute o Pipeline em Engenharia → Pipeline primeiro.</p></div>';
+    return;
+  }
+
+  // ── Sumario com diretorios ──
+  var totalPrograms = 0, totalDeps = 0, totalDirs = 0;
+  var allPrograms = {};
+  var allProgramDirs = {};
+  entities.forEach(function(e) {
+    (e.programs || []).forEach(function(p) { allPrograms[p.file] = p; });
+    totalDeps += (e.dependencies || []).length;
+  });
+  totalPrograms = Object.keys(allPrograms).length;
+
+  // Agrupa programas por diretorio
+  var dirTree = {};
+  Object.values(allPrograms).forEach(function(p) {
+    var dirPath = p.parent_dir || p.dir || 'raiz';
+    if (!dirTree[dirPath]) { dirTree[dirPath] = { path: dirPath, programs: [], entityCount: 0 }; }
+    dirTree[dirPath].programs.push(p);
+  });
+  totalDirs = Object.keys(dirTree).length;
+
+  // Dados de diretorios vindos do servidor
+  var programDirs = (_d.program_dirs || []);
+  var dataDirs = (_d.data_dirs || []);
+
+  var summaryHtml = '<div class="r2ctl-flex-between" style="margin-bottom:16px;padding:12px 16px;background:var(--r2-charcoal-800);border-radius:8px;">' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + entities.length + '</span> entidades inferidas</div>' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalPrograms + '</span> programas</div>' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDirs + '</span> diretorios</div>' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDeps + '</span> dependencias</div>' +
+    '</div>';
+
+  // ── Painel de Navegacao Remota (producao: 10.5.8.25:/dakota1) ──
+  var remoteNavHtml = '';
+  var rn = _d.remote_navigation;
+  if (rn && !rn.error) {
+    remoteNavHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
+      '<span class="r2ctl-badge-warning" style="margin-right:6px">remoto</span>' +
+      'Navegacao — Producao (' + (rn.source || '10.5.8.25:/dakota1') + ')</summary>' +
+      '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;">';
+
+    // Card: MENUSIG
+    if (rn.menusig && rn.menusig.entry_point) {
+      remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px;border-left:3px solid var(--r2-warning);">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;color:var(--r2-warning);">MENUSIG — Menu Principal</h4>' +
+        '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.menusig.file || '') + '</code></p>' +
+        '<p style="margin:2px 0;font-size:11px;">Dispatch: <code class="font-mono">' + escapeHtml(rn.menusig.dispatch || '') + '</code></p>';
+      if (rn.menusig.gmenu_calls && rn.menusig.gmenu_calls.length > 0) {
+        remoteNavHtml += '<p style="margin:2px 0;font-size:11px;">gmenu(): ' +
+          rn.menusig.gmenu_calls.map(function(c) { return '<code class="font-mono" style="margin:1px 2px">' + escapeHtml(c) + '</code>'; }).join(' ') + '</p>';
+      }
+      if (rn.menusig.submenus && rn.menusig.submenus.length > 0) {
+        remoteNavHtml += '<p style="margin:2px 0;font-size:11px;">Submenus: ' +
+          rn.menusig.submenus.map(function(s) { return '<code class="font-mono" style="margin:1px 2px;color:var(--r2-accent);">' + escapeHtml(s) + '</code>'; }).join(' ') + '</p>';
+      }
+      remoteNavHtml += '</div>';
+    }
+
+    // Card: GMENUCAD
+    if (rn.gmenucad && rn.gmenucad.function) {
+      remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">GMENUCAD — CRUD Generico</h4>' +
+        '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.gmenucad.file || '') + '</code></p>' +
+        '<p style="margin:2px 0;font-size:11px;">Funcao: <code class="font-mono">' + escapeHtml(rn.gmenucad.function || '') + '</code> | Variavel: <code>' + escapeHtml(rn.gmenucad.variable || '') + '</code></p>';
+      if (rn.gmenucad.crud_options && rn.gmenucad.crud_options.length > 0) {
+        remoteNavHtml += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">' +
+          rn.gmenucad.crud_options.map(function(o) {
+            return '<span style="font-size:10px;padding:2px 6px;background:var(--r2-charcoal-700);border-radius:3px;">' + escapeHtml(o) + '</span>';
+          }).join('') + '</div>';
+      }
+      if (rn.gmenucad.lOpca_cases && rn.gmenucad.lOpca_cases.length > 0) {
+        remoteNavHtml += '<p style="margin:2px 0;font-size:10px;color:var(--r2-text-secondary);">Cases: ' +
+          rn.gmenucad.lOpca_cases.map(function(c) { return '<code>' + escapeHtml(c) + '</code>'; }).join(', ') + '</p>';
+      }
+      remoteNavHtml += '</div>';
+    }
+
+    // Card: GMENU
+    if (rn.gmenu && rn.gmenu.functions) {
+      remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">GMENU — Menu Customizado</h4>' +
+        '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.gmenu.file || '') + '</code></p>' +
+        '<p style="margin:2px 0;font-size:11px;">Funcoes: ' +
+          (rn.gmenu.functions || []).map(function(f) { return '<code class="font-mono" style="margin:1px 2px">' + escapeHtml(f) + '</code>'; }).join(' ') + '</p>';
+      if (rn.gmenu.gmenucad_full) {
+        remoteNavHtml += '<p style="margin:2px 0;font-size:10px;color:var(--r2-accent);">gMenuCad: <code>' + escapeHtml(rn.gmenu.gmenucad_full) + '</code></p>';
+      }
+      remoteNavHtml += '</div>';
+    }
+
+    // Card: Modulos (modulo.dbf remoto)
+    if (rn.modules && rn.modules.length > 0) {
+      remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">' + rn.modules.length + ' Modulos (modulo.dbf remoto)</h4>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+      rn.modules.forEach(function(m) {
+        remoteNavHtml += '<span style="font-size:10px;padding:2px 6px;background:var(--r2-charcoal-700);border-radius:3px;white-space:nowrap;">' +
+          '<code class="font-mono" style="color:var(--r2-accent);">' + escapeHtml(m.code) + '</code> ' +
+          '<span style="color:var(--r2-text-secondary)">' + escapeHtml(m.label) + '</span></span>';
+      });
+      remoteNavHtml += '</div></div>';
+    }
+
+    remoteNavHtml += '</div></details>';
+  } else if (rn && rn.error) {
+    remoteNavHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
+      '<span class="r2ctl-badge-neutral" style="margin-right:6px">remoto</span>' +
+      'Navegacao — indisponivel</summary>' +
+      '<p class="is-muted" style="margin:4px 0;font-size:11px;">' + escapeHtml(rn.error) + '</p></details>';
+  }
+
+  // ── Painel do sistema local (/opt/dados/sistema) ──
+  var localSistemaHtml = '';
+  var sis = _d.local_sistema;
+  if (sis) {
+    localSistemaHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
+      '<span class="r2ctl-badge-accent" style="margin-right:6px">' + (sis.base_path || '/opt/dados/sistema') + '</span>' +
+      'Estrutura do diretorio local</summary>';
+
+    // ── Menu Analysis Cards (INFERENCIA) — ANTES do grid ──
+    var ma = sis.menu_analysis;
+    if (ma) {
+      // Card: Menu principal (raiz do sistema) — PRIMEIRO
+      if (ma.root_menu_programs && ma.root_menu_programs.length > 0) {
+        localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px;border-left:3px solid var(--r2-accent);margin-bottom:12px;">' +
+          '<h4 style="margin:0 0 6px;font-size:13px;color:var(--r2-accent);">Menu principal do sistema (raiz) — ' + ma.root_menu_programs.length + ' programas inferidos</h4>';
+        ma.root_menu_programs.forEach(function(rm) {
+          var isNamedMenu = rm.file && rm.file.toLowerCase().indexOf('menu.') >= 0;
+          var badgeLabel = isNamedMenu ? 'MENU PRINCIPAL' : 'MENU RAIZ';
+          var badgeClass = isNamedMenu ? 'r2ctl-badge-warning' : 'r2ctl-badge-accent';
+          localSistemaHtml += '<details class="r2ctl-details" style="margin-top:4px"><summary>' +
+            '<span class="font-mono" style="color:var(--r2-accent);font-weight:600;">' + escapeHtml(rm.rel_path || rm.file) + '</span>' +
+            ' <span class="' + badgeClass + '">' + badgeLabel + '</span>' +
+            (rm.purpose ? ' <span class="is-muted">— ' + escapeHtml(rm.purpose) + '</span>' : '') +
+            (rm.call_count > 0 ? ' <span class="r2ctl-badge-info">' + rm.call_count + ' chamadas</span>' : '') +
+            ' <span class="is-muted" style="font-size:10px">' + (rm.size || 0) + ' bytes</span>' +
+            '</summary>';
+          if (rm.calls && rm.calls.length > 0) {
+            localSistemaHtml += '<div style="margin:4px 0;font-size:11px;">Programas chamados: ' +
+              rm.calls.slice(0, 20).map(function(c) {
+                return '<code class="font-mono" style="margin:1px 2px">' + escapeHtml(c) + '</code>';
+              }).join('') + '</div>';
+          }
+          if (rm.entities && rm.entities.length > 0) {
+            localSistemaHtml += '<div style="font-size:11px;">Entidades: ' +
+              rm.entities.slice(0, 15).map(function(e) {
+                return '<code style="margin:1px 2px">' + escapeHtml(e) + '</code>';
+              }).join('') + '</div>';
+          }
+          localSistemaHtml += '</details>';
+        });
+        localSistemaHtml += '</div>';
+      }
+
+      // Card: Resumo da inferencia
+      localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px;margin-bottom:12px;">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">Inferencia de estrutura</h4>' +
+        '<p style="margin:0;font-size:11px;">' +
+        (ma.total_scanned || 0) + ' arquivos | ' +
+        (ma.total_programs || 0) + ' programas | ' +
+        '<span class="r2ctl-badge-accent" style="margin:0 4px">' + (ma.total_modules || 0) + ' modulos inferidos</span> | ' +
+        (ma.total_menus || 0) + ' menus | ' +
+        (ma.total_with_entities || 0) + ' c/ entidades | ' +
+        (ma.total_with_calls || 0) + ' c/ chamadas' +
+        '</p></div>';
+    }
+
+    localSistemaHtml += '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;">';
+
+    // Card: modulos com tipos de arquivo
+    if (sis.modules && sis.modules.length > 0) {
+      var isDict = sis.modules[0] && typeof sis.modules[0] === 'object';
+      localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">' + sis.module_count + ' Modulos de programa</h4>' +
+        '<p style="margin:0 0 4px;font-size:11px;color:var(--r2-accent);">' + (sis.programs_prg || 0) + ' .prg / ' + (sis.programs_dbo || 0) + ' .dbo</p>';
+      if (isDict) {
+        localSistemaHtml += '<div class="r2ctl-table-scroll" style="max-height:400px">' +
+          '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Modulo</th><th>Arquivos</th><th>.prg</th><th>.dbo</th><th>.dbf</th><th>.fmo</th><th>.fmt</th></tr>';
+        sis.modules.forEach(function(m) {
+          localSistemaHtml += '<tr>' +
+            '<td class="font-mono">' + escapeHtml(m.name || m) + '</td>' +
+            '<td>' + (m.files || 0) + '</td>' +
+            '<td>' + (m.prg > 0 ? '<span class="r2ctl-badge-info">' + m.prg + '</span>' : '—') + '</td>' +
+            '<td>' + (m.dbo > 0 ? m.dbo : '—') + '</td>' +
+            '<td>' + (m.dbf > 0 ? '<span class="r2ctl-badge-warning">' + m.dbf + '</span>' : '—') + '</td>' +
+            '<td>' + (m.fmo > 0 ? m.fmo : '—') + '</td>' +
+            '<td>' + (m.fmt > 0 ? m.fmt : '—') + '</td>' +
+          '</tr>';
+        });
+        localSistemaHtml += '</table></div>';
+      } else {
+        localSistemaHtml += '<div style="display:flex;flex-wrap:wrap;gap:3px;">' +
+          sis.modules.map(function(m) {
+            return '<code class="font-mono" style="font-size:10px;padding:1px 5px;background:var(--r2-charcoal-700);border-radius:3px;">' + escapeHtml(m) + '</code>';
+          }).join('') + '</div>';
+      }
+      localSistemaHtml += '</div>';
+    }
+
+    // Card: databases
+    if (sis.databases && sis.databases.length > 0) {
+      localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">' + sis.databases.length + ' Databases</h4>' +
+        '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Base</th><th>Arquivos</th></tr>';
+      sis.databases.forEach(function(db) {
+        localSistemaHtml += '<tr><td class="font-mono">' + escapeHtml(db.name) + '</td><td>' + (db.files || 0) + '</td></tr>';
+      });
+      localSistemaHtml += '</table></div>';
+    }
+
+    // Card: tipos de arquivo
+    if (sis.file_types && sis.file_types.length > 0) {
+      localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">Tipos de arquivo</h4>' +
+        '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Tipo</th><th>Qtd</th></tr>';
+      sis.file_types.forEach(function(ft) {
+        localSistemaHtml += '<tr><td style="font-size:12px">' + escapeHtml(ft.label) + ' <code class="font-mono is-muted">' + escapeHtml(ft.ext) + '</code></td>' +
+          '<td class="font-mono">' + (ft.count || 0) + '</td></tr>';
+      });
+      localSistemaHtml += '</table></div>';
+    }
+
+    // Card: outros diretorios de dados
+    if (sis.other_dirs && sis.other_dirs.length > 0) {
+      localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">Outros diretorios de dados</h4>';
+      sis.other_dirs.forEach(function(od) {
+        localSistemaHtml += '<details class="r2ctl-details" style="margin-top:4px"><summary>' +
+          '<span class="font-mono">' + escapeHtml(od.name) + '/</span>' +
+          ' <span class="r2ctl-badge-neutral">' + (od.files || 0) + ' arquivos</span>' +
+          '</summary>';
+        if (od.subdirs && od.subdirs.length > 0) {
+          localSistemaHtml += '<table class="r2ctl-mini-table" style="margin:4px 0"><tr><th>Subdiretorio</th><th>Arquivos</th><th>.prg</th><th>.dbf</th></tr>';
+          od.subdirs.forEach(function(sd) {
+            localSistemaHtml += '<tr>' +
+              '<td class="font-mono">' + escapeHtml(sd.name) + '/</td>' +
+              '<td>' + (sd.files || 0) + '</td>' +
+              '<td>' + (sd.prg > 0 ? '<span class="r2ctl-badge-info">' + sd.prg + '</span>' : '—') + '</td>' +
+              '<td>' + (sd.dbf > 0 ? '<span class="r2ctl-badge-warning">' + sd.dbf + '</span>' : '—') + '</td>' +
+            '</tr>';
+          });
+          localSistemaHtml += '</table>';
+        } else {
+          localSistemaHtml += '<p class="is-muted" style="margin:2px 0;font-size:11px">sem subdiretorios</p>';
+        }
+        localSistemaHtml += '</details>';
+      });
+      localSistemaHtml += '</div>';
+    }
+
+    // ── Mais cards de inferencia (depois do grid) ──
+    if (ma) {
+      if (ma.inferred_modules && ma.inferred_modules.length > 0) {
+        localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+          '<h4 style="margin:0 0 6px;font-size:13px;">' + ma.inferred_modules.length + ' Modulos inferidos</h4>' +
+          '<div class="r2ctl-table-scroll" style="max-height:500px">' +
+          '<table class="r2ctl-mini-table" style="margin:0">' +
+          '<tr><th>Modulo</th><th>Prog</th><th>Ent</th><th>Menu</th><th>Top programas</th></tr>';
+        ma.inferred_modules.forEach(function(mi) {
+          var topProgs = (mi.top_programs || []).slice(0, 4).map(function(p) {
+            var badge = p.is_menu ? 'r2ctl-badge-warning' : 'r2ctl-badge-neutral';
+            return '<span style="font-size:10px;margin:1px 2px;white-space:nowrap;" class="' + badge + '" title="' + escapeHtml(p.purpose || '') + '">' +
+              escapeHtml(p.file) + (p.entity_count > 0 ? ' (' + p.entity_count + ')' : '') + '</span>';
+          }).join(' ');
+          localSistemaHtml += '<tr>' +
+            '<td><span class="font-mono" style="color:var(--r2-accent);">' + escapeHtml(mi.code) + '</span>' +
+              ' <span style="font-size:10px;">' + escapeHtml(mi.label || '') + '</span></td>' +
+            '<td>' + (mi.program_count || 0) + '</td>' +
+            '<td>' + (mi.entity_count > 0 ? '<span class="r2ctl-badge-info">' + mi.entity_count + '</span>' : '—') + '</td>' +
+            '<td>' + (mi.menu_program ? '<code class="font-mono" style="font-size:10px">' + escapeHtml(mi.menu_program) + '</code>' : '—') + '</td>' +
+            '<td style="max-width:350px">' + topProgs + '</td>' +
+          '</tr>';
+        });
+        localSistemaHtml += '</table></div></div>';
+      }
+
+      // Card: Arvore de navegacao (analise real do codigo)
+      if (ma.navigation_tree && ma.navigation_tree.length > 0) {
+        localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+          '<h4 style="margin:0 0 6px;font-size:13px;">Arvore de navegacao — ' + ma.navigation_tree.length + ' modulos</h4>' +
+          '<p style="margin:0 0 6px;font-size:10px;color:var(--r2-text-secondary);">Analise do codigo: menu.prg → modulo.dbf → menumirage(modulo) → programa de entrada</p>' +
+          '<div class="r2ctl-table-scroll" style="max-height:500px">' +
+          '<table class="r2ctl-mini-table" style="margin:0">' +
+          '<tr><th>Modulo</th><th>Descricao</th><th>Progs</th><th>Entrada</th><th>Amostra</th></tr>';
+        ma.navigation_tree.forEach(function(nt) {
+          var entryDisplay = nt.entry_program
+            ? '<code class="font-mono" style="font-size:10px;color:var(--r2-accent);">' + escapeHtml(nt.entry_program) + '</code>'
+            : '<span class="is-muted">—</span>';
+          var sampleDisplay = '';
+          if (nt.sample_programs && nt.sample_programs.length > 0) {
+            sampleDisplay = nt.sample_programs.map(function(sp) {
+              return '<span style="font-size:10px;margin:1px 2px;white-space:nowrap;">' +
+                '<code class="font-mono">' + escapeHtml(sp.file) + '</code>' +
+                (sp.purpose ? ' <span class="is-muted">' + escapeHtml(sp.purpose) + '</span>' : '') +
+                '</span>';
+            }).join('<br>');
+          }
+          localSistemaHtml += '<tr>' +
+            '<td><span class="font-mono" style="color:var(--r2-accent);font-weight:600;">' + escapeHtml(nt.code) + '</span>' +
+              (nt.has_directory ? '' : ' <span class="is-muted" style="font-size:9px">(sem dir)</span>') + '</td>' +
+            '<td style="font-size:12px">' + escapeHtml(nt.label || '') + '</td>' +
+            '<td>' + (nt.program_count || 0) + '</td>' +
+            '<td>' + entryDisplay + '</td>' +
+            '<td style="max-width:300px">' + (sampleDisplay || '—') + '</td>' +
+          '</tr>';
+        });
+        localSistemaHtml += '</table></div></div>';
+      }
+
+      // Card: Top programas por entidades (compacto)
+      if (ma.program_index && ma.program_index.length > 0) {
+        localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
+          '<h4 style="margin:0 0 6px;font-size:13px;">Top programas por entidades referenciadas</h4>' +
+          '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Programa</th><th>Mod</th><th>Ent</th><th>Exemplos</th></tr>';
+        ma.program_index.slice(0, 15).forEach(function(pi) {
+          localSistemaHtml += '<tr><td class="font-mono" title="' + escapeHtml(pi.rel_path || '') + '">' + escapeHtml(pi.file) + '</td>' +
+            '<td class="is-muted">' + escapeHtml(pi.module || '—') + '</td>' +
+            '<td>' + (pi.entity_count || 0) + '</td>' +
+            '<td style="font-size:10px">' + (pi.entities || []).slice(0, 8).map(function(e) { return '<code>' + escapeHtml(e) + '</code>'; }).join(' ') + '</td></tr>';
+        });
+        localSistemaHtml += '</table></div>';
+      }
+    }
+
+    localSistemaHtml += '</div></details>';
+  }
+
+  // ── Painel de diretorios (programas vs dados) ──
+  var dirsPanelHtml = '';
+  if (totalDirs > 0 || dataDirs.length > 0) {
+    dirsPanelHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
+      '<span class="r2ctl-badge-info" style="margin-right:6px">' + totalDirs + ' dirs programas</span>' +
+      (dataDirs.length > 0 ? '<span class="r2ctl-badge-warning" style="margin-left:6px">' + dataDirs.length + ' dirs dados</span>' : '') +
+      ' Estrutura de diretorios (programas vs dados)</summary>' +
+      '<div class="r2ctl-table-scroll" style="margin-top:8px">' +
+      '<table class="r2ctl-mini-table">' +
+        '<tr><th colspan="3" style="background:var(--r2-charcoal-700);color:var(--r2-accent);">Programas</th></tr>' +
+        '<tr><th>Diretorio</th><th>Programas</th><th>Programas (lista)</th></tr>';
+
+    // Usa program_dirs do servidor se disponivel
+    var dirsSource = programDirs.length > 0 ? programDirs : Object.values(dirTree).map(function(d) {
+      return { path: d.path, program_count: d.programs.length, programs: d.programs };
+    });
+
+    dirsSource.forEach(function(d) {
+      var progNames = (d.programs || []).map(function(p) {
+        return '<code class="font-mono" style="font-size:11px">' + escapeHtml(p.file || '') + '</code>';
+      }).join(', ');
+      dirsPanelHtml += '<tr>' +
+        '<td class="font-mono" style="font-size:12px" title="' + escapeHtml(d.path || '') + '">' +
+          escapeHtml((d.path || '').length > 70 ? '...' + (d.path || '').slice(-67) : (d.path || '')) + '</td>' +
+        '<td><span class="r2ctl-badge-info">' + (d.program_count || 0) + '</span></td>' +
+        '<td style="max-width:400px">' + progNames + '</td>' +
+      '</tr>';
+    });
+
+    // Diretorios de dados
+    if (dataDirs.length > 0) {
+      dirsPanelHtml += '<tr><th colspan="3" style="background:var(--r2-charcoal-700);color:var(--r2-warning);">Dados</th></tr>';
+      dataDirs.forEach(function(dd) {
+        dirsPanelHtml += '<tr>' +
+          '<td class="font-mono" style="font-size:12px" colspan="2">' + escapeHtml(dd) + '</td>' +
+          '<td class="is-muted">storage das entidades</td>' +
+        '</tr>';
+      });
+    }
+
+    dirsPanelHtml += '</table></div></details>';
+  }
+
+  var cardsHtml = entities.map(function(e) {
+    var evidence = e.evidence || [];
+    var programs = e.programs || [];
+    var deps = e.dependencies || [];
+
+    // ── Programas section ──
+    var programsHtml = '';
+    if (programs.length > 0) {
+      programsHtml = '<details class="r2ctl-details" style="margin-top:10px"><summary>' +
+        '<span class="r2ctl-badge-info" style="margin-right:6px">' + programs.length + ' programas</span>' +
+        'Programas que utilizam esta entidade</summary>' +
+        '<div class="r2ctl-table-scroll" style="margin-top:6px">' +
+        '<table class="r2ctl-mini-table">' +
+          '<tr><th>Programa</th><th>Objetivo / Proposito</th><th>Diretorio</th><th>Entidades</th></tr>' +
+          programs.map(function(p) {
+            var entBadge = p.entity_count > 1
+              ? '<span class="r2ctl-badge-info">' + p.entity_count + ' entidades</span>'
+              : '<span class="r2ctl-badge-neutral">1 entidade</span>';
+            var dirDisplay = p.relative_dir || p.dir || '—';
+            return '<tr>' +
+              '<td class="font-mono" title="' + escapeHtml(p.file_path || '') + '">' + escapeHtml(p.file) + '</td>' +
+              '<td>' + escapeHtml(p.title || '—') + '</td>' +
+              '<td class="font-mono is-muted" title="' + escapeHtml(p.parent_dir || '') + '">' + escapeHtml(dirDisplay) + '</td>' +
+              '<td>' + entBadge + '</td>' +
+            '</tr>';
+          }).join('') +
+        '</table>' +
+        '</div>' +
+      '</details>';
+    }
+
+    // ── Dependencias section ──
+    var depsHtml = '';
+    if (deps.length > 0) {
+      depsHtml = '<details class="r2ctl-details" style="margin-top:6px"><summary>' +
+        '<span class="r2ctl-badge-warning" style="margin-right:6px">' + deps.length + ' dependencias</span>' +
+        'Relacoes com outras entidades</summary>' +
+        '<div class="r2ctl-table-scroll" style="margin-top:6px">' +
+        '<table class="r2ctl-mini-table">' +
+          '<tr><th>Entidade relacionada</th><th>Tipo de relacao</th><th>Via programa</th></tr>' +
+          deps.map(function(d) {
+            var viaProg = d.via_program
+              ? '<span class="font-mono">' + escapeHtml(d.via_program) + '</span>'
+              : '<span class="is-muted">—</span>';
+            return '<tr>' +
+              '<td class="font-mono" style="font-weight:600">' + escapeHtml(d.target_entity || '') + '</td>' +
+              '<td><span class="' + depRelClass(d.relationship) + '">' + escapeHtml(d.relationship || '') + '</span></td>' +
+              '<td>' + viaProg + '</td>' +
+            '</tr>';
+          }).join('') +
+        '</table>' +
+        '</div>' +
+      '</details>';
+    }
+
+    return '<div class="r2ctl-report-card ' + confidenceCardClass(e.confidence || 0) + '">' +
+      '<div class="r2ctl-flex-between">' +
+        '<div>' +
+          '<h3>' + escapeHtml(e.name) + '</h3>' +
+          '<span class="r2ctl-report-meta">inferencia: ' + escapeHtml(e.inference_type || 'entity_discovery') +
+            ' | confianca: ' + ((e.confidence || 0)*100).toFixed(0) + '%' +
+            ' | decisao: ' + escapeHtml(e.final_decision || '—') +
+          '</span>' +
+        '</div>' +
+        '<span class="r2ctl-status-pill r2ctl-status-neutral">' + escapeHtml(e.inference_type || 'entity_discovery') + '</span>' +
+      '</div>' +
+      programsHtml +
+      depsHtml +
+      '<details class="r2ctl-details" style="margin-top:6px"><summary>' + evidence.length + ' evidencias de inferencia</summary>' +
+        '<div class="r2ctl-table-scroll">' +
+        '<table class="r2ctl-mini-table">' +
+          '<tr><th>Regra</th><th>Padrao</th><th>Arquivo</th><th>Linha</th><th>Score</th></tr>' +
+          evidence.map(function(ev) { return '<tr>' +
+            '<td class="font-mono">' + escapeHtml(ev.rule || '') + '</td>' +
+            '<td class="font-mono is-truncate" title="' + escapeHtml(ev.pattern || '') + '">' + escapeHtml(ev.pattern || '') + '</td>' +
+            '<td class="font-mono is-muted" title="' + escapeHtml(ev.source_file || '') + '">' + escapeHtml((ev.source_file || '').split('/').pop()) + '</td>' +
+            '<td class="font-mono is-muted">' + (ev.source_line || '?') + '</td>' +
+            '<td class="font-mono ' + scoreClass(ev.score || 0) + '">+' + (ev.score || 0) + '</td>' +
+          '</tr>'; }).join('') +
+        '</table>' +
+        '</div>' +
+      '</details>' +
+    '</div>';
+  }).join('');
+
+  container.innerHTML = summaryHtml + remoteNavHtml + localSistemaHtml + dirsPanelHtml + cardsHtml;
+}
+
+// Renderiza direto do servidor se disponivel, senao busca via API
+(function() {
+  if (_d.entities && _d.entities.length > 0) {
+    renderAuditEntities(_d.entities);
+    return;
+  }
+
+  // Fallback: busca via API
+  fetch('/api/catalog/entities')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var entities = data.entities || data || [];
+      var withAudit = entities.filter(function(e) {
+        try { var m = JSON.parse(e.metadata_json || '{}'); return !!m._audit; }
+        catch(ex) { return false; }
+      });
+      var mapped = withAudit.map(function(e) {
+        var meta = JSON.parse(e.metadata_json || '{}');
+        var audit = meta._audit || {};
+        return {
+          name: e.name,
+          inference_type: audit.inference_type || 'entity_discovery',
+          confidence: audit.confidence || 0,
+          evidence: audit.evidence || [],
+          created_at: audit.timestamp || '',
+        };
+      });
+      renderAuditEntities(mapped);
+    })
+    .catch(function(e) {
+      document.getElementById('audit-results').innerHTML = '<div class="r2ctl-report-card r2ctl-report-card-danger"><p>Erro ao carregar: ' + escapeHtml(e.message) + '</p><p>Execute o Pipeline primeiro em Engenharia → Pipeline.</p></div>';
+    });
+})();
+
+function escapeHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>

@@ -1,0 +1,32 @@
+{
+  "name": "dakota-replay2",
+  "version": "0.1.0",
+  "description": "Plataforma de captura de produção/live, replay sequencial e validação de migração para Recital 8 -> Recital 24",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bash ./dev.sh",
+    "dev:stop": "make dev-stop",
+    "dev:logs": "make dev-logs",
+    "test": "make test",
+    "test:python": "python -m pytest tests/ -v --tb=short",
+    "test:tcl": "cd tests && tclsh all.tcl",
+    "install": "make install",
+    "setup": "make setup",
+    "clean": "make clean",
+    "lint": "make lint"
+  },
+  "keywords": [
+    "recital",
+    "migration",
+    "capture",
+    "replay",
+    "testing",
+    "automation"
+  ],
+  "author": "Dakota Team",
+  "license": "Proprietary",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

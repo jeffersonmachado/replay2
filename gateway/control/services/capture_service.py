@@ -128,6 +128,48 @@ def interrupt_stale_captures(con, *, now_ms_fn) -> int:
     return result.rowcount
 
 
+def ensure_active_capture_for_gateway(
+    con,
+    *,
+    log_dir_base: str,
+    now_ms_fn,
+) -> dict | None:
+    """Recria automaticamente uma captura quando o gateway permanece ativo.
+
+    Fluxo esperado no startup:
+    - capturas órfãs do processo anterior já foram marcadas como interrupted;
+    - se o gateway lógico segue ativo, abrimos uma nova captura para retomar a trilha.
+    """
+    gw = get_gateway_state(con)
+    if not gw.get("active"):
+        return None
+
+    existing = query_one(
+        con,
+        "SELECT * FROM capture_sessions WHERE status='active' ORDER BY id DESC LIMIT 1",
+        (),
+    )
+    if existing:
+        return _serialize(existing)
+
+    user_id = gw.get("activated_by_id")
+    username = str(gw.get("activated_by_username") or "").strip()
+    if not user_id or not username:
+        return None
+
+    notes = "captura retomada automaticamente na inicializacao do control server"
+    return start_capture(
+        con,
+        user_id=int(user_id),
+        username=username,
+        log_dir_base=log_dir_base,
+        connection_profile_id=gw.get("connection_profile_id"),
+        operational_user_id=gw.get("operational_user_id"),
+        notes=notes,
+        now_ms_fn=now_ms_fn,
+    )
+
+
 def list_captures(con, *, limit: int = 60) -> list[dict]:
     """Lista sessões de captura ordenadas por data de início (mais recentes primeiro)."""
     rows = query_all(

@@ -259,5 +259,287 @@ ON capture_sessions(status, started_at_ms DESC);
 
 CREATE INDEX IF NOT EXISTS capture_sessions_created_by
 ON capture_sessions(created_by, started_at_ms DESC);
+
+-- Synthetic data & source analysis tables
+
+CREATE TABLE IF NOT EXISTS screens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  screen_signature TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  program_name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS screens_signature ON screens(screen_signature);
+
+CREATE TABLE IF NOT EXISTS screen_fields (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  screen_id INTEGER NOT NULL REFERENCES screens(id) ON DELETE CASCADE,
+  field_name TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  datatype TEXT NOT NULL DEFAULT 'text',
+  required INTEGER NOT NULL DEFAULT 0,
+  unique_flag INTEGER NOT NULL DEFAULT 0,
+  lookup_table TEXT,
+  constraints_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS screen_fields_screen ON screen_fields(screen_id);
+
+CREATE TABLE IF NOT EXISTS synthetic_datasets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  screen_id INTEGER NOT NULL DEFAULT 0,
+  entity_name TEXT NOT NULL DEFAULT '',
+  quantity INTEGER NOT NULL DEFAULT 0,
+  seed INTEGER NOT NULL DEFAULT 0,
+  params_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS synthetic_datasets_screen ON synthetic_datasets(screen_id);
+CREATE INDEX IF NOT EXISTS synthetic_datasets_name ON synthetic_datasets(name);
+
+CREATE TABLE IF NOT EXISTS synthetic_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dataset_id INTEGER NOT NULL REFERENCES synthetic_datasets(id) ON DELETE CASCADE,
+  record_index INTEGER NOT NULL,
+  data_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS synthetic_records_dataset ON synthetic_records(dataset_id, record_index);
+
+-- Entity tests: validacoes CRUD por entidade (nao sao jornadas de negocio)
+CREATE TABLE IF NOT EXISTS entity_tests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  tags_csv TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS entity_tests_entity ON entity_tests(entity_name);
+
+CREATE TABLE IF NOT EXISTS source_entities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  storage_type TEXT NOT NULL DEFAULT 'unknown',
+  source TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS source_entities_name ON source_entities(name);
+
+CREATE TABLE IF NOT EXISTS source_entity_fields (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id INTEGER NOT NULL REFERENCES source_entities(id) ON DELETE CASCADE,
+  field_name TEXT NOT NULL,
+  datatype TEXT NOT NULL DEFAULT 'text',
+  required INTEGER NOT NULL DEFAULT 0,
+  unique_flag INTEGER NOT NULL DEFAULT 0,
+  constraints_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS source_entity_fields_entity ON source_entity_fields(entity_id);
+
+-- Audit trails (inferencia IA rastreavel e persistida)
+
+CREATE TABLE IF NOT EXISTS audit_trails (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL DEFAULT '',
+  field_name TEXT NOT NULL DEFAULT '',
+  inference_type TEXT NOT NULL DEFAULT '',
+  final_decision TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0.0,
+  evidence_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS audit_trails_entity ON audit_trails(entity_name);
+
+-- Journey reports (justificativas das decisoes de geracao)
+
+CREATE TABLE IF NOT EXISTS journey_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL,
+  entity_name TEXT NOT NULL,
+  generated INTEGER NOT NULL DEFAULT 0,
+  report_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS journey_reports_journey ON journey_reports(journey_id);
+
+-- Business rule evaluation (persisted results with normalization)
+
+CREATE TABLE IF NOT EXISTS business_evals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_hash TEXT NOT NULL DEFAULT '',
+  source_dir TEXT NOT NULL DEFAULT '',
+  rules_evaluated INTEGER NOT NULL DEFAULT 0,
+  rules_ok INTEGER NOT NULL DEFAULT 0,
+  rules_broken INTEGER NOT NULL DEFAULT 0,
+  gaps_json TEXT NOT NULL DEFAULT '[]',
+  flows_coverage_json TEXT NOT NULL DEFAULT '[]',
+  recommendation TEXT NOT NULL DEFAULT '',
+  entities_normalized_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS business_evals_hash ON business_evals(source_hash);
+
+-- Business gaps (gaps de negocio detectados com status e acao corretiva)
+
+CREATE TABLE IF NOT EXISTS business_gaps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  gap_id TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'high' CHECK(severity IN ('critical','high','medium','low')),
+  description TEXT NOT NULL DEFAULT '',
+  missing_entity TEXT NOT NULL DEFAULT '',
+  affected_flow TEXT NOT NULL DEFAULT '',
+  impact TEXT NOT NULL DEFAULT '',
+  recommendation TEXT NOT NULL DEFAULT '',
+  suggested_files TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','investigating','resolved','dismissed')),
+  resolved_at TEXT DEFAULT NULL,
+  resolved_notes TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS business_gaps_status ON business_gaps(status);
+CREATE INDEX IF NOT EXISTS business_gaps_entity ON business_gaps(missing_entity);
+
+-- Journey / jornada tables
+
+CREATE TABLE IF NOT EXISTS journeys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
+  entry_screen TEXT NOT NULL DEFAULT '',
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  dataset_bindings_json TEXT NOT NULL DEFAULT '{}',
+  tags_csv TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS journeys_journey_id ON journeys(journey_id);
+CREATE INDEX IF NOT EXISTS journeys_category ON journeys(category);
+
+CREATE TABLE IF NOT EXISTS journey_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL REFERENCES journeys(journey_id) ON DELETE CASCADE,
+  session_index INTEGER NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('queued','running','completed','failed')),
+  started_at TEXT NOT NULL DEFAULT '',
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS journey_sessions_journey ON journey_sessions(journey_id, session_index);
+
+-- Scheduler / regression tables
+
+CREATE TABLE IF NOT EXISTS synthetic_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  schedule_id TEXT NOT NULL UNIQUE,
+  journey_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  interval_hours INTEGER NOT NULL DEFAULT 24,
+  session_count INTEGER NOT NULL DEFAULT 10,
+  seed INTEGER NOT NULL DEFAULT 0,
+  concurrency INTEGER NOT NULL DEFAULT 5,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  alert_threshold_pct REAL NOT NULL DEFAULT 10.0,
+  created_at TEXT NOT NULL DEFAULT '',
+  last_run_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS synthetic_schedules_journey ON synthetic_schedules(journey_id);
+
+CREATE TABLE IF NOT EXISTS synthetic_schedule_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  schedule_id TEXT NOT NULL REFERENCES synthetic_schedules(schedule_id) ON DELETE CASCADE,
+  total_sessions INTEGER NOT NULL DEFAULT 0,
+  completed INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  success_rate_pct REAL NOT NULL DEFAULT 0.0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  error_summary_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS synthetic_schedule_runs_schedule ON synthetic_schedule_runs(schedule_id, id DESC);
+
+-- Snapshot baseline (golden screens)
+
+CREATE TABLE IF NOT EXISTS screen_baselines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL,
+  baseline_name TEXT NOT NULL DEFAULT 'default',
+  step_order INTEGER NOT NULL,
+  screen_signature TEXT NOT NULL DEFAULT '',
+  screen_text_hash TEXT NOT NULL DEFAULT '',
+  screen_text TEXT NOT NULL DEFAULT '',
+  captured_at TEXT NOT NULL DEFAULT '',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  UNIQUE(journey_id, baseline_name, step_order)
+);
+
+CREATE INDEX IF NOT EXISTS screen_baselines_journey ON screen_baselines(journey_id, baseline_name);
+
+-- Pipeline async execution tracking
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL UNIQUE,
+  source_dir TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+  phase TEXT NOT NULL DEFAULT '',
+  step TEXT NOT NULL DEFAULT '',
+  progress_pct INTEGER NOT NULL DEFAULT 0,
+  entities_found INTEGER NOT NULL DEFAULT 0,
+  screens_found INTEGER NOT NULL DEFAULT 0,
+  journeys_found INTEGER NOT NULL DEFAULT 0,
+  datasets_found INTEGER NOT NULL DEFAULT 0,
+  result_json TEXT,
+  error_message TEXT,
+  started_at TEXT NOT NULL DEFAULT '',
+  finished_at TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS pipeline_runs_run_id ON pipeline_runs(run_id);
+
+-- Screen-Entity Bindings (P2-A: Synthetic Knowledge Base)
+
+CREATE TABLE IF NOT EXISTS screen_entity_bindings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  screen_title TEXT NOT NULL DEFAULT '',
+  program_name TEXT NOT NULL DEFAULT '',
+  source_file TEXT NOT NULL DEFAULT '',
+  source_line_start INTEGER NOT NULL DEFAULT 0,
+  source_line_end INTEGER NOT NULL DEFAULT 0,
+  entity_name TEXT NOT NULL DEFAULT '',
+  operation TEXT NOT NULL DEFAULT '',
+  matched_fields_json TEXT NOT NULL DEFAULT '[]',
+  unmatched_fields_json TEXT NOT NULL DEFAULT '[]',
+  confidence REAL NOT NULL DEFAULT 0.0,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS screen_entity_bindings_entity ON screen_entity_bindings(entity_name);
+CREATE INDEX IF NOT EXISTS screen_entity_bindings_confidence ON screen_entity_bindings(confidence);
 """
 

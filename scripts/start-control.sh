@@ -11,7 +11,10 @@ SECRETS_DIR="${SECRETS_DIR:-.local-secrets}"
 COOKIE_SECRET_FILE="${COOKIE_SECRET_FILE:-$SECRETS_DIR/cookie_secret.key}"
 HMAC_KEY_FILE="${HMAC_KEY_FILE:-$SECRETS_DIR/hmac.key}"
 BOOTSTRAP_ADMIN="${BOOTSTRAP_ADMIN:-${DAKOTA_ADMIN:-}}"
-BOOTSTRAP_ADMIN="${BOOTSTRAP_ADMIN:-admin:Admin123!}"
+if [ -z "$BOOTSTRAP_ADMIN" ]; then
+  echo "AVISO: DAKOTA_ADMIN não definido. Nenhum admin será criado automaticamente." >&2
+  echo "Defina via: export DAKOTA_ADMIN='admin:senha-segura'" >&2
+fi
 LOG_FILE="${LOG_FILE:-$LOG_DIR/replay2-control.log}"
 PID_FILE="${PID_FILE:-/tmp/replay2-control.pid}"
 

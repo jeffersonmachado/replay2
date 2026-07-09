@@ -16,7 +16,7 @@ function renderScenarios(items) {
             <div class="flex items-center justify-between gap-3">
               <div>
                 <div class="font-mono text-sm text-stone-100">${escapeHtml(item.name || "-")}</div>
-                <div class="mt-1 text-[11px] text-stone-500">${escapeHtml(item.visibility || "private")} • tags=${escapeHtml((item.tags || []).join(",") || "-")}</div>
+                <div class="mt-1 text-[11px] text-stone-400">${escapeHtml(item.visibility || "private")} • tags=${escapeHtml((item.tags || []).join(",") || "-")}</div>
               </div>
               <div class="flex gap-2">
                 <button class="r2ctl-btn-soft" data-obs-use="${index}">Aplicar</button>
@@ -105,7 +105,7 @@ async function loadOverview() {
   html("#obs_failures", JSON.stringify(ops.recent_failures || [], null, 2));
   html("#obs_runs", (ops.recent_runs || []).length ? (ops.recent_runs || []).map(runCompactCard).join("") : '<div class="text-sm text-stone-400">Sem runs recentes.</div>');
   html("#obs_regressions", (ops.recent_regressions || []).length ? (ops.recent_regressions || []).map(regressionCard).join("") : '<div class="text-sm text-stone-400">Nenhuma regressão relevante.</div>');
-  html("#obs_active_filters", Object.entries((trend.summary || {}).filters || currentScenarioFilters()).map(([key, value]) => `<div class="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/40 px-3 py-2"><span class="text-xs uppercase tracking-[0.14em] text-stone-500">${escapeHtml(key)}</span><span class="font-mono text-xs text-stone-200">${escapeHtml(value || "-")}</span></div>`).join(""));
+  html("#obs_active_filters", Object.entries((trend.summary || {}).filters || currentScenarioFilters()).map(([key, value]) => `<div class="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/40 px-3 py-2"><span class="text-xs uppercase tracking-[0.14em] text-stone-400">${escapeHtml(key)}</span><span class="font-mono text-xs text-stone-200">${escapeHtml(value || "-")}</span></div>`).join(""));
   ["#obs_sla_breaches", "#obs_sla_warnings", "#obs_reprocess_flows", "#obs_reprocess_signatures", "#obs_reprocess_environments", "#obs_reprocess_candidates", "#obs_reprocess_queue", "#obs_trend_environments", "#obs_trend_flows"].forEach((selector) => html(selector, ""));
   html("#obs_sla_breaches", textListCards(ops.sla_breaches || [], "Nenhum cenário com SLA estourado.", (item) => ((item.sla_summary || {}).breaches || []).join(" | ") || "sem detalhe"));
   html("#obs_sla_warnings", textListCards(ops.sla_warnings || [], "Nenhum cenário em alerta.", (item) => ((item.sla_summary || {}).warnings || []).join(" | ") || "sem detalhe"));

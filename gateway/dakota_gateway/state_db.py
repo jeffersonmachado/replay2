@@ -14,11 +14,13 @@ def now_ms() -> int:
 
 
 def query_one(con: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> sqlite3.Row | None:
+    con.row_factory = sqlite3.Row
     cur = con.execute(sql, tuple(args))
     return cur.fetchone()
 
 
 def query_all(con: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> list[sqlite3.Row]:
+    con.row_factory = sqlite3.Row
     cur = con.execute(sql, tuple(args))
     return cur.fetchall()
 

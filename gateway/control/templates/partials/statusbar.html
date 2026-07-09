@@ -1,5 +1,14 @@
 <div class="r2ctl-statusbar">
   <div class="r2ctl-inline-chip rounded-full px-4 py-2 text-sm text-stone-300" id="current_user_chip">carregando sessão...</div>
+  <a
+    id="global_gateway_chip"
+    href="/gateway/status"
+    title="Abrir status do gateway"
+    class="r2ctl-inline-chip rounded-full px-4 py-2 text-sm text-stone-300 hover:bg-stone-900/50 transition"
+  >
+    <span id="global_gateway_indicator" class="r2ctl-status-pill r2ctl-status r2ctl-status-neutral">gateway</span>
+    <span id="global_gateway_text" class="ml-2 text-xs text-stone-300">carregando status...</span>
+  </a>
   <div class="flex flex-wrap items-center gap-3">
     <a href="/runs/new" class="r2ctl-btn-pill r2ctl-btn-pill-neutral">Nova run</a>
     <button id="global_logout_btn" class="r2ctl-btn-pill r2ctl-btn-pill-brand">Sair</button>

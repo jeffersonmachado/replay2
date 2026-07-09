@@ -85,14 +85,14 @@ async function compareRuns() {
     "#compare_result",
     `<div class="grid gap-4 lg:grid-cols-2">
       <div class="r2ctl-detail-surface rounded-2xl p-4">
-        <div class="text-xs uppercase tracking-[0.14em] text-stone-500 mb-2">Run A — #${a.id}</div>
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run A — #${a.id}</div>
         <div class="text-sm text-stone-200">Status: ${a.status || "-"}</div>
         <div class="mt-1 text-sm text-stone-200">Compliance: ${a.compliance_status || "-"}</div>
         <div class="mt-1 text-sm text-stone-200">Destino: ${a.target_user || "-"}@${a.target_host || "-"}</div>
         <div class="mt-1 text-xs text-stone-400">Progresso: ${a.last_seq_global_applied || 0} eventos</div>
       </div>
       <div class="r2ctl-detail-surface rounded-2xl p-4">
-        <div class="text-xs uppercase tracking-[0.14em] text-stone-500 mb-2">Run B — #${b.id}</div>
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run B — #${b.id}</div>
         <div class="text-sm text-stone-200">Status: ${b.status || "-"}</div>
         <div class="mt-1 text-sm text-stone-200">Compliance: ${b.compliance_status || "-"}</div>
         <div class="mt-1 text-sm text-stone-200">Destino: ${b.target_user || "-"}@${b.target_host || "-"}</div>

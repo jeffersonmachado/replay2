@@ -1,0 +1,118 @@
+<div id="report-content">
+  <p class="r2ctl-section-copy text-sm">Carregando relatorios...</p>
+</div>
+
+<script>
+// Dados injetados pelo servidor (estado persistido)
+var _d = window.__R2CTL_PAGE_STATE__ || {};
+
+function renderReports(reports) {
+  var container = document.getElementById('report-content');
+
+  if (!reports.length) {
+    container.innerHTML = '<div class="r2ctl-report-card"><p>Nenhum relatorio encontrado. Execute o Pipeline em Engenharia → Pipeline para gerar jornadas e seus relatorios.</p></div>';
+    return;
+  }
+
+  var generated = reports.filter(function(r) { return r.generated; });
+  var skipped = reports.filter(function(r) { return !r.generated; });
+  var totalFields = generated.reduce(function(s, r) { return s + ((r.report && r.report.field_decisions) ? r.report.field_decisions.length : 0); }, 0);
+  var totalSteps = generated.reduce(function(s, r) { return s + ((r.report && r.report.total_steps) ? r.report.total_steps : 0); }, 0);
+
+  container.innerHTML =
+    '<div class="r2ctl-report-summary">' +
+      '<div class="r2ctl-report-stat"><div class="num">' + reports.length + '</div><div class="lbl">Entidades analisadas</div></div>' +
+      '<div class="r2ctl-report-stat r2ctl-report-stat-success"><div class="num">' + generated.length + '</div><div class="lbl">Jornadas geradas</div></div>' +
+      '<div class="r2ctl-report-stat r2ctl-report-stat-danger"><div class="num">' + skipped.length + '</div><div class="lbl">Puladas (CRUD incompleto)</div></div>' +
+      '<div class="r2ctl-report-stat"><div class="num">' + totalSteps + '</div><div class="lbl">Total de passos</div></div>' +
+      '<div class="r2ctl-report-stat"><div class="num">' + totalFields + '</div><div class="lbl">Decisoes de campos</div></div>' +
+    '</div>' +
+    generated.map(function(r) { return renderGenerated(r); }).join('') +
+    (skipped.length ? '<h3 class="r2ctl-section-title mt-6">Entidades nao elegiveis (CRUD incompleto)</h3>' + skipped.map(function(r) { return renderSkipped(r); }).join('') : '');
+}
+
+// Renderiza direto do servidor se disponivel, senao busca via API
+(function() {
+  if (_d.reports && _d.reports.length > 0) {
+    renderReports(_d.reports);
+    return;
+  }
+
+  // Fallback: busca via API
+  fetch('/api/journeys/report')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      renderReports(data.reports || []);
+    })
+    .catch(function(e) {
+      document.getElementById('report-content').innerHTML = '<div class="r2ctl-report-card r2ctl-report-card-danger"><p>Erro: ' + esc(e.message) + '</p></div>';
+    });
+})();
+
+function renderGenerated(r) {
+  const rep = r.report || {};
+  const sel = rep.entity_selection || {};
+  const steps = rep.steps_summary || [];
+  const fields = rep.field_decisions || [];
+  const progs = rep.program_names || {};
+  const selected = fields.filter(f => f.selected);
+  const notSelected = fields.filter(f => !f.selected);
+
+  return '<div class="r2ctl-report-card r2ctl-report-card-success">' +
+    '<div class="r2ctl-flex-between">' +
+      '<div>' +
+        '<h3>' + esc(r.entity_name) + ' <span class="r2ctl-status-pill r2ctl-status-ok">JORNADA GERADA</span></h3>' +
+        '<span class="r2ctl-report-meta">' + esc(r.journey_id) + ' | Score CRUD: ' + (sel.completeness_score || 100) + ' | ' + esc(r.created_at || '') + '</span>' +
+      '</div>' +
+    '</div>' +
+
+    '<details class="r2ctl-details mt-2"><summary>📋 Decisao 1: Por que esta entidade foi selecionada?</summary>' +
+      '<div class="r2ctl-reason">' + esc(sel.justification || '') + '</div>' +
+      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>CREATE</th><th>READ</th><th>UPDATE</th><th>DELETE</th><th>Completo</th><th>Total Ops</th></tr>' +
+      '<tr>' +
+        '<td>' + (sel.has_create ? '✅' : '❌') + '</td>' +
+        '<td>' + (sel.has_read ? '✅' : '❌') + '</td>' +
+        '<td>' + (sel.has_update ? '✅' : '❌') + '</td>' +
+        '<td>' + (sel.has_delete ? '✅' : '❌') + '</td>' +
+        '<td>' + (sel.is_complete ? '✅' : '❌') + '</td>' +
+        '<td>' + (sel.total_operations || 0) + '</td>' +
+      '</tr></table></div>' +
+    '</details>' +
+
+    '<details class="r2ctl-details mt-2"><summary>📝 Decisao 2: Passos da jornada (' + steps.length + ' passos)</summary>' +
+      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>#</th><th>Tipo</th><th>Programa Inferido</th><th>Justificativa</th></tr>' +
+      steps.map(s => '<tr><td>' + s.order + '</td><td>' + esc(s.type) + '</td><td class="font-mono">' + esc(s.program || '?') + '</td><td class="text-xs">' + esc(s.justification || '') + '</td></tr>').join('') +
+      '</table></div>' +
+    '</details>' +
+
+    '<details class="r2ctl-details mt-2"><summary>🔍 Decisao 3: Campos selecionados (' + selected.length + ' de ' + fields.length + ')</summary>' +
+      (selected.length ? '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Campo</th><th>Justificativas</th></tr>' +
+        selected.map(f => '<tr><td class="font-mono font-semibold">' + esc(f.field_name) + '</td><td class="text-xs">' + f.reasons.map(r => '<div class="r2ctl-reason">' + esc(r) + '</div>').join('') + '</td></tr>').join('') +
+      '</table></div>' : '<p class="text-xs text-stone-400">Nenhum campo selecionado para preenchimento automatico</p>') +
+      (notSelected.length ? '<details class="r2ctl-details mt-1"><summary class="text-xs">' + notSelected.length + ' campos nao selecionados</summary>' +
+        '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Campo</th><th>Motivo</th></tr>' +
+        notSelected.map(f => '<tr><td class="font-mono">' + esc(f.field_name) + '</td><td class="text-xs text-stone-400">' + f.reasons.map(r => esc(r)).join('; ') + '</td></tr>').join('') +
+      '</table></div></details>' : '') +
+    '</details>' +
+
+    '<details class="r2ctl-details mt-2"><summary>🏷 Decisao 4: Programas inferidos & Bindings</summary>' +
+      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Operacao</th><th>Programa</th></tr>' +
+      Object.entries(progs).map(([k,v]) => '<tr><td>' + esc(k) + '</td><td class="font-mono">' + esc(v) + '</td></tr>').join('') +
+      '</table></div>' +
+      '<p class="r2ctl-report-meta mt-1">Dataset: ' + esc(JSON.stringify(rep.dataset_bindings || {})) + '</p>' +
+    '</details>' +
+  '</div>';
+}
+
+function renderSkipped(r) {
+  const rep = r.report || {};
+  const sel = rep.entity_selection || {};
+  return '<div class="r2ctl-report-card r2ctl-report-card-neutral">' +
+    '<h3>' + esc(r.entity_name) + ' <span class="r2ctl-status-pill r2ctl-status-neutral">PULADA</span></h3>' +
+    '<div class="r2ctl-reason mt-1">' + esc(sel.justification || 'CRUD incompleto') + '</div>' +
+    (sel.missing_operations ? '<div class="text-xs text-stone-400 mt-1">Faltam: ' + esc(sel.missing_operations.join(', ')) + '</div>' : '') +
+  '</div>';
+}
+
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>

@@ -1,0 +1,411 @@
+<div class="r2ctl-syn">
+
+<div id="status-grid" class="r2ctl-syn-grid">
+  <div class="r2ctl-syn-card"><h2>📊 Status</h2><div id="status-content">Carregando...</div></div>
+  <div class="r2ctl-syn-card"><h2>🖥️ Telas</h2><div id="screens-content">-</div></div>
+  <div class="r2ctl-syn-card"><h2>🗄️ Entidades</h2><div id="entities-content">-</div></div>
+  <div class="r2ctl-syn-card"><h2>📦 Datasets</h2><div id="datasets-content">-</div></div>
+</div>
+
+<div class="r2ctl-syn-actions">
+  <input class="r2ctl-syn-input r2ctl-syn-input-wide" id="source-dir" placeholder="/opt/dados/sistema/fusao/desenv/" value="/opt/dados/sistema/fusao/desenv/">
+  <button class="r2ctl-syn-btn" onclick="analyzeSource()">🔍 Analyze Source</button>
+  <button class="r2ctl-syn-btn" onclick="loadDataPlans()">🧠 Infer Data Plans</button>
+  <button class="r2ctl-syn-btn" onclick="inferJourneys()">🗺️ Infer Journeys</button>
+  <button class="r2ctl-syn-btn" onclick="loadStatus()">🔄 Refresh</button>
+</div>
+
+<div class="r2ctl-syn-grid">
+  <div class="r2ctl-syn-card">
+    <h2>🧪 Síntese Generalista</h2>
+    <div class="r2ctl-syn-form-grid">
+      <input class="r2ctl-syn-input" id="plan-screen-filter" placeholder="Filtro por tela/programa">
+      <input class="r2ctl-syn-input" id="plan-entity-filter" placeholder="Filtro por entidade">
+      <input class="r2ctl-syn-input" id="preflight-sample-size" type="number" min="1" value="5">
+      <input class="r2ctl-syn-input" id="bulk-quantity" type="number" min="1" value="100">
+      <input class="r2ctl-syn-input" id="synth-seed" type="number" min="0" value="0">
+      <select id="plan-select" class="r2ctl-syn-input">
+        <option value="">Selecione um plano inferido</option>
+      </select>
+    </div>
+    <div class="r2ctl-syn-actions">
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="loadDataPlans()">Atualizar Planos</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="runPreflight()">Validar Amostra</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="generateBulk()">Gerar em Massa</button>
+    </div>
+    <div id="plans-summary" class="r2ctl-syn-muted">Nenhum plano carregado.</div>
+    <div id="plan-fields" class="r2ctl-syn-scroll-200"></div>
+    <div id="preflight-summary" class="r2ctl-syn-muted">A validação prévia aparecerá aqui.</div>
+    <div id="preflight-records" class="r2ctl-syn-scroll-200"></div>
+    <div id="bulk-summary" class="r2ctl-syn-muted">A geração em massa depende de um preflight válido.</div>
+    <div id="bulk-sample" class="r2ctl-syn-scroll-200"></div>
+  </div>
+  <div class="r2ctl-syn-card">
+    <h2>🗺️ Journeys de Negócio</h2>
+    <div id="journeys-content" class="r2ctl-syn-scroll-200">
+      <p class="r2ctl-syn-muted">Jornadas de negócio reais (inferidas de código-fonte).</p>
+      <table class="r2ctl-syn-table"><tr><th>ID</th><th>Nome</th><th>Categoria</th><th>Ações</th></tr></table>
+    </div>
+  </div>
+</div>
+
+<div class="r2ctl-syn-grid">
+  <div class="r2ctl-syn-card">
+    <h2>🧪 Testes de Entidade (CRUD)</h2>
+    <div id="entity-tests-content" class="r2ctl-syn-scroll-200">
+      <table class="r2ctl-syn-table"><tr><th>Entidade</th><th>Nome</th><th>Criado em</th></tr></table>
+    </div>
+  </div>
+  <div class="r2ctl-syn-card">
+    <h2>⚠️ Padrões de Erro</h2>
+    <div id="error-patterns-content" class="r2ctl-syn-scroll-200">Carregando...</div>
+  </div>
+</div>
+
+<div class="r2ctl-syn-grid">
+  <div class="r2ctl-syn-card">
+    <h2>📈 Relatórios</h2>
+    <div>
+      <select id="journey-select" class="r2ctl-syn-input r2ctl-syn-input-block"></select>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="runStress()">▶ Stress</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="viewReport()">📄 Report</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="exportJUnit()">📋 JUnit</button>
+    </div>
+  </div>
+  <div class="r2ctl-syn-card">
+    <h2>📋 Últimas Operações</h2>
+    <div id="log" class="r2ctl-syn-log">Pronto.</div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const API = '/api/synthetic';
+let currentPlans = [];
+let lastPreflight = null;
+
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent = new Date().toLocaleTimeString() + ' ' + msg + '\n' + el.textContent;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function badgeClass(ok, warn=false) {
+  if (warn) return 'r2ctl-syn-badge-warn';
+  return ok ? 'r2ctl-syn-badge-ok' : 'r2ctl-syn-badge-fail';
+}
+
+function renderJsonTable(targetId, records) {
+  const el = document.getElementById(targetId);
+  if (!records || !records.length) {
+    el.innerHTML = '<div class="r2ctl-syn-muted">Nenhum registro para exibir.</div>';
+    return;
+  }
+  const columns = Array.from(records.reduce((set, rec) => {
+    Object.keys(rec || {}).forEach(key => set.add(key));
+    return set;
+  }, new Set()));
+
+  el.innerHTML = `<table class="r2ctl-syn-table">
+    <tr>${columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}</tr>
+    ${records.map(rec => `<tr>${columns.map(col => `<td>${escapeHtml(rec[col])}</td>`).join('')}</tr>`).join('')}
+  </table>`;
+}
+
+function selectedPlan() {
+  const planId = document.getElementById('plan-select').value;
+  return currentPlans.find(plan => plan.plan_id === planId) || null;
+}
+
+function planRequestBody() {
+  return {
+    source_dir: document.getElementById('source-dir').value,
+    screen_filter: document.getElementById('plan-screen-filter').value,
+    entity_filter: document.getElementById('plan-entity-filter').value,
+  };
+}
+
+function renderPlanDetails(plan) {
+  const fieldsEl = document.getElementById('plan-fields');
+  const summaryEl = document.getElementById('plans-summary');
+
+  if (!plan) {
+    summaryEl.textContent = currentPlans.length
+      ? 'Selecione um plano para ver os campos inferidos.'
+      : 'Nenhum plano carregado.';
+    fieldsEl.innerHTML = '';
+    return;
+  }
+
+  const warnings = (plan.warnings || []).map(msg =>
+    `<span class="r2ctl-syn-badge ${badgeClass(false, true)}">${escapeHtml(msg)}</span>`
+  ).join(' ');
+
+  summaryEl.innerHTML =
+    `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(plan.screen.title || plan.screen.program_name || plan.entity_name)}</span><span class="r2ctl-syn-badge ${badgeClass(true)}">${(plan.screen.fields || []).length} campos</span></div>` +
+    `<div class="r2ctl-syn-muted">${escapeHtml(plan.entity_name || '-')} • ${escapeHtml(plan.screen.program_name || plan.screen.screen_id || '-')}</div>` +
+    (warnings ? `<div class="r2ctl-syn-stack">${warnings}</div>` : '');
+
+  fieldsEl.innerHTML = `<table class="r2ctl-syn-table">
+    <tr><th>Campo</th><th>Tipo</th><th>Obrig.</th><th>Formato</th></tr>
+    ${(plan.screen.fields || []).map(field => `
+      <tr>
+        <td>${escapeHtml(field.name)}</td>
+        <td>${escapeHtml(field.datatype)}</td>
+        <td><span class="r2ctl-syn-badge ${badgeClass(!!field.required)}">${field.required ? 'sim' : 'nao'}</span></td>
+        <td>${escapeHtml(field.format || '-')}</td>
+      </tr>`).join('')}
+  </table>`;
+}
+
+function renderPreflight(preflight) {
+  const summaryEl = document.getElementById('preflight-summary');
+  if (!preflight) {
+    summaryEl.textContent = 'A validação prévia aparecerá aqui.';
+    document.getElementById('preflight-records').innerHTML = '';
+    return;
+  }
+
+  const warnings = (preflight.warnings || []).map(msg =>
+    `<span class="r2ctl-syn-badge ${badgeClass(false, true)}">${escapeHtml(msg)}</span>`
+  ).join(' ');
+
+  summaryEl.innerHTML =
+    `<div class="r2ctl-syn-stat-row"><span>Preflight</span><span class="r2ctl-syn-badge ${badgeClass(preflight.ok)}">${preflight.ok ? 'aprovado' : 'reprovado'}</span></div>` +
+    `<div class="r2ctl-syn-muted">${preflight.sample_size} registro(s), ${preflight.total_violations} violacao(oes)</div>` +
+    (warnings ? `<div class="r2ctl-syn-stack">${warnings}</div>` : '');
+
+  document.getElementById('preflight-records').innerHTML = preflight.records.map(record => {
+    const violations = (record.violations || []).map(v =>
+      `<div class="r2ctl-syn-violation">${escapeHtml(v.field)}: ${escapeHtml(v.message)}</div>`
+    ).join('');
+    return `
+      <div class="r2ctl-syn-record">
+        <div class="r2ctl-syn-stat-row">
+          <span>Registro ${record.record_index}</span>
+          <span class="r2ctl-syn-badge ${badgeClass(record.passed)}">${record.passed ? 'ok' : 'erro'}</span>
+        </div>
+        <pre class="r2ctl-syn-pre">${escapeHtml(JSON.stringify(record.data, null, 2))}</pre>
+        ${violations || '<div class="r2ctl-syn-muted">Sem violações.</div>'}
+      </div>`;
+  }).join('');
+}
+
+function renderBulk(result) {
+  const summaryEl = document.getElementById('bulk-summary');
+  if (!result) {
+    summaryEl.textContent = 'A geração em massa depende de um preflight válido.';
+    document.getElementById('bulk-sample').innerHTML = '';
+    return;
+  }
+
+  if (result.blocked) {
+    summaryEl.innerHTML =
+      `<div class="r2ctl-syn-stat-row"><span>Geração em massa</span><span class="r2ctl-syn-badge ${badgeClass(false)}">bloqueada</span></div>` +
+      `<div class="r2ctl-syn-muted">${escapeHtml(result.message || 'preflight inválido')}</div>`;
+    document.getElementById('bulk-sample').innerHTML = '';
+    return;
+  }
+
+  const dataset = result.dataset || {};
+  summaryEl.innerHTML =
+    `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(dataset.name || 'dataset')}</span><span class="r2ctl-syn-badge ${badgeClass(true)}">${escapeHtml(dataset.quantity || 0)} registros</span></div>` +
+    `<div class="r2ctl-syn-muted">${escapeHtml(dataset.entity_name || '-')} • seed ${escapeHtml(dataset.seed || 0)}</div>`;
+  renderJsonTable('bulk-sample', dataset.sample || []);
+}
+
+async function loadStatus() {
+  try {
+    const s = await api(API+'/status');
+    document.getElementById('status-content').innerHTML =
+      `<div class="r2ctl-syn-stat-row"><span class="r2ctl-syn-stat-label">Telas</span><span class="r2ctl-syn-stat-value">${s.screens||0}</span></div>
+       <div class="r2ctl-syn-stat-row"><span class="r2ctl-syn-stat-label">Entidades</span><span class="r2ctl-syn-stat-value">${s.entities||0}</span></div>
+       <div class="r2ctl-syn-stat-row"><span class="r2ctl-syn-stat-label">Datasets</span><span class="r2ctl-syn-stat-value">${s.datasets||0}</span></div>
+       <div class="r2ctl-syn-stat-row"><span class="r2ctl-syn-stat-label">Jornadas</span><span class="r2ctl-syn-stat-value">${s.journeys||0}</span></div>
+       <div class="r2ctl-syn-stat-row"><span class="r2ctl-syn-stat-label">Testes Ent.</span><span class="r2ctl-syn-stat-value">${s.entity_tests||0}</span></div>`;
+
+    const sc = await api(API+'/screens');
+    document.getElementById('screens-content').innerHTML = (sc.screens||[]).slice(0,5).map(s =>
+      `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(s.title||s.program)}</span><span class="r2ctl-syn-badge r2ctl-syn-badge-ok">${(s.fields||[]).length} campos</span></div>`
+    ).join('') || 'Nenhuma';
+
+    const ec = await api(API+'/entities');
+    document.getElementById('entities-content').innerHTML = (ec.entities||[]).slice(0,5).map(e =>
+      `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(e.name)}</span><span class="r2ctl-syn-badge r2ctl-syn-badge-warn">${escapeHtml(e.storage_type)}</span></div>`
+    ).join('') || 'Nenhuma';
+
+    const dc = await api(API+'/datasets');
+    document.getElementById('datasets-content').innerHTML = (dc.datasets||[]).slice(0,3).map(d =>
+      `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(d.name)}</span><span>${escapeHtml(d.quantity)} reg</span></div>`
+    ).join('') || 'Nenhum';
+
+    const jc = await api(API+'/journeys');
+    const sel = document.getElementById('journey-select');
+    sel.innerHTML = (jc.journeys||[]).map(j => `<option value="${escapeHtml(j.journey_id)}">${escapeHtml(j.name)}</option>`).join('');
+    document.getElementById('journeys-content').innerHTML = '<table class="r2ctl-syn-table"><tr><th>ID</th><th>Nome</th><th>Cat</th><th></th></tr>' +
+      (jc.journeys||[]).slice(0,15).map(j => `<tr><td>${escapeHtml(j.journey_id)}</td><td>${escapeHtml(j.name)}</td><td>${escapeHtml(j.category||'')}</td><td><a href="${API}/roteiro/${escapeHtml(j.journey_id)}?format=md" target="_blank" class="r2ctl-syn-btn r2ctl-syn-btn-sm">📄 Roteiro</a></td></tr>`).join('') + '</table>' +
+      ((jc.journeys||[]).length === 0 ? '<p class="r2ctl-syn-muted">Nenhuma jornada de negócio. Execute o Pipeline com código-fonte real.</p>' : '');
+
+    const et = await api(API+'/entity-tests');
+    document.getElementById('entity-tests-content').innerHTML = '<table class="r2ctl-syn-table"><tr><th>Entidade</th><th>Nome</th><th>Criado em</th></tr>' +
+      (et.entity_tests||[]).slice(0,20).map(t => `<tr><td>${escapeHtml(t.entity_name)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml((t.created_at||'').substring(0,10))}</td></tr>`).join('') + '</table>';
+
+    const ep = await api(API+'/error-patterns');
+    document.getElementById('error-patterns-content').innerHTML = (ep.patterns||[]).slice(0,20).map(p =>
+      `<span class="r2ctl-syn-badge r2ctl-syn-badge-${p.severity==='critical'?'fail':p.severity==='high'?'warn':'ok'}">${escapeHtml(p.type)}</span> `
+    ).join('');
+
+    log('Status atualizado');
+  } catch(e) {
+    log('Erro: '+e.message);
+  }
+}
+
+async function analyzeSource() {
+  const dir = document.getElementById('source-dir').value;
+  log('Analisando: '+dir+'...');
+  try {
+    const r = await api(API+'/analyze-source', 'POST', {source_dir: dir});
+    log(`OK: ${r.screens} telas, ${r.entities} entidades descobertas`);
+    await loadStatus();
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+async function loadDataPlans() {
+  const request = planRequestBody();
+  log('Inferindo planos de dados...');
+  try {
+    const response = await api(API+'/data/plans', 'POST', request);
+    currentPlans = response.plans || [];
+    lastPreflight = null;
+    renderPreflight(null);
+    renderBulk(null);
+
+    const select = document.getElementById('plan-select');
+    select.innerHTML = '<option value="">Selecione um plano inferido</option>' +
+      currentPlans.map(plan => `<option value="${escapeHtml(plan.plan_id)}">${escapeHtml(plan.screen.title || plan.screen.program_name || plan.entity_name)}</option>`).join('');
+
+    document.getElementById('plans-summary').textContent = `${currentPlans.length} plano(s) inferido(s) para ${request.source_dir}.`;
+    renderPlanDetails(null);
+    log(`OK: ${currentPlans.length} plano(s) inferido(s)`);
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+async function runPreflight() {
+  const plan = selectedPlan();
+  if (!plan) {
+    log('Selecione um plano antes do preflight');
+    return;
+  }
+
+  log(`Validando amostra do plano ${plan.plan_id}...`);
+  try {
+    const response = await api(API+'/data/preflight', 'POST', {
+      ...planRequestBody(),
+      plan_id: plan.plan_id,
+      sample_size: Number(document.getElementById('preflight-sample-size').value || 5),
+      seed: Number(document.getElementById('synth-seed').value || 0),
+    });
+    lastPreflight = response.preflight;
+    renderPlanDetails(response.plan);
+    renderPreflight(response.preflight);
+    renderBulk(null);
+    log(`Preflight ${response.preflight.ok ? 'aprovado' : 'reprovado'} com ${response.preflight.total_violations} violacao(oes)`);
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+async function generateBulk() {
+  const plan = selectedPlan();
+  if (!plan) {
+    log('Selecione um plano antes da geração em massa');
+    return;
+  }
+
+  log(`Gerando dataset para ${plan.plan_id}...`);
+  try {
+    const response = await api(API+'/data/generate-bulk', 'POST', {
+      ...planRequestBody(),
+      plan_id: plan.plan_id,
+      quantity: Number(document.getElementById('bulk-quantity').value || 100),
+      sample_size: Number(document.getElementById('preflight-sample-size').value || 5),
+      preview_size: 5,
+      seed: Number(document.getElementById('synth-seed').value || 0),
+      strict_preflight: true,
+    });
+    lastPreflight = response.preflight;
+    renderPlanDetails(response.plan);
+    renderPreflight(response.preflight);
+    renderBulk(response);
+    log(response.blocked ? `Bloqueado: ${response.message}` : `OK: ${response.dataset.quantity} registros gerados`);
+    if (!response.blocked) await loadStatus();
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+async function inferJourneys() {
+  const dir = document.getElementById('source-dir').value;
+  log('Inferindo jornadas...');
+  try {
+    const r = await api(API+'/journeys/infer', 'POST', {source_dir: dir});
+    log(`OK: ${r.inferred} jornadas inferidas, ${r.saved} salvas`);
+    await loadStatus();
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+async function runStress() {
+  const jid = document.getElementById('journey-select').value;
+  log(`Stress: ${jid}...`);
+  try {
+    const r = await api(API+'/stress', 'POST', {scenario: jid, concurrency: 3, max_sessions: 10});
+    log(`OK: ${r.completed}/${r.total_sessions} sucesso, ${r.failed} falhas, ${r.duration_sec}s`);
+  } catch(e) {
+    log('Falha: '+e.message);
+  }
+}
+
+function viewReport() {
+  const jid = document.getElementById('journey-select').value;
+  window.open(API+'/journeys/'+jid+'/report?format=html&sessions=5', '_blank');
+}
+
+function exportJUnit() {
+  const jid = document.getElementById('journey-select').value;
+  window.open(API+'/journeys/'+jid+'/report?format=json&sessions=5', '_blank');
+}
+
+document.getElementById('plan-select').addEventListener('change', () => {
+  lastPreflight = null;
+  renderPreflight(null);
+  renderBulk(null);
+  renderPlanDetails(selectedPlan());
+});
+
+loadStatus();
+</script>

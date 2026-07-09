@@ -1,0 +1,573 @@
+<div id="br-content"><p class="r2ctl-section-copy text-sm">Execute o Pipeline primeiro para gerar a avaliacao de regras de negocio.</p></div>
+
+<script src="/assets/mermaid.min.js"></script>
+<script>
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose',
+  flowchart: { useMaxWidth: false, htmlLabels: false },
+  securityLevel: 'loose' });
+
+// Dados injetados pelo servidor
+var _d = window.__R2CTL_PAGE_STATE__ || {};
+
+(async function(){
+  var container = document.getElementById('br-content');
+  if (!container) return;
+
+  // Se dados ja vieram do servidor, renderiza direto
+  if (_d.rules_evaluated && _d.rules_evaluated > 0) {
+    renderBR(_d, container);
+    return;
+  }
+
+  // Fallback: busca via API
+  try {
+    var rulesResp = await fetch('/api/business/rules');
+    var evalData = await rulesResp.json();
+    if (evalData.rules_evaluated) {
+      _d.rulesEvaluated = evalData.rules_evaluated;
+      _d.rulesOk = evalData.rules_ok || 0;
+      _d.gaps = evalData.gaps || [];
+      _d.flowsCoverage = evalData.flows_coverage || [];
+      _d.recommendation = evalData.recommendation || "";
+      _d.journeysGenerated = evalData.journeys_generated || 0;
+    }
+  } catch(_) {}
+
+  try {
+    var gapsResp = await fetch('/api/business/gaps');
+    var gapsData = await gapsResp.json();
+    _d.gaps_detail = gapsData.gaps || [];
+  } catch(_) {}
+
+  if (_d.rulesEvaluated && _d.rulesEvaluated > 0) {
+    renderBR(_d, container);
+  } else {
+    container.innerHTML = '<div class="r2ctl-report-card"><p>Execute o Pipeline em Engenharia → Pipeline primeiro para gerar a avaliacao de regras de negocio.</p></div>';
+  }
+})();
+
+function renderBR(d, container) {
+  var gaps = d.gaps || [];
+  var flows = d.flows_coverage || d.flowsCoverage || [];
+  var gapsDetail = d.gaps_detail || [];
+  var gapsMap = {};
+  for (var i = 0; i < gapsDetail.length; i++) {
+    gapsMap[gapsDetail[i].gap_id] = gapsDetail[i];
+  }
+  // Enriquece gaps com status e suggested_files
+  for (var j = 0; j < gaps.length; j++) {
+    var g = gaps[j];
+    var st = gapsMap[g.gap_id] || {};
+    g.status = st.status || 'open';
+    g.suggested_files = st.suggested_files || [];
+  }
+
+  container.innerHTML =
+    '<div style="font-size:11px;color:#6b7280;margin-bottom:12px">' +
+      '<a href="/" style="color:#6b7280;text-decoration:none">Dashboard</a> › ' +
+      '<a href="/pipeline" style="color:#6b7280;text-decoration:none">Engenharia</a> › ' +
+      '<span style="color:#e5e7eb">Regras de Negocio</span> › ' +
+      '<span style="color:#93c5fd">Manutencao de Dados Inferidos</span>' +
+    '</div>' +
+    '<div class="r2ctl-report-summary">' +
+      '<div class="r2ctl-report-stat"><div class="num">'+(d.rules_evaluated||d.rulesEvaluated||0)+'</div><div class="lbl">Regras avaliadas</div></div>' +
+      '<div class="r2ctl-report-stat r2ctl-report-stat-success"><div class="num">'+(d.rules_ok||d.rulesOk||0)+'</div><div class="lbl">Regras OK</div></div>' +
+      '<div class="r2ctl-report-stat '+(gaps.length?'r2ctl-report-stat-danger':'r2ctl-report-stat-success')+'"><div class="num">'+gaps.length+'</div><div class="lbl">Gaps detectados</div></div>' +
+      '<div class="r2ctl-report-stat"><div class="num">'+flows.length+'</div><div class="lbl">Fluxos</div></div>' +
+    '</div>' +
+
+    (gaps.length ? '<h3 class="r2ctl-section-title mt-5">Gaps de Negocio Detectados</h3>' +
+      gaps.map(function(g) {
+        var isCritical = g.severity === 'critical';
+        var statusLabel = {open:'🔴 Aberto',investigating:'🔍 Investigando',resolved:'✅ Resolvido',dismissed:'⬜ Descartado'}[g.status]||'';
+        var files = g.suggested_files || [];
+        return '<div class="r2ctl-report-card '+(isCritical?'r2ctl-report-card-danger':'')+' gap-card" data-gap-id="'+esc(g.gap_id)+'">' +
+          '<div class="r2ctl-flex-between">' +
+            '<div>' +
+              '<h3>'+esc(g.description||g.desc)+'</h3>' +
+              '<span class="r2ctl-report-meta">'+esc(statusLabel)+'</span>' +
+            '</div>' +
+            '<div class="r2ctl-flex-actions">' +
+              '<span class="r2ctl-status-pill '+(isCritical?'r2ctl-status-danger':'r2ctl-status-warn')+'">'+esc((g.severity||'').toUpperCase())+'</span>' +
+              (files.length ? '<button onclick="toggleGapFiles(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-info">🔎 Investigar ('+files.length+' '+((files[0]||'').indexOf('(criar)')===0?'stubs':'arquivos')+')</button>' : '') +
+              '<button onclick="dismissGap(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-neutral" title="Descartar gap">✕</button>' +
+            '</div>' +
+          '</div>' +
+          '<p class="text-sm mt-1.5">Entidade faltante: <strong>'+esc(g.missing_entity||g.dep)+'</strong>. Fluxo afetado: <strong>'+esc(g.affected_flow||'')+'</strong></p>' +
+          '<p class="text-xs mt-1 text-rose-100"><strong>Impacto:</strong> '+esc(g.impact||'')+'</p>' +
+          '<p class="text-xs mt-1 text-emerald-200"><strong>Recomendacao:</strong> '+esc(g.recommendation||'')+'</p>' +
+          (files.length ? '<div id="gap-files-'+esc(g.gap_id)+'" class="r2ctl-gap-files">' +
+            '<strong>'+((files[0]||'').indexOf('(criar)')===0 ? 'Stubs sugeridos para criacao' : 'Arquivos sugeridos para investigacao')+':</strong>' +
+            '<ul>'+files.map(function(f) { return '<li>'+(f.indexOf('(criar)')===0 ? '📄 <code class="r2ctl-code-chip r2ctl-code-chip-new">'+esc(f)+'</code> <span class="r2ctl-report-meta">(novo)</span>' : '<code class="r2ctl-code-chip">'+esc(f)+'</code>')+'</li>'; }).join('')+'</ul>' +
+            '<p class="mt-1.5">💡 '+((files[0]||'').indexOf('(criar)')===0 ? 'Estes arquivos nao existem no codigo-fonte. Considere cria-los para implementar a entidade <strong>'+esc(g.missing_entity||'')+'</strong>.' : 'Verifique se esses arquivos implementam operacoes para <strong>'+esc(g.missing_entity||'')+'</strong>. Se nao existir, considere criar stubs.')+'</p>' +
+          '</div>' : '') +
+        '</div>';
+      }).join('')
+    : '<div class="r2ctl-report-card r2ctl-report-card-success"><p class="font-semibold">✅ Nenhum gap de negocio detectado. Todas as regras estao cobertas.</p></div>') +
+
+    (d.recommendation ? '<div class="r2ctl-report-card r2ctl-report-card-success"><p class="text-sm">'+esc(d.recommendation)+'</p></div>' : '') +
+
+    '<h3 class="r2ctl-section-title mt-5">Fluxos de Negocio' +
+      (d.flows_total && d.flows_total > flows.length ? ' <span class="text-xs r2ctl-report-meta">(mostrando ' + flows.length + ' de ' + d.flows_total + ')</span>' : '') +
+    '</h3>' +
+    // Filtros
+    '<div id="flow-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center">' +
+      '<input id="filter-search" type="text" placeholder="Buscar entidade..." style="background:#1f2937;border:1px solid #374151;color:#e5e7eb;padding:4px 10px;border-radius:6px;font-size:12px;width:180px" oninput="applyFlowFilters()">' +
+      '<select id="filter-route" style="background:#1f2937;border:1px solid #374151;color:#e5e7eb;padding:4px 8px;border-radius:6px;font-size:12px" onchange="applyFlowFilters()">' +
+        '<option value="">Todos os fluxos</option>' +
+        '<option value="venda">🛒 Venda Completa</option>' +
+        '<option value="compra">📦 Compra / Estoque</option>' +
+        '<option value="cadastro">🏢 Cadastro Organizacional</option>' +
+        '<option value="financeiro">💰 Financeiro</option>' +
+        '<option value="infra">⚙️ Infraestrutura</option>' +
+      '</select>' +
+      '<select id="filter-size" style="background:#1f2937;border:1px solid #374151;color:#e5e7eb;padding:4px 8px;border-radius:6px;font-size:12px" onchange="applyFlowFilters()">' +
+        '<option value="0">Tamanho: todos</option>' +
+        '<option value="5">5+ entidades</option>' +
+        '<option value="10">10+ entidades</option>' +
+        '<option value="20">20+ entidades</option>' +
+        '<option value="50">50+ entidades</option>' +
+      '</select>' +
+      '<span id="filter-count" style="font-size:11px;color:#6b7280;margin-left:auto"></span>' +
+    '</div>' +
+    flows.map(function(f, i) {
+      var flowName = f.flow_name || f.name || '';
+      var flowDesc = f.description || '';
+      var entitiesCovered = f.entities_covered || f.entities || [];
+      var entitiesMissing = f.entities_missing || [];
+      var steps = f.steps || [];
+      var totalEnts = entitiesCovered.length + entitiesMissing.length;
+      var pct = f.coverage_pct || 100;
+
+      // Nome inferido do negocio
+      var displayName = inferFlowName(entitiesCovered);
+      var shortName = entitiesCovered.slice(0, 5).join(' → ');
+      if (entitiesCovered.length > 5) shortName += ' ... +' + (entitiesCovered.length - 5);
+
+      var flowId = 'flow-' + i;
+      var mermaidDef = buildMermaidDef(steps, flowName);
+
+      return '<div class="r2ctl-report-card r2ctl-report-card-info flow-card" style="overflow:visible" data-flow-name="' + esc(displayName.toLowerCase()) + '" data-flow-entities="' + esc(entitiesCovered.join(',').toLowerCase()) + '" data-flow-count="' + entitiesCovered.length + '">' +
+        // Linha 1: badges de entidades e cobertura
+        '<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">' +
+          '<span style="font-size:20px;font-weight:700;color:#6ee7b7">' + totalEnts + '</span><span class="text-sm r2ctl-report-meta">entidades</span>' +
+          '<span style="color:#4b5563">|</span>' +
+          '<span style="font-size:20px;font-weight:700;color:#93c5fd">' + pct + '%</span><span class="text-sm r2ctl-report-meta">cobertura</span>' +
+          '<span style="color:#4b5563">|</span>' +
+          '<span class="text-xs r2ctl-report-meta">' + esc(flowDesc) + '</span>' +
+        '</div>' +
+        // Linha 2: nome inferido + entidades
+        '<h4 style="font-size:14px;margin-bottom:4px;color:#e5e7eb">' + esc(displayName) + '</h4>' +
+        '<p style="font-size:11px;color:#6b7280;margin-bottom:10px;word-break:break-all">' + esc(shortName) + '</p>' +
+        // Diagrama Mermaid com zoom/pan
+        '<div class="mermaid" id="' + flowId + '" style="background:#0f172a;border-radius:8px;padding:12px;max-width:100%;overflow:auto;cursor:grab;min-height:80px">' + mermaidDef + '</div>' +
+        // Justificativas
+        '<details style="margin-top:10px;font-size:12px;color:#9ca3af"><summary style="cursor:pointer;color:#6b7280">📋 Justificativas das inferencias (' + steps.length + ' passos)</summary>' +
+          '<div style="max-height:300px;overflow-y:auto;margin-top:6px">' +
+            steps.map(function(s, j) {
+              var why = s.why || 'Sem justificativa registrada';
+              return '<div style="padding:4px 0;border-bottom:1px solid #1f2937">' +
+                '<span style="color:#93c5fd;font-weight:600">' + esc(s.entity) + '</span>' +
+                '<span style="color:#6b7280;margin-left:8px">' + esc(why) + '</span>' +
+              '</div>';
+            }).join('') +
+          '</div>' +
+        '</details>' +
+        // Roteiro
+        '<details style="margin-top:6px;font-size:12px;color:#d1d5db" open><summary style="cursor:pointer;color:#fbbf24;font-weight:600">📝 Roteiro: ' + esc(displayName) + '</summary>' +
+          '<div style="background:#0f172a;border:1px solid #1e3b4f;border-radius:8px;padding:12px;margin-top:8px;max-height:400px;overflow-y:auto">' +
+            generateRoteiro(steps, displayName, d.entity_sources || {}, d.menu_map || {}) +
+          '</div>' +
+        '</details>' +
+      '</div>';
+    }).join('') +
+
+    '<p class="text-xs r2ctl-report-meta mt-5">⬢ Azul = ponto de partida | ⬢ Verde = entidades no fluxo | → = direcao | Arraste e use scroll para zoom no diagrama</p>' +
+
+    // Secao de comparacao com roteiros esperados
+    '<h3 class="r2ctl-section-title mt-6">Comparacao com Roteiros Esperados</h3>' +
+    '<div class="r2ctl-report-card" style="font-size:12px">' +
+      '<p class="text-sm mb-2"><strong>Roteiros de negocio conhecidos</strong> vs <strong>Fluxos inferidos do codigo-fonte</strong>:</p>' +
+      buildRouteComparison(flows) +
+    '</div>';
+
+    // Renderiza diagramas Mermaid
+    setTimeout(function() { mermaid.run({ querySelector: '.mermaid' }); }, 300);
+}
+
+function buildMermaidDef(steps, flowName) {
+  var lines = ['graph LR'];
+  var maxShow = Math.min(steps.length, 20);
+  var prevId = null;
+  var rootIds = [];
+
+  for (var i = 0; i < maxShow; i++) {
+    var s = steps[i];
+    var label = (s.entity || '').replace(/"/g, '').replace(/[\(\)#&;:]/g, '');
+    if (label.length > 18) label = label.substring(0, 16) + '..';
+    var nodeId = 'e' + i;
+    // Primeira entidade = azul (ponto de partida), demais = verde (fluxo)
+    if (i === 0) {
+      rootIds.push(nodeId);
+    }
+    lines.push('  ' + nodeId + '["' + label + '"]');
+
+    if (prevId !== null) {
+      lines.push('  ' + prevId + ' --> ' + nodeId);
+    }
+    prevId = nodeId;
+  }
+
+  // Estilo: primeira azul (root), resto verde (flow)
+  lines.push('  classDef root fill:#1e3a5f,stroke:#3b82f6,color:#93c5fd');
+  lines.push('  classDef flow fill:#064e3b,stroke:#059669,color:#6ee7b7');
+  if (rootIds.length > 0) lines.push('  class ' + rootIds.join(',') + ' root');
+  if (maxShow > 1) {
+    var flowIds = [];
+    for (var j = 1; j < maxShow; j++) flowIds.push('e' + j);
+    lines.push('  class ' + flowIds.join(',') + ' flow');
+  }
+
+  if (steps.length > 20) {
+    lines.push('  e19 --> e20["+' + (steps.length - 20) + ' mais..."]');
+  }
+
+  return lines.join('\n');
+}
+
+function buildRouteComparison(flows) {
+  // Mapeamento: alias no codigo Recital → nome canonico de negocio
+  var aliasMap = {
+    'cli': 'cliente', 'fornec': 'fornecedor', 'ped': 'pedido', 'prod': 'produto',
+    'nf': 'nota', 'dup': 'duplicata', 'est': 'estoque', 'pag': 'pagamento',
+    'rec': 'recebimento', 'conc': 'conciliacao', 'func': 'funcionario',
+    'fil': 'filial', 'emp': 'empresa', 'dep': 'departamento', 'cgo': 'cargo',
+    'oc': 'ordem', 'comp': 'compra', 'cad': 'cadastro', 'cta': 'conta',
+    'lanc': 'lancamento', 'cx': 'caixa', 'bco': 'banco'
+  };
+
+  var expectedRoutes = [
+    { name: 'Venda Completa', entities: ['cliente', 'pedido', 'produto', 'nota', 'duplicata', 'pagamento', 'estoque'], desc: 'Cliente → Pedido → Nota → Duplicata → Recebimento' },
+    { name: 'Compra / Estoque', entities: ['fornecedor', 'compra', 'ordem', 'estoque', 'produto'], desc: 'Fornecedor → OC → Recebimento → Estoque' },
+    { name: 'Cadastro Organizacional', entities: ['empresa', 'filial', 'funcionario', 'cargo', 'departamento', 'cadastro'], desc: 'Empresa → Filial → Funcionário' },
+    { name: 'Financeiro', entities: ['conta', 'lancamento', 'pagamento', 'recebimento', 'banco', 'caixa', 'conciliacao'], desc: 'Contas → Lançamentos → Conciliação Bancária' },
+  ];
+
+  // Coleta e expande com aliases
+  var expandedEnts = {};
+  for (var fi = 0; fi < flows.length; fi++) {
+    var ents = (flows[fi].entities_covered || flows[fi].entities || []).map(function(e) { return e.toLowerCase(); });
+    for (var k = 0; k < ents.length; k++) {
+      expandedEnts[ents[k]] = true;
+      for (var a in aliasMap) {
+        if (ents[k] === a) expandedEnts[aliasMap[a]] = true;
+        if (ents[k] === aliasMap[a]) expandedEnts[a] = true;
+      }
+    }
+  }
+
+  var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">';
+  html += '<div style="color:#9ca3af;font-weight:600;padding:4px 0;border-bottom:1px solid #374151">Roteiro Esperado</div>';
+  html += '<div style="color:#9ca3af;font-weight:600;padding:4px 0;border-bottom:1px solid #374151">Entidades Encontradas no Codigo</div>';
+
+  for (var r = 0; r < expectedRoutes.length; r++) {
+    var route = expectedRoutes[r];
+    var found = [], missingCanonical = [];
+    for (var ei = 0; ei < route.entities.length; ei++) {
+      var re = route.entities[ei];
+      if (expandedEnts[re]) {
+        found.push(re + ' ✓');
+      } else {
+        found.push(re + ' ✗');
+        missingCanonical.push(re);
+      }
+    }
+    var matchPct = Math.round((found.filter(function(x){return x.indexOf('✓')>=0;}).length / route.entities.length) * 100);
+    var color = matchPct >= 80 ? '#6ee7b7' : matchPct >= 40 ? '#fbbf24' : '#f87171';
+
+    html += '<div style="padding:6px 0"><span style="font-weight:600;font-size:12px">' + esc(route.name) + '</span><br><span style="color:#9ca3af">' + esc(route.desc) + '</span></div>';
+    html += '<div style="padding:6px 0">' +
+      '<span style="color:' + color + ';font-weight:700;font-size:14px">' + matchPct + '%</span> ' +
+      found.join(' · ') +
+      (missingCanonical.length > 0 ? '<br><span style="color:#f87171;font-size:10px">Faltando: ' + missingCanonical.join(', ') + ' — verifique aliases no codigo Recital</span>' : '') +
+    '</div>';
+  }
+  html += '</div>';
+
+  html += '<p class="text-xs r2ctl-report-meta mt-3" style="color:#6b7280">' +
+    '💡 O codigo Recital usa aliases (ex: <code>cli</code>=cliente, <code>fornec</code>=fornecedor, <code>ped</code>=pedido). ' +
+    'Execute o Pipeline para melhorar a inferencia de relacionamentos entre entidades.' +
+  '</p>';
+
+  return html;
+}
+
+function applyFlowFilters() {
+  var search = (document.getElementById('filter-search').value || '').toLowerCase();
+  var route = document.getElementById('filter-route').value;
+  var minSize = parseInt(document.getElementById('filter-size').value) || 0;
+  var cards = document.querySelectorAll('.flow-card');
+  var visible = 0;
+
+  // Route entity sets
+  var routeEnts = {
+    venda: ['cliente','cli','pedido','ped','produto','prod','nota','nf','duplicata','dup','pagamento','pag','estoque','est','venda','item','desconto','comissao'],
+    compra: ['fornecedor','fornec','compra','ordem','oc','estoque','entrada','nf_entrada','romaneio'],
+    cadastro: ['empresa','filial','funcionario','cargo','departamento','cadastro','cad'],
+    financeiro: ['conta','lancamento','pagamento','recebimento','banco','caixa','conciliacao','duplicata','boleto','cobranca'],
+    infra: ['servidor','ssh','conexao','backup','log','auditoria','config'],
+  };
+  var routeSet = routeEnts[route] || null;
+
+  for (var i = 0; i < cards.length; i++) {
+    var card = cards[i];
+    var ents = (card.getAttribute('data-flow-entities') || '').toLowerCase();
+    var flowName = (card.getAttribute('data-flow-name') || '').toLowerCase();
+    var count = parseInt(card.getAttribute('data-flow-count')) || 0;
+    var show = true;
+
+    if (search) {
+      var nameMatch = flowName.indexOf(search) >= 0;
+      var entMatch = ents.indexOf(search) >= 0;
+      if (!nameMatch && !entMatch) show = false;
+    }
+    if (routeSet) {
+      var match = false;
+      for (var r = 0; r < routeSet.length; r++) {
+        if (ents.indexOf(routeSet[r]) >= 0) { match = true; break; }
+      }
+      if (!match) show = false;
+    }
+    if (count < minSize) show = false;
+
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  document.getElementById('filter-count').textContent = visible + ' de ' + cards.length + ' fluxos';
+}
+
+function inferFlowName(entities) {
+  // Deriva nome de negocio a partir das entidades do fluxo
+  var ents = entities.map(function(e) { return e.toLowerCase(); });
+  var all = ents.join(' ');
+
+  // Padroes de negocio conhecidos
+  var patterns = [
+    { test: /ped|venda|item|desconto|comiss/i, name: 'Vendas / Pedidos' },
+    { test: /nota|nf|fatura|dup|boleto/i, name: 'Faturamento / NF' },
+    { test: /estoque|entrada|saida|inv|romanei/i, name: 'Estoque / Inventario' },
+    { test: /fornec|compra|ordem|oc|cotacao/i, name: 'Compras / Fornecedores' },
+    { test: /cliente|cadastro|cpf|cnpj|consumidor/i, name: 'Cadastro de Clientes' },
+    { test: /produto|modelo|marca|ncm|grade|cor|tamanho/i, name: 'Catalogo de Produtos' },
+    { test: /funcionario|folha|salario|ferias|ponto/i, name: 'RH / Funcionarios' },
+    { test: /empresa|filial|loja|deposito|centro/i, name: 'Estrutura Organizacional' },
+    { test: /conta|caixa|banco|lancamento|conciliacao/i, name: 'Financeiro / Tesouraria' },
+    { test: /frete|transport|entreg|correio/i, name: 'Logistica / Frete' },
+    { test: /fiscal|imposto|icms|ipi|pis|cofins|tribut/i, name: 'Fiscal / Tributario' },
+    { test: /promocao|campanha|marketing|email|newsletter/i, name: 'Marketing / Promocoes' },
+    { test: /tabela|preco|custo|margem/i, name: 'Precificacao' },
+    { test: /servidor|ssh|conexao|backup|config/i, name: 'Infraestrutura / TI' },
+    { test: /sped|sintegra|contabil|balancete/i, name: 'Contabilidade / Fiscal' },
+    { test: /arq\d{2,4}/i, name: 'Tabelas Auxiliares (arq*)' },
+  ];
+
+  for (var p = 0; p < patterns.length; p++) {
+    if (patterns[p].test.test(all)) return patterns[p].name;
+  }
+
+  // Fallback: usa primeiras 2 entidades
+  var leading = entities.slice(0, 3);
+  var name = leading.join(' \u2192 ');
+  if (entities.length > 3) name += ' +' + (entities.length - 3);
+  return name;
+}
+
+function generateRoteiro(steps, flowName, entitySources, menuMap) {
+  var lines = [];
+
+  // Encontra o .prg principal (mais referenciado, prefere .prg sobre .dbo)
+  var prgCount = {};
+  for (var i = 0; i < steps.length; i++) {
+    var e = (steps[i].entity || '').toLowerCase();
+    var src = entitySources[e] || '';
+    if (src) {
+      // Prefere .prg
+      var prg = src.split('/').pop();
+      if (prg.toLowerCase().endsWith('.dbo')) {
+        var base = prg.replace(/\.dbo$/i, '');
+        // Verifica se existe .prg correspondente
+        var hasPrg = false;
+        for (var ek in entitySources) {
+          if ((entitySources[ek] || '').toLowerCase().indexOf(base + '.prg') >= 0) { hasPrg = true; break; }
+        }
+        prg = hasPrg ? (base + '.prg') : prg;
+      }
+      prgCount[prg] = (prgCount[prg] || 0) + 1;
+    }
+  }
+  var mainPrg = '';
+  var maxCount = 0;
+  for (var p in prgCount) {
+    if (prgCount[p] > maxCount) { maxCount = prgCount[p]; mainPrg = p; }
+  }
+  var mainDir = '';
+  if (mainPrg && entitySources) {
+    for (var k in entitySources) {
+      var s = entitySources[k] || '';
+      if (s.indexOf(mainPrg.replace('.prg','')) >= 0 && s.indexOf('/prg/') >= 0) {
+        mainDir = s.split('/').slice(0, -1).join('/');
+        break;
+      }
+    }
+  }
+
+  // Cabeçalho padrão Recital
+  lines.push('<div style="border-bottom:2px solid #fbbf24;padding-bottom:8px;margin-bottom:12px">');
+  lines.push('<div style="font-size:15px;font-weight:700;color:#fbbf24;text-transform:uppercase;letter-spacing:1px">ROTEIRO DE PROCESSO: ' + esc(flowName.toUpperCase()) + '</div>');
+  lines.push('<div style="font-size:11px;color:#9ca3af;margin-top:4px">Migração de Versão de Sistema • Lojas Dakota</div>');
+  lines.push('</div>');
+
+  // Metadados
+  lines.push('<table style="font-size:11px;color:#d1d5db;margin-bottom:12px;width:100%">');
+  if (mainPrg) lines.push('<tr><td style="color:#9ca3af;padding:2px 8px 2px 0;white-space:nowrap">Programa Principal:</td><td style="color:#fbbf24;font-weight:600">' + esc(mainPrg) + '</td></tr>');
+  if (mainDir) lines.push('<tr><td style="color:#9ca3af;padding:2px 8px 2px 0;white-space:nowrap">Diretório Fontes:</td><td>' + esc(mainDir) + '</td></tr>');
+  lines.push('<tr><td style="color:#9ca3af;padding:2px 8px 2px 0;white-space:nowrap">Linguagem Base:</td><td>Recital Software</td></tr>');
+  lines.push('<tr><td style="color:#9ca3af;padding:2px 8px 2px 0;white-space:nowrap">Entidades:</td><td>' + steps.length + '</td></tr>');
+  lines.push('</table>');
+
+  // Separa raizes (apoio) e dependentes (fluxo principal)
+  var apoio = [];
+  var fluxo = [];
+  for (var i = 0; i < steps.length; i++) {
+    if ((steps[i].why || '').indexOf('raiz') >= 0) {
+      apoio.push(steps[i]);
+    } else {
+      fluxo.push(steps[i]);
+    }
+  }
+
+  // Seção 1: Tabela de Cadastros de Apoio
+  if (apoio.length > 0) {
+    lines.push('<div style="font-weight:700;color:#93c5fd;font-size:13px;margin-bottom:6px">1. Tabela de Cadastros de Apoio</div>');
+    lines.push('<div style="font-size:10px;color:#9ca3af;margin-bottom:6px">Entidades independentes que devem estar cadastradas antes do fluxo principal.</div>');
+    lines.push('<table style="width:100%;font-size:10px;border-collapse:collapse;margin-bottom:12px">');
+    lines.push('<tr style="color:#9ca3af;border-bottom:1px solid #374151">'
+      + '<th style="text-align:left;padding:4px">Elemento</th>'
+      + '<th style="text-align:left;padding:4px">Fonte (.prg)</th>'
+      + '<th style="text-align:left;padding:4px">Menu</th>'
+      + '<th style="text-align:left;padding:4px">Ação</th></tr>');
+    for (var a = 0; a < Math.min(apoio.length, 15); a++) {
+      var s = apoio[a];
+      var ent = s.entity || '';
+      var entLow = ent.toLowerCase();
+      var src = entitySources[entLow] || '';
+      // Prefere .prg sobre .dbo
+      var prg = '';
+      if (src) {
+        var base = src.replace(/\.dbo$/i, '');
+        var prgCandidate = base + '.prg';
+        // Busca se existe .prg para essa entidade
+        var foundPrg = '';
+        for (var ek in entitySources) {
+          var es = entitySources[ek] || '';
+          if (es.toLowerCase() === prgCandidate.toLowerCase()) { foundPrg = prgCandidate; break; }
+          if (es.toLowerCase().replace(/\.dbo$/i,'.prg') === prgCandidate.toLowerCase()) { foundPrg = es; break; }
+        }
+        prg = foundPrg || (src.endsWith('.dbo') ? src.replace(/\.dbo$/i, '.prg') : src).split('/').pop();
+      }
+      var menu = menuMap[prg.toLowerCase()] || menuMap[prg.replace('.prg','').toLowerCase()] || '-';
+      lines.push('<tr style="border-bottom:1px solid #1f2937">'
+        + '<td style="padding:3px;color:#93c5fd;font-weight:600">' + esc(ent) + '</td>'
+        + '<td style="padding:3px"><code style="color:#fbbf24;font-size:9px">' + esc(prg) + '</code></td>'
+        + '<td style="padding:3px;color:#d1d5db">' + esc(menu) + '</td>'
+        + '<td style="padding:3px;color:#6ee7b7">Cadastrar / Verificar</td></tr>');
+    }
+    if (apoio.length > 15) {
+      lines.push('<tr><td colspan="4" style="padding:3px;color:#6b7280;font-style:italic">... +' + (apoio.length - 15) + ' elementos adicionais</td></tr>');
+    }
+    lines.push('</table>');
+  }
+
+  // Seção 2: Fluxo Principal
+  var sectionNum = apoio.length > 0 ? 2 : 1;
+  lines.push('<div style="font-weight:700;color:#6ee7b7;font-size:13px;margin-bottom:6px">' + sectionNum + '. Fluxo Principal' + (mainPrg ? ': ' + esc(flowName) + ' (' + esc(mainPrg) + ')' : '') + '</div>');
+
+  // Divide em fases de ~7 passos
+  var fluxoEnts = fluxo.length > 0 ? fluxo : apoio; // fallback se tudo for raiz
+  var phaseSize = 7;
+  var phases = [];
+  for (var p = 0; p < fluxoEnts.length; p += phaseSize) {
+    phases.push(fluxoEnts.slice(p, p + phaseSize));
+  }
+
+  var phaseNames = ['Inicialização e Dados de Entrada', 'Validações e Parâmetros', 'Processamento Principal', 'Digitação e Lançamentos', 'Consolidação e Totais', 'Fechamento e Gravação'];
+  var globalStep = 0;
+
+  for (var ph = 0; ph < Math.min(phases.length, 6); ph++) {
+    var phaseSteps = phases[ph];
+    lines.push('<div style="margin-top:8px;margin-bottom:4px;font-weight:600;color:#fbbf24;font-size:11px">Fase ' + (ph + 1) + ': ' + (phaseNames[ph] || 'Etapa ' + (ph+1)) + '</div>');
+
+    for (var si = 0; si < phaseSteps.length; si++) {
+      globalStep++;
+      var s = phaseSteps[si];
+      var ent = s.entity || '';
+      var entLow = ent.toLowerCase();
+      var src2 = entitySources[entLow] || '';
+      var prg2 = '';
+      if (src2) {
+        var base2 = src2.replace(/\.dbo$/i, '');
+        var prgCand2 = base2 + '.prg';
+        for (var ek2 in entitySources) {
+          var es2 = entitySources[ek2] || '';
+          if (es2.toLowerCase() === prgCand2.toLowerCase()) { prg2 = prgCand2; break; }
+        }
+        prg2 = prg2 || (src2.endsWith('.dbo') ? src2.replace(/\.dbo$/i, '.prg') : src2).split('/').pop();
+      }
+      var menu = '';
+      if (prg2) menu = menuMap[prg2.toLowerCase()] || menuMap[prg2.replace('.prg','').toLowerCase()] || '';
+      var isRoot = (s.why || '').indexOf('raiz') >= 0;
+
+      var action = isRoot ? 'Verificar se ' + ent + ' está cadastrado.' : 'Processar ' + ent + '.';
+      if (prg2 && menu) action += ' (Menu: ' + menu + ')';
+
+      lines.push(
+        '<div style="padding:3px 0;font-size:11px">' +
+          '<span style="color:#6b7280;font-weight:600">' + globalStep + '.</span> ' +
+          '<span style="color:#' + (isRoot ? '93c5fd' : 'd1d5db') + '">' + esc(action) + '</span>' +
+          (prg2 ? ' <code style="color:#fbbf24;font-size:9px">[' + esc(prg2) + ']</code>' : '') +
+        '</div>'
+      );
+    }
+  }
+
+  if (fluxoEnts.length > phaseSize * 6) {
+    lines.push('<div style="color:#6b7280;padding:3px 0;font-style:italic;font-size:11px">... +' + (fluxoEnts.length - phaseSize * 6) + ' passos adicionais</div>');
+  }
+
+  // Rodapé
+  lines.push('<div style="margin-top:12px;padding:8px;background:#1e3a5f;border-radius:6px;font-size:10px;color:#93c5fd">');
+  lines.push('📊 ' + steps.length + ' entidades | ⬢ ' + apoio.length + ' cadastros de apoio | ' + fluxoEnts.length + ' passos no fluxo principal | 📄 ' + (Object.keys(prgCount).length) + ' programas .prg');
+  lines.push('</div>');
+
+  return lines.join('\n');
+}
+
+function toggleGapFiles(gapId) {
+  var el = document.getElementById('gap-files-'+gapId);
+  if (el) el.classList.toggle('is-open');
+}
+
+async function dismissGap(gapId) {
+  if (!confirm('Descartar o gap '+gapId+'? Ele nao sera mais exibido como pendente.')) return;
+  try {
+    await fetch('/api/business/gaps', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({gap_id: gapId, status: 'dismissed', notes: 'Descartado pelo operador'})
+    });
+    location.reload();
+  } catch(e) { alert('Erro: '+e.message); }
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>

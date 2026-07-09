@@ -3,6 +3,9 @@
 # Runner de testes (tcltest) - compatível com Linux e AIX
 #
 
+# CRÍTICO: encoding antes de qualquer source que contenha Unicode
+encoding system utf-8
+
 proc _tests_root_dir {} {
     set here [file dirname [file normalize [info script]]]
     return [file normalize [file join $here ..]]

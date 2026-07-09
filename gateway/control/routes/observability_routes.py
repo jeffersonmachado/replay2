@@ -4,6 +4,7 @@ import json
 from urllib.parse import parse_qs
 
 from dakota_gateway.replay_control import query_one
+from control.routes.route_helpers import write_json
 from control.services.report_service import build_observability_overview, build_runs_trend_report
 from control.services.scenario_service import (
     delete_analytics_scenario,
@@ -11,14 +12,6 @@ from control.services.scenario_service import (
     save_analytics_scenario,
     set_analytics_scenario_favorite,
 )
-
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
 
 def handle_observability_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
@@ -47,7 +40,7 @@ def handle_observability_get_route(handler, parsed_path) -> bool:
             )
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path == "/api/observability/scenarios":
@@ -70,7 +63,7 @@ def handle_observability_get_route(handler, parsed_path) -> bool:
             }
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path == "/api/reports/runs/trend":
@@ -93,11 +86,10 @@ def handle_observability_get_route(handler, parsed_path) -> bool:
             )
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
-
 
 def handle_observability_post_route(handler, parsed_path, body: dict) -> bool:
     path = parsed_path.path
@@ -126,9 +118,9 @@ def handle_observability_post_route(handler, parsed_path, body: dict) -> bool:
             finally:
                 handler._db_release(con)
         except ValueError as exc:
-            _write_json(handler, 400, {"ok": False, "error": str(exc)})
+            write_json(handler, 400, {"ok": False, "error": str(exc)})
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/observability/scenarios/") and path.endswith("/favorite"):
@@ -153,11 +145,10 @@ def handle_observability_post_route(handler, parsed_path, body: dict) -> bool:
             payload = {"ok": True, "scenarios": list_analytics_scenarios(con, scope="observability", user_id=int(user["id"]))}
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
-
 
 def handle_observability_delete_route(handler, parsed_path) -> bool:
     path = parsed_path.path
@@ -178,12 +169,12 @@ def handle_observability_delete_route(handler, parsed_path) -> bool:
         if not row:
             deleted = False
         elif user["role"] != "admin" and int(row["created_by"] or 0) != int(user["id"]):
-            _write_json(handler, 403, {"ok": False, "error": "sem permissão para excluir este cenário"})
+            write_json(handler, 403, {"ok": False, "error": "sem permissão para excluir este cenário"})
             return True
         else:
             deleted = delete_analytics_scenario(con, scenario_id, scope="observability")
         payload = {"ok": deleted, "scenarios": list_analytics_scenarios(con, scope="observability", user_id=int(user["id"]))}
     finally:
         handler._db_release(con)
-    _write_json(handler, 200 if deleted else 404, payload)
+    write_json(handler, 200 if deleted else 404, payload)
     return True

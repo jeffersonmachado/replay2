@@ -1,28 +1,266 @@
-# Roadmap Dakota Replay2 (v0.1.0 → Futuro)
+# Roadmap — Dakota Replay2
 
-## Status Atual: MVP (Minimum Viable Product)
-
-**Versão:** 0.1.0 (27 de março de 2026)  
-**Phase:** Alpha / Early Production
-
-- ✅ Core automation engine (Expect/Tcl)
-- ✅ Auditoria with integrity (JSONL + hash-chain + HMAC)
-- ✅ Deterministic replay (seq_global ordering)
-- ✅ Gateway SSH proxy com checkpoint validation
-- ✅ Control plane básico (SQLite + Web UI)
-- ✅ Distribuição portável (Linux + AIX, tarball)
-- ✅ Tests (tcltest + Python)
-
-**O que ainda NOT está pronto para produção:**
-- [ ] TUI de debug (parcial em lib/control.tcl)
-- [ ] Observabilidade plena (métricas, alertas)
-- [ ] Alta disponibilidade (clustering, failover)
-- [ ] Performance otimizada para scale
-- [ ] Integração com sistemas externos
+**Versão atual:** 0.1.0
+**Data:** 2026-06-23
+**Horizonte:** 8 Sprints (16 semanas)
 
 ---
 
-## 📍 Roadmap por Versão
+## Sprint 1 — Estruturação e Preparação (2 semanas)
+
+### Objetivo
+Organizar a estrutura operacional, auditar o projeto e preparar o ambiente Dakota para o primeiro ciclo de validação.
+
+### Escopo
+- [ ] Finalizar estrutura `remoto_dakota/`
+- [ ] Auditoria completa do Replay2
+- [ ] Hardening do build (checklist de exclusão)
+- [ ] Inventário do MIG24 documentado
+- [ ] Healthcheck funcional
+- [ ] Primeiro deploy no MIG24
+- [ ] Teste de conectividade e smoke test
+
+### Arquivos Impactados
+- `remoto_dakota/docs/*` — documentação operacional
+- `remoto_dakota/scripts/healthcheck.sh` — melhoria do healthcheck
+- `replay2/scripts/build-tarball.sh` — hardening de exclusões
+- `replay2/AUDITORIA_REPLAY2.md` — relatório de auditoria
+- `replay2/CHECKLIST_EMPACOTAMENTO.md` — checklist de release
+
+### Riscos
+- Acesso SSH ao MIG24 pode não estar funcional
+- Dependências Python podem faltar no MIG24
+- Encoding do terminal AIX pode divergir
+
+### Critérios de Aceite
+- [ ] Healthcheck retorna 100% PASS no MIG24
+- [ ] Artefato builda sem incluir itens proibidos
+- [ ] Control plane inicia no MIG24 sem erros
+- [ ] Documentação operacional completa
+
+---
+
+## Sprint 2 — Discovery Engine (2 semanas)
+
+### Objetivo
+Capacidade de analisar automaticamente o código-fonte do sistema de lojas e extrair entidades, telas, menus e regras de negócio.
+
+### Escopo
+- [ ] Aprimorar Source Analyzer (SQL, ISAM, DBF, Recital extractors)
+- [ ] Implementar CRUD Detector (identificar CRUDs completos)
+- [ ] Implementar Menu Analyzer (hierarquia de menus)
+- [ ] Implementar Field Classifier (tipos de campo)
+- [ ] Implementar Relationship Mapper (FK, lookup)
+- [ ] Executar discovery no código-fonte do sistema de lojas
+- [ ] Gerar Entity Catalog + Screen Map
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/source_analyzer/crud_detector.py` — NOVO
+- `gateway/dakota_gateway/source_analyzer/menu_analyzer.py` — NOVO
+- `gateway/dakota_gateway/source_analyzer/field_classifier.py` — NOVO
+- `gateway/dakota_gateway/source_analyzer/relationship_mapper.py` — NOVO
+- `gateway/dakota_gateway/source_analyzer/parser.py` — melhoria
+- `gateway/dakota_gateway/source_analyzer/sql_extractor.py` — FK detection
+- `gateway/dakota_gateway/source_analyzer/screen_extractor.py` — menu hierarchy
+
+### Riscos
+- Código fonte pode usar padrões não cobertos pelos extractors
+- Qualidade do código fonte pode dificultar parsing
+
+### Critérios de Aceite
+- [ ] Cobertura de entidades detectadas > 90%
+- [ ] Precisão na classificação de campos > 85%
+- [ ] CRUDs completos identificados > 80%
+- [ ] Tempo de discovery < 10 min para 500 programas
+
+---
+
+## Sprint 3 — Journey Generation (2 semanas)
+
+### Objetivo
+A partir do Discovery, gerar automaticamente jornadas de validação: CRUD, negócio, stress.
+
+### Escopo
+- [ ] DDL Parser (CREATE TABLE → ScreenSchema)
+- [ ] CRUD Journey Generator (por entidade)
+- [ ] Business Journey Generator (por domínio)
+- [ ] Stress Journey Generator (volume/concorrência)
+- [ ] Journey Validator (completude, cobertura)
+- [ ] Integração com catálogo operacional
+- [ ] Gerar jornadas para o sistema de lojas
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/synthetic/crud_journey_generator.py` — NOVO
+- `gateway/dakota_gateway/synthetic/business_journey_generator.py` — NOVO
+- `gateway/dakota_gateway/synthetic/stress_journey_generator.py` — NOVO
+- `gateway/dakota_gateway/synthetic/journey_validator.py` — NOVO
+- `gateway/dakota_gateway/synthetic/journey_inferencer.py` — DDL support
+
+### Riscos
+- Jornadas geradas podem não refletir fluxos reais de negócio
+- Mapeamento tela→entidade pode ser impreciso
+
+### Critérios de Aceite
+- [ ] Jornadas geradas automaticamente > 70% das entidades
+- [ ] Cobertura de CRUD > 80% das operações detectadas
+- [ ] Precisão dos passos > 90% executáveis sem ajuste
+
+---
+
+## Sprint 4 — Synthetic Data Engine (2 semanas)
+
+### Objetivo
+Transformar o Synthetic Engine em um gerador genérico orientado por IA.
+
+### Escopo
+- [ ] Smart Provider Router (field → provider automático)
+- [ ] Relationship Resolver (FK values from parent datasets)
+- [ ] Consistency Validator (cross-entity rules)
+- [ ] Constraint Inference Engine (VALID, PICTURE, RANGE → rules)
+- [ ] Business Rule Extractor (código → constraints)
+- [ ] Gerar datasets para todas as entidades do sistema de lojas
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/synthetic/smart_provider_router.py` — NOVO
+- `gateway/dakota_gateway/synthetic/relationship_resolver.py` — NOVO
+- `gateway/dakota_gateway/synthetic/consistency_validator.py` — NOVO
+- `gateway/dakota_gateway/synthetic/constraint_inference.py` — NOVO
+- `gateway/dakota_gateway/synthetic/business_rule_extractor.py` — NOVO
+
+### Riscos
+- Inferência de regras de negócio é complexa
+- Performance com datasets grandes (1M+ registros)
+
+### Critérios de Aceite
+- [ ] Entidades cobertas sem script manual > 80%
+- [ ] Precisão dos dados gerados > 95%
+- [ ] Respeito a FK/relationships > 90%
+
+---
+
+## Sprint 5 — Replay Engine (2 semanas)
+
+### Objetivo
+Executar o primeiro ciclo real de validação no ambiente Dakota (MIG24).
+
+### Escopo
+- [ ] Configurar target_environment e connection_profiles para MIG24
+- [ ] Criar jornadas de validação no catálogo operacional
+- [ ] Executar replay das jornadas no MIG24
+- [ ] Coletar e analisar falhas
+- [ ] Relatório de validação do sistema de lojas
+- [ ] Adaptive timeout para checkpoint
+- [ ] Retry automático em falha de SSH
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/replay.py` — adaptive timeout, retry
+- `gateway/dakota_gateway/replay_control.py` — melhorias
+- `remoto_dakota/scripts/register-targets.sh` — cadastro no MIG24
+
+### Critérios de Aceite
+- [ ] 100% das jornadas do sistema de lojas executadas
+- [ ] Taxa de sucesso de replay > 95%
+- [ ] Relatório de validação gerado
+
+---
+
+## Sprint 6 — Observability (2 semanas)
+
+### Objetivo
+Aprimorar a camada de observabilidade interna (já existente via /observability).
+
+### Escopo
+- [ ] Endpoint `/metrics` com métricas internas (runs ativas, falhas, taxa de sucesso)
+- [ ] Métricas: TPS, latência, falhas, checkpoints
+- [ ] Healthcheck endpoints (`/health`, `/ready`)
+- [ ] Log aggregation estruturada
+
+### Arquivos Impactados
+- `gateway/control/metrics.py` — NOVO (métricas internas)
+- `gateway/control/routes/observability_routes.py` — /metrics, /health
+
+### Critérios de Aceite
+- [ ] `/metrics` expõe métricas principais em JSON
+- [ ] `/health` e `/ready` respondem corretamente
+
+---
+
+## Sprint 7 — Benchmark AIX x Linux (2 semanas)
+
+### Objetivo
+Executar benchmark comparativo entre AIX e Linux.
+
+### Escopo
+- [ ] Benchmark Orchestrator (definição, execução, coleta)
+- [ ] System Metrics Collector (CPU, memória, I/O, locks)
+- [ ] Comparison Engine (delta analysis)
+- [ ] Executive Report Generator
+- [ ] Executar benchmark no sistema de lojas
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/benchmark/` — NOVO diretório
+
+### Critérios de Aceite
+- [ ] Benchmark executado em AIX e Linux
+- [ ] Métricas coletadas para todos os indicadores
+- [ ] Relatório executivo gerado
+
+---
+
+## Sprint 8 — AI Assessment (2 semanas)
+
+### Objetivo
+Implementar o diferencial estratégico: IA que analisa, diagnostica e recomenda.
+
+### Escopo
+- [ ] Garbage Collector (código morto, tabelas órfãs)
+- [ ] Bottleneck Detector (gargalos AIX vs Linux)
+- [ ] Risk Identifier (áreas de maior risco)
+- [ ] Inconsistency Finder (divergências sutis)
+- [ ] Regression Detector (já parcialmente existente)
+- [ ] Environment Comparator (AIX vs Linux side-by-side)
+- [ ] Recommendation Engine
+- [ ] Executive Report completo
+
+### Arquivos Impactados
+- `gateway/dakota_gateway/assessment/` — NOVO diretório (6 analysis engines)
+
+### Critérios de Aceite
+- [ ] Garbage Collector identifica > 80% do código morto
+- [ ] Bottleneck Detector encontra gargalos reais
+- [ ] Recomendações são acionáveis e específicas
+
+---
+
+## Resumo de Entregas por Sprint
+
+| Sprint | Tema | Entregas Principais |
+|--------|------|---------------------|
+| 1 | Estruturação | remoto_dakota, auditoria, build hardening, healthcheck |
+| 2 | Discovery | Source Analyzer 2.0, CRUD detector, menu analyzer |
+| 3 | Journey | Journey generators (DDL, CRUD, business, stress) |
+| 4 | Synthetic | Smart router, relationship resolver, AI-driven generation |
+| 5 | Replay | Primeiro ciclo real MIG24, adaptive timeout, retry |
+| 6 | Observability | Métricas internas, /health, /ready, log aggregation |
+| 7 | Benchmark | AIX vs Linux, metrics collection, comparison engine |
+| 8 | AI Assessment | 6 analysis engines, recommendations, executive report |
+
+## Dependências entre Sprints
+
+```
+Sprint 1 (Estruturação)
+  └→ Sprint 2 (Discovery)
+       └→ Sprint 3 (Journey Generation)
+            └→ Sprint 4 (Synthetic Data)
+                 └→ Sprint 5 (Replay — 1º ciclo real)
+                      ├→ Sprint 6 (Observability)
+                      ├→ Sprint 7 (Benchmark AIX vs Linux)
+                      └→ Sprint 8 (AI Assessment)
+```
+
+---
+
+## Roadmap Anterior (v0.1.0 — mantido como referência histórica)
 
 ### v0.1.x — Bug Fixes & Polish (Q2 2026)
 
@@ -75,8 +313,8 @@
 }
 ```
 
-- [ ] Prometheus exporter (`/metrics`)
-- [ ] OpenTelemetry integration
+- [ ] Endpoint `/metrics` (JSON)
+- [ ] Métricas internas de runs e falhas
 - [ ] Custom metrics via events
 
 **Alertas**
@@ -513,11 +751,8 @@ tclsh bin/replay2-debug-tui --port 9999
 - HashiCorp (product philosophy)
 
 **Compatible with:**
-- Prometheus (metrics exporter)
-- OpenTelemetry (tracing)
-- Grafana (visualization)
-- AlertManager (alerting)
 - ELK stack (log aggregation)
+- Custom metrics consumers (via `/metrics` JSON endpoint)
 
 ---
 

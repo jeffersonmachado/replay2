@@ -1,14 +1,17 @@
-# Dakota Gateway dependencies - minimal for core functionality
-# No external deps required for core, but these are for development/testing
+# Dakota Gateway dependencies
+# Runtime (required for control plane)
+flask>=2.0,<4.0
+bottle>=0.12,<1.0
+werkzeug>=2.0,<4.0
 
-# Optional: for improved testing
+# Development/testing
 pytest>=7.0,<9.0
 pytest-cov>=4.0,<5.0
 
-# Optional: code quality
+# Code quality
 pylint>=2.16,<4.0
 flake8>=5.0,<7.0
 black>=23.0,<25.0
 
-# Optional: performance testing
-locust>=2.0,<3.0
+# Hot reload (dev only)
+watchfiles>=0.20,<1.0

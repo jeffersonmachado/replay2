@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from dakota_gateway.replay_control import query_one
+from control.routes.route_helpers import write_json
 from control.services.scenario_service import (
     delete_operational_scenario,
     instantiate_run_from_scenario,
@@ -10,14 +11,6 @@ from control.services.scenario_service import (
     save_operational_scenario,
     set_operational_scenario_favorite,
 )
-
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
 
 def handle_operational_get_route(handler, parsed_path, parse_qs_fn) -> bool:
     if parsed_path.path != "/api/operational-scenarios":
@@ -60,9 +53,8 @@ def handle_operational_get_route(handler, parsed_path, parse_qs_fn) -> bool:
         }
     finally:
         handler._db_release(con)
-    _write_json(handler, 200, payload)
+    write_json(handler, 200, payload)
     return True
-
 
 def handle_operational_post_route(handler, parsed_path, body: dict) -> bool:
     path = parsed_path.path
@@ -78,9 +70,9 @@ def handle_operational_post_route(handler, parsed_path, body: dict) -> bool:
             finally:
                 handler._db_release(con)
         except ValueError as exc:
-            _write_json(handler, 400, {"ok": False, "error": str(exc)})
+            write_json(handler, 400, {"ok": False, "error": str(exc)})
             return True
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/operational-scenarios/") and path.endswith("/favorite"):
@@ -105,7 +97,7 @@ def handle_operational_post_route(handler, parsed_path, body: dict) -> bool:
             payload = {"ok": True, "scenarios": list_operational_scenarios(con, user_id=int(user["id"]))}
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/operational-scenarios/") and path.endswith("/instantiate-run"):
@@ -122,15 +114,14 @@ def handle_operational_post_route(handler, parsed_path, body: dict) -> bool:
         try:
             run_id = instantiate_run_from_scenario(con, scenario_id, int(user["id"]))
         except ValueError as exc:
-            _write_json(handler, 404, {"ok": False, "error": str(exc)})
+            write_json(handler, 404, {"ok": False, "error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"ok": True, "run_id": run_id})
+        write_json(handler, 200, {"ok": True, "run_id": run_id})
         return True
 
     return False
-
 
 def handle_operational_delete_route(handler, parsed_path) -> bool:
     if not parsed_path.path.startswith("/api/operational-scenarios/"):
@@ -150,5 +141,5 @@ def handle_operational_delete_route(handler, parsed_path) -> bool:
         payload = {"ok": deleted, "scenarios": list_operational_scenarios(con)}
     finally:
         handler._db_release(con)
-    _write_json(handler, 200 if deleted else 404, payload)
+    write_json(handler, 200 if deleted else 404, payload)
     return True

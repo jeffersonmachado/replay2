@@ -1,0 +1,93 @@
+<!-- benchmark.html — Benchmark AIX vs Linux -->
+<div class="r2ctl-section">
+  <h2 class="r2ctl-section-title">Benchmark — AIX vs Linux</h2>
+  <p class="r2ctl-section-copy text-sm">Compara performance entre ambientes com mesmas jornadas e massa de dados.</p>
+</div>
+
+<div class="r2ctl-card mb-4">
+  <div class="p-4">
+    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2">
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Nome do Benchmark</label>
+        <input id="bench_name" type="text" value="Lojas AIX vs Linux" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Journey ID</label>
+        <input id="bench_journey" type="text" value="crud_clientes" class="r2ctl-input w-full">
+      </div>
+    </div>
+
+    <label class="block text-sm text-stone-300 mb-1">Ambientes (JSON)</label>
+    <textarea id="bench_envs" rows="4" class="r2ctl-input w-full mb-3" placeholder='[{"name":"aix","host":"10.5.8.25"},{"name":"linux","host":"10.5.8.30"}]'>[{"name":"aix","host":"10.5.8.25"},{"name":"linux","host":"10.5.8.30"}]</textarea>
+
+    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-3">
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Concorrencia</label>
+        <input id="bench_concurrency" type="number" value="5" min="1" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Iteracoes</label>
+        <input id="bench_iterations" type="number" value="3" min="1" max="10" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Seed</label>
+        <input id="bench_seed" type="number" value="0" class="r2ctl-input w-full">
+      </div>
+    </div>
+
+    <button id="bench_run_btn" class="r2ctl-btn-brand" onclick="runBenchmark()">
+      ▶ Executar Benchmark
+    </button>
+    <span id="bench_status" class="ml-3 text-sm text-stone-400 hidden"></span>
+  </div>
+</div>
+
+<div id="bench_result" class="hidden">
+  <div id="bench_summary" class="r2ctl-card mb-3 p-4 text-sm text-stone-200"></div>
+  <div id="bench_envs_result" class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2"></div>
+  <div id="bench_comparisons" class="space-y-2"></div>
+</div>
+
+<script>
+async function runBenchmark() {
+  const btn = document.getElementById('bench_run_btn');
+  const status = document.getElementById('bench_status');
+  const result = document.getElementById('bench_result');
+  btn.disabled = true; status.classList.remove('hidden'); status.textContent = 'Executando...'; result.classList.add('hidden');
+
+  let envs;
+  try { envs = JSON.parse(document.getElementById('bench_envs').value); } catch(e) { status.textContent = 'JSON invalido'; btn.disabled = false; return; }
+
+  try {
+    const resp = await fetch('/api/synthetic/benchmark', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: document.getElementById('bench_name').value,
+        journey_id: document.getElementById('bench_journey').value,
+        environments: envs,
+        concurrency: parseInt(document.getElementById('bench_concurrency').value)||5,
+        iterations: parseInt(document.getElementById('bench_iterations').value)||3,
+        seed: parseInt(document.getElementById('bench_seed').value)||0,
+      }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      document.getElementById('bench_summary').innerHTML = '<strong>' + data.summary.replace(/\n/g, '<br>') + '</strong>';
+      document.getElementById('bench_envs_result').innerHTML = (data.environments||[]).map(e =>
+        `<div class="r2ctl-card p-3"><span class="text-sm text-stone-300">${e.name} (${e.host})</span><br>
+         TPS: ${e.tps} | Lat: ${e.avg_latency_ms}ms | Erros: ${e.errors} | Diverg: ${e.divergences}</div>`
+      ).join('');
+      document.getElementById('bench_comparisons').innerHTML = (data.comparisons||[]).map(c =>
+        `<div class="r2ctl-card p-3 ${c.verdict==='PASS'?'border-green-700/40':c.verdict==='WARN'?'border-amber-700/40':'border-red-700/40'}">
+          <span class="text-sm font-medium ${c.verdict==='PASS'?'text-green-300':c.verdict==='WARN'?'text-amber-300':'text-red-300'}">${c.verdict}</span>
+          <span class="text-sm text-stone-300 ml-2">${c.baseline} vs ${c.target}</span>
+          <div class="text-xs text-stone-400 mt-1">${(c.recommendations||[]).join(' | ')}</div>
+        </div>`
+      ).join('');
+      status.textContent = 'Concluido'; result.classList.remove('hidden');
+    } else { status.textContent = 'Erro: ' + (data.error||'desconhecido'); }
+  } catch(e) { status.textContent = 'Erro: ' + e.message; }
+  btn.disabled = false;
+}
+</script>

@@ -197,7 +197,18 @@ if have_cmd setfacl; then
   sudo_or_die setfacl -R -m "u:$MATCH_USER:rX" "$PROJECT_ROOT/gateway"
   sudo_or_die setfacl -R -m "u:$MATCH_USER:rwx" "$PROJECT_ROOT/gateway/state"
   sudo_or_die setfacl -R -d -m "u:$MATCH_USER:rwx" "$PROJECT_ROOT/gateway/state"
-  sudo_or_die setfacl -m "u:$MATCH_USER:r" "$HMAC_KEY_FILE"
+
+  # ── SEGURANÇA: chave HMAC NÃO deve ser legível pelo usuário capturado ──
+  # O ideal é que o gateway rode como serviço dedicado (daemon) e assine os
+  # eventos internamente, sem expor a chave ao processo do usuário capturado.
+  # Enquanto isso não for implementado, a chave permanece restrita (0600 root).
+  info "ATENCAO: A chave HMAC NAO recebe ACL para o usuario capturado."
+  info "O gateway deve rodar como servico dedicado para assinar eventos."
+  info "Veja: docs/security.md"
+
+  # Garante que a chave HMAC tenha permissões restritas
+  sudo_or_die chmod 600 "$HMAC_KEY_FILE"
+  sudo_or_die chown root:root "$HMAC_KEY_FILE" 2>/dev/null || true
 else
   info "setfacl nao encontrado. Ajuste as permissoes do repo/estado manualmente para o usuario $MATCH_USER."
 fi

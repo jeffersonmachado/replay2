@@ -1,12 +1,59 @@
-dist/*
-!dist/*.tar.gz
+# Build artifacts
+dist/
+
+# Testes
 tests/tmp/
 
-# Python cache artifacts
+# Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+.pytest_cache/
 
-# Local control-plane runtime artifacts
+# Dev sandbox (contem node_modules, etc.)
+dev/
+
+# Runtime logs
+log/
+
+# Control plane state (local)
 .local-secrets/
 gateway/state/
+
+# Node (para dev/qa-waves-ui)
+node_modules/
+
+# Credenciais e segredos
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.pfx
+*.ppk
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.token.env
+
+# Bancos de dados locais
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Arquivos temporarios
+*.tmp
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+*.token.env
+
+# IDE
+.vscode/
+

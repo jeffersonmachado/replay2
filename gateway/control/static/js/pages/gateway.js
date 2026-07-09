@@ -188,6 +188,101 @@ function renderGatewaySessionDetail(data) {
   html("#gw_session_detail", JSON.stringify(data, null, 2));
 }
 
+function uniqueSorted(items) {
+  return Array.from(new Set((items || []).filter((item) => item !== null && item !== undefined && String(item).trim() !== ""))).sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
+}
+
+function fillDatalist(listId, values) {
+  const listEl = document.getElementById(listId);
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  uniqueSorted(values || []).forEach((value) => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    listEl.appendChild(option);
+  });
+}
+
+function fillSimpleSelect(selectId, values, allLabel) {
+  const selectEl = document.getElementById(selectId);
+  if (!selectEl) return;
+  const current = selectEl.value || "";
+  selectEl.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = allLabel;
+  selectEl.appendChild(allOption);
+
+  uniqueSorted(values || []).forEach((value) => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = String(value);
+    selectEl.appendChild(option);
+  });
+  selectEl.value = current;
+}
+
+function setUidGidFilterMode(field, values) {
+  const threshold = 20;
+  const uniq = uniqueSorted(values || []);
+  const inputEl = document.getElementById(`gw_session_${field}`);
+  const selectEl = document.getElementById(`gw_session_${field}_select`);
+  if (!inputEl || !selectEl) return;
+
+  const useSelect = uniq.length > 0 && uniq.length <= threshold;
+  if (useSelect) {
+    inputEl.value = "";
+    inputEl.classList.add("hidden");
+    selectEl.classList.remove("hidden");
+    fillSimpleSelect(selectEl.id, uniq, `todos os ${field}`);
+  } else {
+    selectEl.value = "";
+    selectEl.classList.add("hidden");
+    inputEl.classList.remove("hidden");
+    fillDatalist(`gw_session_${field}_list`, uniq);
+  }
+}
+
+function currentUidGidValue(field) {
+  const inputEl = document.getElementById(`gw_session_${field}`);
+  const selectEl = document.getElementById(`gw_session_${field}_select`);
+  if (selectEl && !selectEl.classList.contains("hidden")) {
+    return selectEl.value || "";
+  }
+  return inputEl?.value || "";
+}
+
+function fillEventTypeSelect(selectId, values) {
+  const selectEl = document.getElementById(selectId);
+  if (!selectEl) return;
+  const current = selectEl.value || "";
+  const defaultTypes = ["session_start", "session_end", "bytes", "checkpoint", "deterministic_input"];
+  const extraTypes = uniqueSorted(values || []).filter((value) => !defaultTypes.includes(value));
+  const allTypes = ["", ...defaultTypes, ...extraTypes];
+  selectEl.innerHTML = "";
+  allTypes.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value ? value : "todos os tipos";
+    selectEl.appendChild(option);
+  });
+  selectEl.value = current;
+}
+
+function updateSessionFilterCombos(data) {
+  const sessions = data?.sessions || [];
+  fillDatalist("gw_session_actor_list", sessions.map((item) => item.actor || ""));
+  fillDatalist("gw_session_logname_list", sessions.map((item) => item.logname || ""));
+  fillDatalist("gw_session_id_list", sessions.map((item) => item.session_id || ""));
+  setUidGidFilterMode("uid", sessions.map((item) => item.uid));
+  setUidGidFilterMode("gid", sessions.map((item) => item.gid));
+  fillEventTypeSelect(
+    "gw_session_event_type",
+    sessions.flatMap((item) => (item.event_types || []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+  );
+}
+
 async function loadGatewaySessionDetail(sessionId) {
   if (!sessionId) return;
   window.currentGatewaySessionId = sessionId;
@@ -206,6 +301,7 @@ async function loadGatewaySessionDetail(sessionId) {
 }
 
 function renderGatewaySessions(data) {
+  updateSessionFilterCombos(data);
   text("#gw_sessions_status", data.error || `sessões ${formatCount((data.summary || {}).returned_sessions || 0)} • fonte ${data.log_dir || "-"}`);
   html(
     "#gw_sessions",
@@ -228,8 +324,13 @@ async function loadGatewaySessions() {
     log_dir: logDir,
     limit: "60",
     actor: document.getElementById("gw_session_actor")?.value || "",
+    logname: document.getElementById("gw_session_logname")?.value || "",
     session_id: document.getElementById("gw_session_id_filter")?.value || "",
     event_type: document.getElementById("gw_session_event_type")?.value || "",
+    uid: currentUidGidValue("uid"),
+    gid: currentUidGidValue("gid"),
+    ts_from: document.getElementById("gw_session_ts_from")?.value || "",
+    ts_to: document.getElementById("gw_session_ts_to")?.value || "",
     q: document.getElementById("gw_session_q")?.value || "",
   });
   const result = await apiJson(`/api/gateway/sessions?${qs}`);
@@ -253,9 +354,12 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("load_gateway_monitor_btn")?.addEventListener("click", loadGatewayMonitor);
   document.getElementById("load_gateway_sessions_btn")?.addEventListener("click", loadGatewaySessions);
 
-  ["gw_session_actor", "gw_session_id_filter", "gw_session_event_type", "gw_session_q"].forEach((id) =>
-    document.getElementById(id)?.addEventListener("input", loadGatewaySessions),
-  );
+  ["gw_session_event_type", "gw_session_uid_select", "gw_session_gid_select"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", loadGatewaySessions);
+  });
+  ["gw_session_actor", "gw_session_logname", "gw_session_id_filter", "gw_session_uid", "gw_session_gid", "gw_session_ts_from", "gw_session_ts_to", "gw_session_q"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", loadGatewaySessions);
+  });
   ["gw_detail_seq_from", "gw_detail_seq_to", "gw_detail_ts_from", "gw_detail_ts_to", "gw_detail_limit"].forEach((id) =>
     document.getElementById(id)?.addEventListener("input", () => loadGatewaySessionDetail(window.currentGatewaySessionId)),
   );

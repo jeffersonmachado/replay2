@@ -8,15 +8,26 @@ from control.routes.gateway_routes import (
     handle_gateway_post_route,
 )
 from control.routes.capture_routes import (
+    handle_capture_delete_route,
     handle_capture_get_route,
     handle_capture_post_route,
 )
 from control.routes.ui_routes import handle_ui_get_route
-from control.routes.catalog_routes import handle_catalog_get_route, handle_catalog_post_route
+from control.routes.catalog_routes import (
+    handle_catalog_delete_route,
+    handle_catalog_get_route,
+    handle_catalog_post_route,
+)
 from control.routes.admin_routes import handle_admin_get_route, handle_admin_post_route
 from control.routes.operational_routes import (
     handle_operational_delete_route,
     handle_operational_get_route,
     handle_operational_post_route,
 )
-from control.routes.run_routes import handle_run_get_route, handle_run_post_route
+from control.routes.run_routes import (
+    handle_run_delete_route,
+    handle_run_get_route,
+    handle_run_post_route,
+)
+from control.routes.journey_routes import handle_journey_get_route, handle_journey_post_route
+from control.routes.synthetic_routes import handle_synthetic_get_route, handle_synthetic_post_route

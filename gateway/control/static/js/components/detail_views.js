@@ -8,7 +8,7 @@ export function runIdentityCard(run) {
         <span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </div>
       <div class="mt-3 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
-      <div class="mt-2 text-xs text-stone-500">criada em ${formatDate(run.created_at_ms)} • modo ${escapeHtml(run.mode || "-")}</div>
+      <div class="mt-2 text-xs text-stone-400">criada em ${formatDate(run.created_at_ms)} • modo ${escapeHtml(run.mode || "-")}</div>
       <div class="mt-2 text-xs text-stone-400">compliance=${escapeHtml(run.compliance_status || "-")} • entry=${escapeHtml(run.entry_mode || "-")} • gateway=${escapeHtml(run.gateway_endpoint || "-")}</div>
     </div>
   `;
@@ -22,7 +22,7 @@ export function comparisonSummaryCard(summary) {
   ];
   return `
     <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
-      <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Comparacao</div>
+      <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Comparacao</div>
       <div class="mt-3 grid gap-2 sm:grid-cols-3">
         ${items
           .map(

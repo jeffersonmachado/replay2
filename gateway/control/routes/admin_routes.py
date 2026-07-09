@@ -2,14 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
+from control.routes.route_helpers import write_json
 
 def handle_admin_get_route(handler, parsed_path, *, gateway_service_status, query_all_fn) -> bool:
     if parsed_path.path == "/api/gateway/status":
@@ -53,7 +46,7 @@ def handle_admin_get_route(handler, parsed_path, *, gateway_service_status, quer
             "ssh_desired_route": policy.get("desired_ssh_route"),
             "ssh_effective_route": policy.get("effective_ssh_route"),
         }
-        _write_json(handler, 200, merged)
+        write_json(handler, 200, merged)
         return True
 
     if parsed_path.path == "/api/users":
@@ -66,11 +59,10 @@ def handle_admin_get_route(handler, parsed_path, *, gateway_service_status, quer
             users = [dict(row) for row in rows]
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"users": users})
+        write_json(handler, 200, {"users": users})
         return True
 
     return False
-
 
 def handle_admin_post_route(
     handler,
@@ -121,7 +113,7 @@ def handle_admin_post_route(
         enabled = bool(body.get("enabled"))
         status = gateway_toggle_fn(enabled)
         code = 200 if not status.get("error") and status.get("running") == enabled else 500
-        _write_json(handler, code, status)
+        write_json(handler, code, status)
         return True
 
     if parsed_path.path == "/api/users":

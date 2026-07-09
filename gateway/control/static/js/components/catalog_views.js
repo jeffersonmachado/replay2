@@ -39,7 +39,7 @@ export function operationalScenarioCard(item, index) {
         <div>
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.name || "-")}</div>
           <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.scenario_type || "replay")} • ${escapeHtml(item.target_user || "-")}@${escapeHtml(item.target_host || "-")} • runs=${formatCount((item.usage_summary || {}).total_runs || 0)}</div>
-          <div class="mt-1 text-xs text-stone-500">${escapeHtml(item.description || "sem descricao")}</div>
+          <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.description || "sem descricao")}</div>
         </div>
         <div class="flex flex-wrap gap-2">
           <button class="r2ctl-btn-soft" data-edit-scenario="${escapeHtml(index)}">Editar</button>

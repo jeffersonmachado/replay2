@@ -16,6 +16,11 @@ class AuditEvent:
     capture_id: Optional[int] = None
     capture_session_uuid: Optional[str] = None
 
+    # audit context (user identification)
+    logname: Optional[str] = None  # Login name from process
+    uid: Optional[int] = None  # User ID numeric
+    gid: Optional[int] = None  # Group ID numeric
+
     # bytes event
     dir: Optional[str] = None  # in|out
     data_b64: Optional[str] = None

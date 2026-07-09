@@ -18,7 +18,7 @@ import dakota_gateway.auth as auth
 from dakota_gateway import replay_control as replay_control_mod
 from dakota_gateway.replay_control import add_run_failure, build_failure_record, create_run
 from dakota_gateway.state_db import connect, init_db, now_ms
-from control.services.gateway_observability_service import prepare_session_replay_data
+from control.services.session_replay_service import prepare_session_replay_data
 
 CONTROL_SERVER_PATH = GATEWAY_DIR / "control" / "server.py"
 SPEC = importlib.util.spec_from_file_location("control_server", CONTROL_SERVER_PATH)

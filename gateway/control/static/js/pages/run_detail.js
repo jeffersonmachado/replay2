@@ -21,16 +21,16 @@ function renderDetail(run, report, comparison, failures) {
       </div>
       <div class="grid gap-4 lg:grid-cols-2">
         <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
-          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Falhas por tipo</div>
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Falhas por tipo</div>
           <div class="mt-3 space-y-2">${failureTypeList(failureRows)}</div>
         </div>
         <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
-          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Exportações</div>
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Exportações</div>
           ${exportLinks(run.id)}
         </div>
       </div>
       <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
-        <div class="text-xs uppercase tracking-[0.14em] text-stone-500">Reprocessamento por falha</div>
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Reprocessamento por falha</div>
         <div class="mt-3 space-y-3">
           ${(failures || []).slice(0, 8).map((item) => reprocessFailureCard(item)).join("") || '<div class="text-sm text-stone-400">Sem falhas estruturadas para reprocessamento guiado.</div>'}
         </div>

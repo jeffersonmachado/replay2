@@ -5,7 +5,7 @@ export function simpleCards(items) {
     .map(
       (item) => `
         <div class="r2ctl-detail-surface rounded-2xl p-4">
-          <div class="text-xs uppercase tracking-[0.14em] text-stone-500">${escapeHtml(item.label)}</div>
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">${escapeHtml(item.label)}</div>
           <div class="mt-2 text-2xl font-semibold text-stone-100">${escapeHtml(item.value)}</div>
           ${item.copy ? `<div class="mt-2 text-xs text-stone-400">${escapeHtml(item.copy)}</div>` : ""}
         </div>

@@ -5,20 +5,14 @@ import argparse
 import json
 import os
 import platform
-import re
 import secrets
-import sqlite3
-import subprocess
 import shutil
-import time
-import threading
-from http import HTTPStatus
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dakota_gateway import auth
+from dakota_gateway.source_analyzer.audit import get_audit_log, clear_audit_log, set_db_pool
 from dakota_gateway.compliance import (
     normalize_direct_ssh_policy_payload,
     normalize_target_policy,
@@ -34,8 +28,10 @@ from dakota_gateway.state_db import ConnectionPool
 from control.routes import (
     handle_admin_get_route,
     handle_admin_post_route,
+    handle_capture_delete_route,
     handle_capture_get_route,
     handle_capture_post_route,
+    handle_catalog_delete_route,
     handle_catalog_get_route,
     handle_catalog_post_route,
     handle_gateway_get_route,
@@ -46,8 +42,13 @@ from control.routes import (
     handle_operational_delete_route,
     handle_operational_get_route,
     handle_operational_post_route,
+    handle_run_delete_route,
     handle_run_get_route,
     handle_run_post_route,
+    handle_journey_get_route,
+    handle_journey_post_route,
+    handle_synthetic_get_route,
+    handle_synthetic_post_route,
     handle_ui_get_route,
 )
 from control.services.environment_service import (
@@ -90,399 +91,87 @@ from control.services.run_service import (
     get_run_failures_payload as _get_run_failures_payload,
     get_run_report_payload as _get_run_report_payload,
 )
-from control.services.capture_service import interrupt_stale_captures as _interrupt_stale_captures
+from control.runtime_supervision import (
+    Port22CaptureSampler,
+    RuntimeContentCaptureRunner,
+    default_project_root_from_file,
+    env_bool as _runtime_env_bool,
+    reconcile_gateway_capture_startup,
+)
+from control.page_state_builders import (
+    build_audit_state as _build_audit_state_helper,
+    build_business_rules_state as _build_business_rules_state_helper,
+    build_journeys_report_state as _build_journeys_report_state_helper,
+    build_pipeline_last_state as _build_pipeline_last_state_helper,
+    infer_program_purpose as _infer_program_purpose_helper,
+)
+from control.audit_scan_support import (
+    analyze_menus as _analyze_menus_helper,
+    analyze_remote_navigation as _analyze_remote_navigation_helper,
+    infer_module_label as _infer_module_label_helper,
+    scan_local_sistema as _scan_local_sistema_helper,
+)
+from control.auth_support import (
+    authenticate_request as _authenticate_request,
+    clear_cookie as _clear_cookie_helper,
+    get_cookie as _get_cookie_helper,
+    require_page_user as _require_page_user_helper,
+    require_user as _require_user_helper,
+    set_cookie as _set_cookie_helper,
+)
+from control.engineering_route_support import (
+    handle_engineering_api_get_route,
+    handle_engineering_page_get_route,
+    handle_system_get_route,
+)
+from control.server_support import (
+    gateway_service_status as _support_gateway_service_status,
+    gateway_toggle as _support_gateway_toggle,
+    is_weak_password as _support_is_weak_password,
+    read_json as _support_read_json,
+    run_cmd as _support_run_cmd,
+)
+from control.error_middleware import error_guard
 
 
 def _is_weak_password(password: str) -> bool:
-  p = (password or "").strip()
-  if len(p) < 8:
-    return True
-  lower = p.lower()
-  common = {
-    "admin123",
-    "password",
-    "password123",
-    "12345678",
-    "qwerty123",
-    "dakota123",
-  }
-  if lower in common:
-    return True
-  if lower.startswith("admin") and len(lower) <= 10:
-    return True
-  return False
+    return _support_is_weak_password(password)
 
 def _read_json(req: BaseHTTPRequestHandler) -> dict:
-    ln = int(req.headers.get("Content-Length") or "0")
-    data = req.rfile.read(ln) if ln else b"{}"
-    try:
-        d = json.loads(data.decode("utf-8"))
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+    return _support_read_json(req)
 
 def _run_cmd(cmd: list[str]) -> tuple[int, str]:
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
-        return p.returncode, out.strip()
-    except FileNotFoundError:
-        return 127, f"comando não encontrado: {cmd[0]}"
-    except subprocess.TimeoutExpired:
-        return 124, "timeout executando comando"
-    except Exception as exc:
-        return 1, str(exc)
+    return _support_run_cmd(cmd)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    raw = str(os.environ.get(name, "")).strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "y", "on", "sim"}
-
-
-def _linux_find_systemd_unit(candidates: tuple[str, ...]) -> str | None:
-    for candidate in candidates:
-        rc_probe, out_probe = _run_cmd(["systemctl", "status", candidate, "--no-pager"])
-        if "could not be found" not in out_probe.lower():
-            return candidate
-    return None
-
-
-def _linux_service_is_active(unit: str) -> tuple[bool, str]:
-    rc, out = _run_cmd(["systemctl", "is-active", unit])
-    return out.strip() == "active" and rc == 0, out.strip() or out
-
-
-def _linux_gateway_units() -> tuple[str | None, str | None]:
-    service = _linux_find_systemd_unit(("sshd", "ssh"))
-    socket = _linux_find_systemd_unit(("sshd.socket", "ssh.socket"))
-    return service, socket
+    return _runtime_env_bool(name, default)
 
 
 def _gateway_service_status() -> dict:
-    system = platform.system().lower()
-
-    if "aix" in system:
-        if not shutil.which("lssrc"):
-            return {"platform": "aix", "service": "sshd", "running": False, "available": False, "error": "lssrc não encontrado"}
-        rc, out = _run_cmd(["lssrc", "-s", "sshd"])
-        running = ("active" in out.lower()) and rc == 0
-        return {
-            "platform": "aix",
-            "service": "sshd",
-            "running": running,
-            "available": True,
-            "error": None if running else (out or "sshd inativo"),
-        }
-
-    if "linux" in system:
-        if not shutil.which("systemctl"):
-            return {"platform": "linux", "service": "sshd", "running": False, "available": False, "error": "systemctl não encontrado"}
-
-        service, socket = _linux_gateway_units()
-        if not service and not socket:
-            return {
-                "platform": "linux",
-                "service": "unavailable",
-                "socket": "unavailable",
-                "running": False,
-                "available": False,
-                "error": "serviço ssh/sshd não encontrado neste host",
-            }
-
-        service_running = False
-        service_state = "not-found"
-        if service:
-            service_running, service_state = _linux_service_is_active(service)
-
-        socket_running = False
-        socket_state = "not-found"
-        if socket:
-            socket_running, socket_state = _linux_service_is_active(socket)
-
-        running = service_running or socket_running
-        return {
-            "platform": "linux",
-            "service": service or "unavailable",
-            "socket": socket or "unavailable",
-            "running": running,
-            "service_running": service_running,
-            "socket_running": socket_running,
-            "available": True,
-            "error": None,
-        }
-
-    return {"platform": system or "unknown", "service": "unknown", "running": False, "available": False, "error": "sistema não suportado"}
+    return _support_gateway_service_status(run_cmd_fn=lambda cmd: _run_cmd(cmd))
 
 
 def _gateway_toggle(enabled: bool) -> dict:
-    st = _gateway_service_status()
-    platform_name = st.get("platform", "")
-    service = st.get("service", "sshd")
-    socket = st.get("socket")
-
-    if not st.get("available", True):
-        return {**st, "error": st.get("error") or "gateway indisponível para alternância"}
-
-    if bool(st.get("running")) == enabled and not st.get("error"):
-        return {**st, "changed": False}
-
-    if platform_name == "aix":
-        cmd = ["startsrc", "-s", "sshd"] if enabled else ["stopsrc", "-s", "sshd"]
-    elif platform_name == "linux":
-        units = [unit for unit in (socket, service) if unit and unit != "unavailable"]
-        action = "start" if enabled else "stop"
-        preferred = ["sudo", "-n", "systemctl", action, *units]
-        fallback = ["systemctl", action, *units]
-        rc, out = _run_cmd(preferred)
-        if rc != 0 and not out:
-            out = "falha executando systemctl"
-        if rc != 0 and ("password is required" in out.lower() or "a password is required" in out.lower()):
-            out = "permissão negada: configure sudo sem senha para controlar o gateway"
-        elif rc != 0 and "sudo:" in out.lower():
-            out = f"sudo falhou: {out}"
-        if rc != 0 and ("not in the sudoers" in out.lower() or "permission denied" in out.lower()):
-            out = "permissão negada: configure sudo sem senha para controlar o gateway"
-        if rc != 0 and "sudo" in preferred[0]:
-            rc, direct_out = _run_cmd(fallback)
-            if rc == 0:
-                out = direct_out
-            elif direct_out:
-                out = direct_out
-        new_state = _gateway_service_status()
-        if rc != 0 or new_state.get("running") != enabled:
-            new_state["error"] = out or new_state.get("error") or "falha ao alterar estado do gateway"
-        return new_state
-    else:
-        return {**st, "error": st.get("error") or "plataforma não suportada para toggle"}
-
-    rc, out = _run_cmd(cmd)
-    new_state = _gateway_service_status()
-    if rc != 0 or new_state.get("running") != enabled:
-        new_state["error"] = out or new_state.get("error") or "falha ao alterar estado do gateway"
-    return new_state
+    return _support_gateway_toggle(
+        enabled,
+        run_cmd_fn=lambda cmd: _run_cmd(cmd),
+        service_status_fn=_gateway_service_status,
+    )
 
 
-class _Port22CaptureSampler:
+class _Port22CaptureSampler(Port22CaptureSampler):
     def __init__(self):
-        self._thread = None
-        self._stop = threading.Event()
-        self._lock = threading.Lock()
-        self._capture = None
-        self._seq = 0
-        self._seen = set()
-        self._file_path = ""
-
-    def start(self, capture: dict | None) -> dict:
-        if not capture:
-            return {"started": False, "reason": "capture ausente"}
-        with self._lock:
-            self.stop()
-            self._capture = dict(capture)
-            log_dir = str(self._capture.get("log_dir") or "").strip()
-            session_uuid = str(self._capture.get("session_uuid") or "").strip()
-            if not log_dir or not session_uuid:
-                return {"started": False, "reason": "capture sem log_dir/session_uuid"}
-            os.makedirs(log_dir, exist_ok=True)
-            self._seq = 0
-            self._seen = set()
-            self._file_path = os.path.join(log_dir, f"audit-{time.strftime('%Y%m%d-%H%M%S')}.part001.jsonl")
-            self._stop.clear()
-            self._emit("session_start")
-            self._thread = threading.Thread(target=self._loop, daemon=True)
-            self._thread.start()
-            return {"started": True, "file": self._file_path}
-
-    def stop(self) -> dict:
-        if self._thread is None:
-            return {"stopped": False, "reason": "sampler inativo"}
-        self._stop.set()
-        self._thread.join(timeout=2)
-        self._thread = None
-        self._emit("session_end")
-        self._capture = None
-        self._file_path = ""
-        return {"stopped": True}
-
-    def _emit(self, event_type: str, **extra) -> None:
-        capture = self._capture or {}
-        if not self._file_path:
-            return
-        self._seq += 1
-        payload = {
-            "v": "v1",
-            "seq_global": self._seq,
-            "ts_ms": int(time.time() * 1000),
-            "type": event_type,
-            "actor": "gateway",
-            "session_id": str(capture.get("session_uuid") or ""),
-            "seq_session": self._seq,
-            "capture_id": capture.get("id"),
-            "source_port": 22,
-        }
-        payload.update(extra)
-        try:
-            with open(self._file_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except Exception:
-            return
-
-    def _sample_established_ssh(self) -> set[tuple[str, str]]:
-        rc, out = _run_cmd(["ss", "-tn", "state", "established", "sport", "=", ":22"])
-        if rc != 0 or not out:
-            return set()
-        conns = set()
-        lines = [line.strip() for line in out.splitlines() if line.strip()]
-        for line in lines[1:]:
-            parts = line.split()
-            if len(parts) < 4:
-                continue
-            local = parts[-2]
-            peer = parts[-1]
-            conns.add((local, peer))
-        return conns
-
-    def _loop(self) -> None:
-        while not self._stop.wait(1.0):
-            current = self._sample_established_ssh()
-            opened = current - self._seen
-            closed = self._seen - current
-            for local, peer in sorted(opened):
-                self._emit("port22_connection_open", local=local, peer=peer)
-            for local, peer in sorted(closed):
-                self._emit("port22_connection_close", local=local, peer=peer)
-            self._seen = current
+        super().__init__(run_cmd=lambda cmd: _run_cmd(cmd))
 
 
-class _RuntimeContentCaptureRunner:
+class _RuntimeContentCaptureRunner(RuntimeContentCaptureRunner):
     def __init__(self, *, project_root: str, hmac_key_file: str = ""):
-        self._project_root = project_root
-        self._hmac_key_file = str(hmac_key_file or "").strip()
-        self._lock = threading.Lock()
-        self._proc = None
-        self._capture_id = None
-        self._log_handle = None
-
-    def _resolve_runtime_config(self, body: dict) -> dict:
-        payload = body.get("runtime_capture") if isinstance(body, dict) else None
-        cfg = payload if isinstance(payload, dict) else {}
-
-        enabled = bool(cfg.get("enabled", _env_bool("DAKOTA_RUNTIME_CAPTURE_ENABLED", False)))
-        if not enabled:
-            return {"enabled": False, "reason": "runtime desabilitado"}
-
-        source_host = str(cfg.get("source_host") or os.environ.get("DAKOTA_RUNTIME_SOURCE_HOST") or "").strip()
-        source_user = str(cfg.get("source_user") or os.environ.get("DAKOTA_RUNTIME_SOURCE_USER") or "").strip()
-        source_command = str(cfg.get("source_command") or os.environ.get("DAKOTA_RUNTIME_SOURCE_COMMAND") or "").strip()
-        ssh_batch_mode = str(cfg.get("ssh_batch_mode") or os.environ.get("DAKOTA_RUNTIME_SSH_BATCH_MODE") or "yes").strip().lower()
-        if ssh_batch_mode not in {"yes", "no"}:
-            ssh_batch_mode = "yes"
-
-        if not source_host:
-            return {"enabled": False, "reason": "runtime sem source_host"}
-        if not source_command:
-            return {"enabled": False, "reason": "runtime sem source_command"}
-
-        return {
-            "enabled": True,
-            "source_host": source_host,
-            "source_user": source_user,
-            "source_command": source_command,
-            "ssh_batch_mode": ssh_batch_mode,
-            "gateway_endpoint": str(cfg.get("gateway_endpoint") or os.environ.get("DAKOTA_RUNTIME_GATEWAY_ENDPOINT") or "").strip(),
-        }
-
-    def start(self, capture: dict | None, body: dict | None = None) -> dict:
-        if not capture:
-            return {"started": False, "reason": "capture ausente"}
-        runtime_cfg = self._resolve_runtime_config(body or {})
-        if not runtime_cfg.get("enabled"):
-            return {"started": False, "reason": runtime_cfg.get("reason") or "runtime desabilitado"}
-        if not self._hmac_key_file:
-            return {"started": False, "reason": "hmac_key_file ausente"}
-
-        log_dir = str(capture.get("log_dir") or "").strip()
-        if not log_dir:
-            return {"started": False, "reason": "capture sem log_dir"}
-        os.makedirs(log_dir, exist_ok=True)
-
-        gateway_wrapper = os.path.join(self._project_root, "gateway", "dakota-gateway")
-        if not os.path.exists(gateway_wrapper):
-            return {"started": False, "reason": "wrapper dakota-gateway não encontrado"}
-
-        cmd = [
-            "python3",
-            gateway_wrapper,
-            "start",
-            "--log-dir",
-            log_dir,
-            "--hmac-key-file",
-            self._hmac_key_file,
-            "--source-host",
-            runtime_cfg["source_host"],
-            "--source-command",
-            runtime_cfg["source_command"],
-            "--ssh-batch-mode",
-            runtime_cfg["ssh_batch_mode"],
-        ]
-        if runtime_cfg["source_user"]:
-            cmd += ["--source-user", runtime_cfg["source_user"]]
-        if runtime_cfg["gateway_endpoint"]:
-            cmd += ["--gateway-endpoint", runtime_cfg["gateway_endpoint"]]
-
-        self.stop()
-        with self._lock:
-            runtime_log_path = os.path.join(log_dir, "runtime-capture.log")
-            self._log_handle = open(runtime_log_path, "a", encoding="utf-8")
-            self._proc = subprocess.Popen(
-                cmd,
-                cwd=self._project_root,
-                stdout=self._log_handle,
-                stderr=self._log_handle,
-                close_fds=True,
-            )
-            self._capture_id = capture.get("id")
-            return {
-                "started": True,
-                "pid": int(self._proc.pid),
-                "capture_id": self._capture_id,
-                "mode": "runtime_content",
-                "log": runtime_log_path,
-            }
-
-    def stop(self) -> dict:
-        with self._lock:
-            if self._proc is None:
-                return {"stopped": False, "reason": "runtime inativo"}
-            proc = self._proc
-            self._proc = None
-            capture_id = self._capture_id
-            self._capture_id = None
-            try:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=2)
-            finally:
-                if self._log_handle is not None:
-                    try:
-                        self._log_handle.flush()
-                    except Exception:
-                        pass
-                    try:
-                        self._log_handle.close()
-                    except Exception:
-                        pass
-                    self._log_handle = None
-            return {
-                "stopped": True,
-                "capture_id": capture_id,
-                "returncode": proc.returncode,
-            }
+        super().__init__(
+            project_root=project_root,
+            hmac_key_file=hmac_key_file,
+            env_bool_fn=_env_bool,
+        )
 
 
 class ControlServer(ThreadingHTTPServer):
@@ -507,15 +196,32 @@ class ControlServer(ThreadingHTTPServer):
         con = self.db_pool.acquire()
         try:
             init_db(con)
-            stale = _interrupt_stale_captures(con, now_ms_fn=now_ms)
+            startup_state = reconcile_gateway_capture_startup(
+                con,
+                capture_log_dir=self.capture_log_dir,
+                now_ms_fn=now_ms,
+            )
+            stale = int(startup_state.get("stale_captures_interrupted") or 0)
             if stale:
                 print(f"[startup] {stale} captura(s) ativa(s) marcada(s) como interrupted (processo anterior encerrado)")
+            resumed = startup_state.get("resumed_capture")
+            if resumed:
+                print(
+                    f"[startup] captura retomada automaticamente para gateway ativo "
+                    f"(capture_id={int(resumed.get('id') or 0)})"
+                )
         finally:
             self.db_pool.release(con)
+        # Injeta conexao DB no modulo de auditoria para persistencia
+        con2 = self.db_pool.acquire()
+        try:
+            set_db_pool(self.db_pool)
+        finally:
+            self.db_pool.release(con2)
         self.runner = Runner(db_path, hmac_key)
         self.port22_sampler = _Port22CaptureSampler()
         self.runtime_capture = _RuntimeContentCaptureRunner(
-            project_root=str(Path(__file__).resolve().parents[2]),
+            project_root=default_project_root_from_file(__file__),
             hmac_key_file=hmac_key_file,
         )
 
@@ -527,78 +233,301 @@ class Handler(BaseHTTPRequestHandler):
     def _db_release(self, con):
         self.server.db_pool.release(con)
 
+    def _build_business_rules_state(self) -> dict:
+        return _build_business_rules_state_helper(self._db, self._db_release)
+
+    def _build_pipeline_last_state(self) -> dict:
+        return _build_pipeline_last_state_helper(self._db, self._db_release)
+
+    def _build_audit_state(self) -> dict:
+        local_sistema = self._scan_local_sistema()
+        if not hasattr(Handler, "_remote_nav_cache"):
+            Handler._remote_nav_cache = None  # type: ignore
+        if Handler._remote_nav_cache is None:  # type: ignore
+            try:
+                Handler._remote_nav_cache = Handler._analyze_remote_navigation()  # type: ignore
+            except Exception:
+                Handler._remote_nav_cache = {"error": "falha na analise remota"}  # type: ignore
+        return _build_audit_state_helper(
+            self._db,
+            self._db_release,
+            local_sistema=local_sistema,
+            remote_navigation=Handler._remote_nav_cache,  # type: ignore[arg-type]
+            infer_program_purpose_fn=self._infer_program_purpose,
+        )
+
+    @staticmethod
+    def _infer_program_purpose(filename: str) -> str:
+        return _infer_program_purpose_helper(filename)
+
+    @staticmethod
+    def _analyze_remote_navigation() -> dict | None:
+        return _analyze_remote_navigation_helper()
+
+    @staticmethod
+    def _scan_local_sistema() -> dict | None:
+        if not hasattr(Handler, "_menu_analysis_cache"):
+            Handler._menu_analysis_cache = None  # type: ignore
+
+        def _cached_analyze_menus(base: str):
+            cache = Handler._menu_analysis_cache  # type: ignore
+            if cache is None:
+                cache = Handler._analyze_menus(base)
+                Handler._menu_analysis_cache = cache  # type: ignore
+            return cache
+
+        return _scan_local_sistema_helper(analyze_menus_fn=_cached_analyze_menus)
+
+    @staticmethod
+    def _analyze_menus(base_dir: str) -> dict:
+        return _analyze_menus_helper(
+            base_dir,
+            infer_program_purpose_fn=Handler._infer_program_purpose,
+            infer_module_label_fn=Handler._infer_module_label,
+        )
+
+    @staticmethod
+    def _infer_module_label(code: str) -> str:
+        return _infer_module_label_helper(code)
+
+    def _build_journeys_report_state(self) -> dict:
+        return _build_journeys_report_state_helper(self._db, self._db_release)
+
     def _set_cookie(self, name: str, value: str, max_age: int = 3600 * 12):
-        c = SimpleCookie()
-        c[name] = value
-        c[name]["path"] = "/"
-        c[name]["max-age"] = str(max_age)
-        # internal HTTP (no TLS) by default; don't set secure automatically
-        self.send_header("Set-Cookie", c.output(header="").strip())
+        _set_cookie_helper(self, name, value, max_age=max_age)
 
     def _clear_cookie(self, name: str):
-        c = SimpleCookie()
-        c[name] = ""
-        c[name]["path"] = "/"
-        c[name]["max-age"] = "0"
-        self.send_header("Set-Cookie", c.output(header="").strip())
+        _clear_cookie_helper(self, name)
+
+    @staticmethod
+    def _is_relative_to(path: Path, parent: Path) -> bool:
+        """is_relative_to polyfill (Python 3.9+)."""
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            return False
 
     def _get_cookie(self, name: str) -> str | None:
-        raw = self.headers.get("Cookie") or ""
-        c = SimpleCookie()
-        c.load(raw)
-        if name not in c:
-            return None
-        return c[name].value
+        return _get_cookie_helper(self, name)
 
     def _auth(self):
-      cv = self._get_cookie("dakota_session")
-      if not cv:
-        return None
-      parsed = auth.verify_cookie(self.server.cookie_secret, cv)
-      if not parsed:
-        return None
-
-      username, token, _exp = parsed
-      token_hash = auth.sha256_hex(token.encode("utf-8"))
-      con = self._db()
-      try:
-        try:
-          row = query_one(
-            con,
-            "SELECT u.id,u.username,u.role,s.expires_at_ms "
-            "FROM users u JOIN sessions s ON s.user_id=u.id "
-            "WHERE u.username=? AND s.token_hash=? "
-            "ORDER BY s.id DESC LIMIT 1",
-            (username, token_hash),
-          )
-        except sqlite3.OperationalError as exc:
-          # Se o DB foi removido em runtime, recria schema e trata como sessão inválida.
-          if "no such table" in str(exc).lower():
-            init_db(con)
-            return None
-          raise
-        if not row:
-          return None
-        if int(row["expires_at_ms"]) < int(time.time() * 1000):
-          return None
-        return {"id": int(row["id"]), "username": row["username"], "role": row["role"]}
-      finally:
-        self._db_release(con)
+        return _authenticate_request(self)
 
     def _require(self, roles: set[str] | None = None):
-        u = self._auth()
-        if not u:
-            self.send_response(HTTPStatus.UNAUTHORIZED)
-            self.end_headers()
-            return None
-        if roles and u["role"] not in roles:
-            self.send_response(HTTPStatus.FORBIDDEN)
-            self.end_headers()
-            return None
-        return u
+        return _require_user_helper(self, roles)
 
+    def _require_page(self, roles: set[str] | None = None):
+        return _require_page_user_helper(self, roles)
+
+    def _serve_metrics(self):
+        """Endpoint /metrics — metricas operacionais internas.
+
+        Em producao (DAKOTA_ENV=production), exige autenticacao sempre.
+        Em lab/homologacao, libera acesso de localhost (127.0.0.1).
+        """
+        import os as _os
+        dakota_env = _os.environ.get("DAKOTA_ENV", "lab").strip().lower()
+        client_host = self.client_address[0] if hasattr(self, 'client_address') else ""
+
+        # Produção: sempre exige auth. Lab: só exige auth para acesso externo
+        if dakota_env == "production" or client_host not in ("127.0.0.1", "::1", "localhost", ""):
+            u = self._auth()
+            if not u:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "autenticacao requerida para /metrics"}).encode("utf-8"))
+                return
+        try:
+            con = self._db()
+            metrics = {}
+            # Runs
+            metrics["runs_total"] = con.execute("SELECT COUNT(*) as c FROM replay_runs").fetchone()["c"]
+            metrics["runs_active"] = con.execute(
+                "SELECT COUNT(*) as c FROM replay_runs WHERE status IN ('queued','running')"
+            ).fetchone()["c"]
+            metrics["runs_success"] = con.execute(
+                "SELECT COUNT(*) as c FROM replay_runs WHERE status='success'"
+            ).fetchone()["c"]
+            metrics["runs_failed"] = con.execute(
+                "SELECT COUNT(*) as c FROM replay_runs WHERE status='failed'"
+            ).fetchone()["c"]
+            # Failures
+            metrics["failures_total"] = con.execute("SELECT COUNT(*) as c FROM replay_failures").fetchone()["c"]
+            metrics["failures_critical"] = con.execute(
+                "SELECT COUNT(*) as c FROM replay_failures WHERE severity='critical'"
+            ).fetchone()["c"]
+            # Captures
+            metrics["captures_active"] = con.execute(
+                "SELECT COUNT(*) as c FROM capture_sessions WHERE status='active'"
+            ).fetchone()["c"]
+            metrics["captures_total"] = con.execute("SELECT COUNT(*) as c FROM capture_sessions").fetchone()["c"]
+            # Gateway
+            gw = con.execute("SELECT active FROM gateway_state ORDER BY id DESC LIMIT 1").fetchone()
+            metrics["gateway_active"] = bool(gw["active"]) if gw else False
+            # Synthetic
+            metrics["screens"] = con.execute("SELECT COUNT(*) as c FROM screens").fetchone()["c"]
+            metrics["entities"] = con.execute("SELECT COUNT(*) as c FROM source_entities").fetchone()["c"]
+            self._db_release(con)
+        except Exception:
+            metrics = {"error": "db unavailable"}
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
+
+    def _serve_knowledge_base(self, p):
+        """Endpoint /api/knowledge-base — P2-A (admin only)."""
+        from urllib.parse import parse_qs as _parse_qs
+
+        # Exige role admin
+        u = self._require({"admin"})
+        if not u:
+            return
+
+        params = _parse_qs(p.query) if p.query else {}
+        source_dir = params.get("source", [None])[0]
+
+        if not source_dir:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": "parametro 'source' obrigatorio",
+            }, ensure_ascii=False).encode("utf-8"))
+            return
+
+        if not os.path.isdir(source_dir):
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": f"diretorio nao encontrado: {source_dir}",
+            }, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # ── Producao: DAKOTA_SOURCE_ROOT obrigatorio ──
+        dakota_env = os.environ.get("DAKOTA_ENV", "lab").strip().lower()
+        if dakota_env == "production":
+            allowed_root = os.environ.get("DAKOTA_SOURCE_ROOT", "")
+            if not allowed_root:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": "DAKOTA_SOURCE_ROOT nao definido (obrigatorio em producao)",
+                }, ensure_ascii=False).encode("utf-8"))
+                return
+
+            # Validacao segura com Path.resolve + is_relative_to
+            try:
+                source_path = Path(source_dir).resolve()
+                root_path = Path(allowed_root).resolve()
+                if not self._is_relative_to(source_path, root_path):
+                    self.send_response(403)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "error": "source fora do DAKOTA_SOURCE_ROOT permitido em producao",
+                    }, ensure_ascii=False).encode("utf-8"))
+                    return
+            except Exception:
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": "erro ao validar source path",
+                }, ensure_ascii=False).encode("utf-8"))
+                return
+
+        # Limite de arquivos
+        import time as _time
+        start = _time.time()
+        prg_count = len(list(Path(source_dir).rglob("*.prg")))
+        if prg_count > 5000:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": f"muitos arquivos .prg ({prg_count}). Limite: 5000",
+            }, ensure_ascii=False).encode("utf-8"))
+            return
+
+        try:
+            from dakota_gateway.source_analyzer.parser import SourceParser
+            parser = SourceParser(source_dir)
+            parser.parse_all()
+            report = parser.discovery_report()
+            elapsed = _time.time() - start
+            report["_meta"] = {"elapsed_s": round(elapsed, 2), "files_scanned": prg_count}
+        except Exception as exc:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": f"falha ao analisar fonte: {exc}",
+            }, ensure_ascii=False).encode("utf-8"))
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(report, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        """Remove prefixo /v1 para versionamento transparente de API."""
+        if path.startswith("/v1/"):
+            return path[3:]  # /v1/api/... → /api/...
+        return path
+
+    @error_guard
     def do_GET(self):
         p = urlparse(self.path)
+        p = p._replace(path=self._normalize_path(p.path))
+
+        # ── Healthcheck endpoints (sem auth) ──
+        if p.path == "/health":
+            version = "0.1.0"
+            try:
+                vf = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "VERSION")
+                with open(vf) as f:
+                    version = f.readline().strip()
+            except Exception:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "service": "replay2-control", "version": version}).encode("utf-8"))
+            return
+        if p.path == "/ready":
+            try:
+                con = self._db()
+                con.execute("SELECT 1")
+                self._db_release(con)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ready", "db": "ok"}).encode("utf-8"))
+            except Exception as exc:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "not_ready", "db": str(exc)}).encode("utf-8"))
+            return
+        if p.path == "/metrics":
+            self._serve_metrics()
+            return
+
+        if handle_system_get_route(self, p, db_acquire=self._db, db_release=self._db_release):
+            return
+        if handle_engineering_api_get_route(self, p, db_acquire=self._db, db_release=self._db_release):
+            return
+        if handle_engineering_page_get_route(self, p):
+            return
+
         if handle_ui_get_route(self, p):
             return
         if p.path == "/api/me":
@@ -637,12 +566,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         if handle_run_get_route(self, p):
             return
+        if handle_journey_get_route(self, p):
+            return
+        if handle_synthetic_get_route(self, p):
+            return
+
+        # ── P2-A: Knowledge Base API ──
+        if p.path == "/api/knowledge-base" or p.path.startswith("/api/knowledge-base/"):
+            self._serve_knowledge_base(p)
+            return
 
         self.send_response(404)
         self.end_headers()
 
+    @error_guard
     def do_POST(self):
         p = urlparse(self.path)
+        p = p._replace(path=self._normalize_path(p.path))
         body = _read_json(self)
         if handle_admin_post_route(
             self,
@@ -677,6 +617,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if handle_run_post_route(self, p, body):
             return
+        if handle_journey_post_route(self, p, body):
+            return
+        if handle_synthetic_post_route(self, p, body):
+            return
         if handle_observability_post_route(self, p, body):
             return
         if handle_catalog_post_route(self, p, body):
@@ -687,8 +631,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    @error_guard
     def do_DELETE(self):
         p = urlparse(self.path)
+        p = p._replace(path=self._normalize_path(p.path))
+        if handle_run_delete_route(self, p):
+            return
+        if handle_capture_delete_route(self, p):
+            return
+        if handle_catalog_delete_route(self, p):
+            return
         if handle_observability_delete_route(self, p):
             return
         if handle_operational_delete_route(self, p):
@@ -722,6 +674,22 @@ def main():
                 raise SystemExit("cookie secret vazio")
         if not hmac_key:
                 raise SystemExit("hmac key vazio")
+
+        # ── DAKOTA_ENV: modo de operação ──
+        dakota_env = os.environ.get("DAKOTA_ENV", "lab").strip().lower()
+        if dakota_env not in ("lab", "production", "homologation"):
+                print(f"Aviso: DAKOTA_ENV='{dakota_env}' desconhecido. Use: lab, production, homologation")
+                dakota_env = "lab"
+
+        if dakota_env == "production":
+                print("🔒 MODO PRODUÇÃO ATIVO — segurança reforçada")
+                if not os.environ.get("DAKOTA_ADMIN"):
+                        raise SystemExit(
+                            "DAKOTA_ENV=production requer DAKOTA_ADMIN definido.\n"
+                            "Defina via: export DAKOTA_ADMIN='admin:senha-forte'"
+                        )
+        else:
+                print(f"Modo: {dakota_env}")
 
         env_admin = os.environ.get("DAKOTA_ADMIN", "").strip()
         bootstrap_admin = (args.bootstrap_admin or env_admin).strip()

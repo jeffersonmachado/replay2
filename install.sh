@@ -11,6 +11,22 @@ die() { printf '%s\n' "Erro: $*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 is_root() { [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; }
 
+run_install_cmd() {
+  if [ -e "$PREFIX" ]; then
+    if [ -w "$PREFIX" ]; then
+      "$@"
+      return 0
+    fi
+  else
+    parent_dir=$(dirname -- "$PREFIX")
+    if [ -d "$parent_dir" ] && [ -w "$parent_dir" ]; then
+      "$@"
+      return 0
+    fi
+  fi
+  sudo_or_die_prefix "$@"
+}
+
 usage() {
   cat <<'EOF'
 Uso:
@@ -188,7 +204,7 @@ ensure_tclsh_available || warn "tclsh não encontrado no PATH (necessário apena
 
 if [ -e "$PREFIX" ] && [ "$FORCE" -eq 1 ]; then
   info "Removendo instalação anterior em $PREFIX (--force)."
-  sudo_or_die_prefix rm -rf "$PREFIX"
+  run_install_cmd rm -rf "$PREFIX"
 fi
 
 # Cria prefixo e copia arquivos
@@ -199,28 +215,33 @@ if [ -e "$PREFIX" ]; then
   fi
 fi
 
-sudo_or_die_prefix mkdir -p "$PREFIX"
-sudo_or_die_prefix cp -R "$SRC_ROOT/bin" "$SRC_ROOT/lib" "$SRC_ROOT/screens" "$PREFIX/"
-if [ -d "$SRC_ROOT/gateway" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/gateway" "$PREFIX/"; fi
-if [ -d "$SRC_ROOT/scripts" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/scripts" "$PREFIX/"; fi
-if [ -d "$SRC_ROOT/tests" ]; then sudo_or_die_prefix cp -R "$SRC_ROOT/tests" "$PREFIX/"; fi
-if [ -f "$SRC_ROOT/README.md" ]; then sudo_or_die_prefix cp -f "$SRC_ROOT/README.md" "$PREFIX/"; fi
-if [ -f "$SRC_ROOT/VERSION" ]; then sudo_or_die_prefix cp -f "$SRC_ROOT/VERSION" "$PREFIX/"; fi
-sudo_or_die_prefix cp -f "$SRC_ROOT/uninstall.sh" "$PREFIX/uninstall.sh"
+run_install_cmd mkdir -p "$PREFIX"
+run_install_cmd cp -R "$SRC_ROOT/bin" "$SRC_ROOT/lib" "$SRC_ROOT/screens" "$PREFIX/"
+if [ -d "$SRC_ROOT/gateway" ]; then run_install_cmd cp -R "$SRC_ROOT/gateway" "$PREFIX/"; fi
+if [ -d "$SRC_ROOT/scripts" ]; then run_install_cmd cp -R "$SRC_ROOT/scripts" "$PREFIX/"; fi
+if [ -d "$SRC_ROOT/tests" ]; then run_install_cmd cp -R "$SRC_ROOT/tests" "$PREFIX/"; fi
+if [ -f "$SRC_ROOT/README.md" ]; then run_install_cmd cp -f "$SRC_ROOT/README.md" "$PREFIX/"; fi
+if [ -f "$SRC_ROOT/VERSION" ]; then run_install_cmd cp -f "$SRC_ROOT/VERSION" "$PREFIX/"; fi
+run_install_cmd cp -f "$SRC_ROOT/uninstall.sh" "$PREFIX/uninstall.sh"
 
-sudo_or_die_prefix chmod +x "$PREFIX/bin/main.exp" "$PREFIX/bin/replay2.exp" "$PREFIX/uninstall.sh"
+run_install_cmd chmod +x "$PREFIX/bin/main.exp" "$PREFIX/bin/replay2.exp" "$PREFIX/uninstall.sh"
 if [ -d "$PREFIX/scripts" ]; then
-  find "$PREFIX/scripts" -maxdepth 1 -name "*.sh" -exec chmod +x {} \;
+  run_install_cmd sh -c '
+for script_file in "$1"/*.sh; do
+  [ -e "$script_file" ] || continue
+  chmod +x "$script_file"
+done
+' sh "$PREFIX/scripts"
 fi
 
 # Artefatos Python: tornar executáveis e remover caches, se existirem
 if [ -f "$PREFIX/gateway/dakota-gateway" ]; then
-  sudo_or_die_prefix chmod +x "$PREFIX/gateway/dakota-gateway" || true
+  run_install_cmd chmod +x "$PREFIX/gateway/dakota-gateway" || true
 fi
 if [ -f "$PREFIX/gateway/control/server.py" ]; then
-  sudo_or_die_prefix chmod +x "$PREFIX/gateway/control/server.py" || true
+  run_install_cmd chmod +x "$PREFIX/gateway/control/server.py" || true
 fi
-sudo_or_die_prefix rm -rf \
+run_install_cmd rm -rf \
   "$PREFIX/gateway/__pycache__" \
   "$PREFIX/gateway/dakota_gateway/__pycache__" \
   "$PREFIX/gateway/control/__pycache__" \
@@ -237,12 +258,23 @@ find "$PREFIX" \
 
 # Wrapper replay2
 WRAPPER="$PREFIX/bin/replay2"
-sudo_or_die_prefix sh -c '
+run_install_cmd sh -c '
 cat >"$1" <<'"'"'EOF'"'"'
 #!/bin/sh
 set -eu
 
-PREFIX_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SELF_PATH="$0"
+if command -v readlink >/dev/null 2>&1; then
+  while [ -L "$SELF_PATH" ]; do
+    LINK_TARGET=$(readlink "$SELF_PATH") || break
+    case "$LINK_TARGET" in
+      /*) SELF_PATH="$LINK_TARGET" ;;
+      *) SELF_PATH=$(dirname -- "$SELF_PATH")/"$LINK_TARGET" ;;
+    esac
+  done
+fi
+
+PREFIX_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF_PATH")/.." && pwd)
 
 if command -v expect >/dev/null 2>&1; then
   exec expect "$PREFIX_DIR/bin/replay2.exp" "$@"
@@ -254,11 +286,11 @@ printf "%s\n" "Erro: expect não encontrado. Instale o pacote Expect e/ou ajuste
 exit 127
 EOF
 ' sh "$WRAPPER"
-sudo_or_die_prefix chmod +x "$WRAPPER"
+run_install_cmd chmod +x "$WRAPPER"
 
 # Wrapper dakota-gateway (opcional)
 GW_WRAPPER="$PREFIX/bin/dakota-gateway"
-sudo_or_die_prefix sh -c '
+run_install_cmd sh -c '
 cat >"$1" <<'"'"'EOF'"'"'
 #!/bin/sh
 set -eu
@@ -279,7 +311,7 @@ printf "%s\n" "Erro: python3 não encontrado. Instale Python 3 para usar gateway
 exit 127
 EOF
 ' sh "$GW_WRAPPER"
-sudo_or_die_prefix chmod +x "$GW_WRAPPER"
+run_install_cmd chmod +x "$GW_WRAPPER"
 
 # Symlink opcional
 if [ -z "$LINK_DIR" ] && is_root && [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then

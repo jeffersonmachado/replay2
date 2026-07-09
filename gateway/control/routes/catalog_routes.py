@@ -7,20 +7,13 @@ from urllib.parse import parse_qs
 from dakota_gateway.compliance import normalize_direct_ssh_policy_payload
 from dakota_gateway.replay_control import query_one
 from dakota_gateway.state_db import exec1, now_ms
+from control.routes.route_helpers import write_json
 from control.services.environment_service import (
     list_connection_profiles,
     list_target_environments,
     normalize_connection_profile_payload,
     normalize_target_environment_payload,
 )
-
-
-def _write_json(handler, status_code: int, payload: dict) -> None:
-    handler.send_response(status_code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.end_headers()
-    handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
 
 def handle_catalog_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
@@ -39,7 +32,7 @@ def handle_catalog_get_route(handler, parsed_path) -> bool:
             payload = {"targets": targets}
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     if path.startswith("/api/targets/") and path.count("/") == 3:
@@ -56,7 +49,7 @@ def handle_catalog_get_route(handler, parsed_path) -> bool:
             handler.send_response(404)
             handler.end_headers()
             return True
-        _write_json(handler, 200, {"target": payload})
+        write_json(handler, 200, {"target": payload})
         return True
 
     if path == "/api/connection-profiles":
@@ -68,11 +61,10 @@ def handle_catalog_get_route(handler, parsed_path) -> bool:
             payload = {"connection_profiles": list_connection_profiles(con)}
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, payload)
+        write_json(handler, 200, payload)
         return True
 
     return False
-
 
 def handle_catalog_post_route(handler, parsed_path, body: dict) -> bool:
     path = parsed_path.path
@@ -113,11 +105,11 @@ def handle_catalog_post_route(handler, parsed_path, body: dict) -> bool:
                 ),
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
-            _write_json(handler, 400, {"ok": False, "error": str(exc)})
+            write_json(handler, 400, {"ok": False, "error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"ok": True, "id": target_id})
+        write_json(handler, 200, {"ok": True, "id": target_id})
         return True
 
     if path.startswith("/api/targets/") and path.endswith("/policy"):
@@ -158,7 +150,7 @@ def handle_catalog_post_route(handler, parsed_path, body: dict) -> bool:
             payload = next((item for item in list_target_environments(con) if int(item["id"]) == target_id), None)
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"ok": True, "target": payload})
+        write_json(handler, 200, {"ok": True, "target": payload})
         return True
 
     if path == "/api/connection-profiles":
@@ -191,11 +183,63 @@ def handle_catalog_post_route(handler, parsed_path, body: dict) -> bool:
                 ),
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
-            _write_json(handler, 400, {"ok": False, "error": str(exc)})
+            write_json(handler, 400, {"ok": False, "error": str(exc)})
             return True
         finally:
             handler._db_release(con)
-        _write_json(handler, 200, {"ok": True, "id": profile_id})
+        write_json(handler, 200, {"ok": True, "id": profile_id})
+        return True
+
+    return False
+
+
+def handle_catalog_delete_route(handler, parsed_path) -> bool:
+    """DELETE /api/targets/{id} e DELETE /api/connection-profiles/{id} (admin only)."""
+    path = parsed_path.path
+    user = handler._require(roles={"admin"})
+    if not user:
+        return True
+
+    if path.startswith("/api/targets/") and path.count("/") == 3:
+        target_id = int(path.split("/")[3])
+        con = handler._db()
+        try:
+            ref = con.execute(
+                "SELECT COUNT(*) as cnt FROM replay_runs WHERE target_env_id=?", (target_id,)
+            ).fetchone()
+            if ref and ref["cnt"] > 0:
+                write_json(handler, 409, {"ok": False, "error": f"target referenciado por {ref['cnt']} run(s); remova as runs primeiro"})
+                return True
+            row = con.execute("SELECT id FROM target_environments WHERE id=?", (target_id,)).fetchone()
+            if not row:
+                handler.send_response(404)
+                handler.end_headers()
+                return True
+            con.execute("DELETE FROM target_environments WHERE id=?", (target_id,))
+            write_json(handler, 200, {"ok": True, "deleted_target_id": target_id})
+        finally:
+            handler._db_release(con)
+        return True
+
+    if path.startswith("/api/connection-profiles/") and path.count("/") == 3:
+        profile_id = int(path.split("/")[3])
+        con = handler._db()
+        try:
+            ref = con.execute(
+                "SELECT COUNT(*) as cnt FROM target_environments WHERE connection_profile_id=?", (profile_id,)
+            ).fetchone()
+            if ref and ref["cnt"] > 0:
+                write_json(handler, 409, {"ok": False, "error": f"profile referenciado por {ref['cnt']} target(s); remova os targets primeiro"})
+                return True
+            row = con.execute("SELECT id FROM connection_profiles WHERE id=?", (profile_id,)).fetchone()
+            if not row:
+                handler.send_response(404)
+                handler.end_headers()
+                return True
+            con.execute("DELETE FROM connection_profiles WHERE id=?", (profile_id,))
+            write_json(handler, 200, {"ok": True, "deleted_profile_id": profile_id})
+        finally:
+            handler._db_release(con)
         return True
 
     return False

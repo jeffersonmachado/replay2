@@ -77,12 +77,25 @@ class TerminalGateway:
 
         self.session_id = str(uuid.uuid4())
         self.actor = os.environ.get("SUDO_USER") or os.environ.get("LOGNAME") or os.environ.get("USER") or "unknown"
+        self.logname = os.environ.get("LOGNAME") or os.environ.get("USER") or "unknown"
+        
+        # Extract uid and gid from current process
+        self.uid = os.getuid() if hasattr(os, 'getuid') else None
+        self.gid = os.getgid() if hasattr(os, 'getgid') else None
+        
         self.seq_session = 0
 
     def _ts_ms(self) -> int:
         return int(time.time() * 1000)
 
     def _append(self, ev: AuditEvent) -> None:
+        # Ensure uid, gid, and logname are set if not already provided
+        if ev.uid is None:
+            ev.uid = self.uid
+        if ev.gid is None:
+            ev.gid = self.gid
+        if ev.logname is None:
+            ev.logname = self.logname
         self.writer.append(ev)
 
     def _setup_stdin_raw(self):

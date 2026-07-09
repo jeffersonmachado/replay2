@@ -1,0 +1,112 @@
+<!-- assess.html — AI Assessment -->
+<div class="r2ctl-section">
+  <h2 class="r2ctl-section-title">AI Assessment</h2>
+  <p class="r2ctl-section-copy text-sm">Analise inteligente: garbage collector, gargalos, riscos e recomendacoes.</p>
+</div>
+
+<div class="r2ctl-card mb-4">
+  <div class="p-4">
+    <label class="block text-sm text-stone-300 mb-1">Resultado do Pipeline (JSON — opcional)</label>
+    <textarea id="assess_pipeline" rows="6" class="r2ctl-input w-full mb-3" placeholder='Cole o JSON retornado pelo endpoint /api/synthetic/pipeline ou deixe em branco para teste'></textarea>
+
+    <div class="mb-3">
+      <label class="block text-sm text-stone-300 mb-1">Diretorio do codigo-fonte (opcional)</label>
+      <input id="assess_source_dir" type="text" placeholder="/caminho/para/codigo/fonte" class="r2ctl-input w-full">
+    </div>
+
+    <button id="assess_run_btn" class="r2ctl-btn-brand" onclick="runAssess()">
+      ▶ Executar Assessment
+    </button>
+    <span id="assess_status" class="ml-3 text-sm text-stone-400 hidden"></span>
+  </div>
+</div>
+
+<div id="assess_result" class="hidden">
+  <div class="r2ctl-card mb-3 p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-sm font-medium text-stone-200">Health Score</h3>
+      <span id="assess_score" class="text-2xl font-bold"></span>
+    </div>
+    <div id="assess_summary" class="text-sm text-stone-300"></div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="r2ctl-card"><div class="p-4">
+      <h3 class="text-sm font-medium text-stone-200 mb-2">🗑 Garbage</h3>
+      <div id="assess_garbage" class="text-sm text-stone-300"></div>
+    </div></div>
+    <div class="r2ctl-card"><div class="p-4">
+      <h3 class="text-sm font-medium text-stone-200 mb-2">⚠ Riscos</h3>
+      <div id="assess_risks" class="text-sm text-stone-300"></div>
+    </div></div>
+    <div class="r2ctl-card"><div class="p-4">
+      <h3 class="text-sm font-medium text-stone-200 mb-2">🐌 Gargalos</h3>
+      <div id="assess_bottlenecks" class="text-sm text-stone-300"></div>
+    </div></div>
+    <div class="r2ctl-card"><div class="p-4">
+      <h3 class="text-sm font-medium text-stone-200 mb-2">💡 Recomendacoes</h3>
+      <div id="assess_recs" class="text-sm text-stone-300"></div>
+    </div></div>
+  </div>
+</div>
+
+<script>
+async function runAssess() {
+  const btn = document.getElementById('assess_run_btn');
+  const status = document.getElementById('assess_status');
+  const result = document.getElementById('assess_result');
+  btn.disabled = true; status.classList.remove('hidden'); status.textContent = 'Analisando...'; result.classList.add('hidden');
+
+  let pipelineResult = {};
+  const raw = document.getElementById('assess_pipeline').value.trim();
+  if (raw) { try { pipelineResult = JSON.parse(raw); } catch(e) { status.textContent = 'JSON invalido'; btn.disabled = false; return; } }
+
+  try {
+    const resp = await fetch('/api/synthetic/assess', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        pipeline_result: pipelineResult,
+        source_dir: document.getElementById('assess_source_dir').value,
+      }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      const score = data.health_score || 0;
+      const scoreEl = document.getElementById('assess_score');
+      scoreEl.textContent = score + '/100';
+      scoreEl.className = 'text-2xl font-bold ' + (score>=80?'text-green-300':score>=60?'text-amber-300':'text-red-300');
+
+      document.getElementById('assess_summary').textContent = data.summary || '';
+
+      document.getElementById('assess_garbage').innerHTML = (data.garbage||[]).slice(0,10).map(g =>
+        `<div class="mb-1"><span class="text-${g.severity==='high'?'red':'amber'}-300">${g.type}</span> ${g.name}: ${g.reason}</div>`
+      ).join('') || 'Nenhum item encontrado';
+
+      document.getElementById('assess_risks').innerHTML = (data.risks||[]).slice(0,10).map(r =>
+        `<div class="mb-2 p-2 border-l-2 ${r.severity==='high'?'border-red-500':'border-amber-500'}">
+          <span class="text-${r.severity==='high'?'red':'amber'}-300 text-xs">${r.severity.toUpperCase()}</span>
+          <div class="text-xs text-stone-400">${(r.factors||[]).join('; ')}</div>
+          <div class="text-xs text-stone-300 mt-1">→ ${r.recommendation}</div>
+        </div>`
+      ).join('') || 'Nenhum risco detectado';
+
+      document.getElementById('assess_bottlenecks').innerHTML = (data.bottlenecks||[]).map(b =>
+        `<div class="mb-1 text-xs"><span class="text-amber-300">${b.type}</span> ${b.entity}: ${b.metric}=${b.value} → ${b.recommendation}</div>`
+      ).join('') || 'Nenhum gargalo';
+
+      document.getElementById('assess_recs').innerHTML = (data.recommendations||[]).map(r =>
+        `<div class="mb-2 p-2 border border-stone-700/40 rounded">
+          <span class="text-xs px-1 rounded ${r.priority==='high'?'bg-red-900/40 text-red-300':'bg-amber-900/40 text-amber-300'}">${r.priority}</span>
+          <span class="text-xs text-stone-400 ml-1">${r.category}</span>
+          <div class="text-sm text-stone-200">${r.title}</div>
+          <div class="text-xs text-stone-400">Esforco: ${r.effort} | Impacto: ${r.impact}</div>
+        </div>`
+      ).join('') || 'Nenhuma recomendacao';
+
+      status.textContent = 'Concluido'; result.classList.remove('hidden');
+    } else { status.textContent = 'Erro: ' + (data.error||'desconhecido'); }
+  } catch(e) { status.textContent = 'Erro: ' + e.message; }
+  btn.disabled = false;
+}
+</script>

@@ -74,11 +74,6 @@ def detect_runtime_environment() -> dict:
             or os.environ.get("INSTANCE_ID")
             or ""
         ),
-        "tenant": (
-            os.environ.get("DAKOTA_TENANT")
-            or os.environ.get("TENANT")
-            or ""
-        ),
     }
 
 
@@ -108,14 +103,12 @@ def get_gateway_state(con) -> dict:
         env = {}
     # Runtime env always overrides stored env with fresh values
     state["environment"] = detect_runtime_environment()
-    # Preserve stored env_name/instance_id/tenant if set
+    # Preserve stored env_name/instance_id if set
     stored_env = env or {}
     if stored_env.get("env_name"):
         state["environment"]["env_name"] = stored_env["env_name"]
     if stored_env.get("instance_id"):
         state["environment"]["instance_id"] = stored_env["instance_id"]
-    if stored_env.get("tenant"):
-        state["environment"]["tenant"] = stored_env["tenant"]
     state["active"] = bool(state.get("active"))
     state["policy"] = build_operational_policy(logical_active=state["active"])
     state["capture_enabled"] = bool(state["policy"].get("capture_available"))

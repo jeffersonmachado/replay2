@@ -38,7 +38,13 @@ mkdir -p "$STAGE_DIR"
 info "Staging em: $STAGE_DIR"
 
 cp -R "$ROOT_DIR/bin" "$ROOT_DIR/lib" "$ROOT_DIR/screens" "$STAGE_DIR/"
-if [ -d "$ROOT_DIR/gateway" ]; then cp -R "$ROOT_DIR/gateway" "$STAGE_DIR/"; fi
+if [ -d "$ROOT_DIR/gateway" ]; then
+  cp -R "$ROOT_DIR/gateway" "$STAGE_DIR/"
+  # Remove itens que NÃO devem ir para o artefato
+  rm -rf "$STAGE_DIR/gateway/.venv" \
+    "$STAGE_DIR/gateway/.pytest_cache" \
+    "$STAGE_DIR/gateway/state/captures" 2>/dev/null || true
+fi
 if [ -d "$ROOT_DIR/tests" ]; then cp -R "$ROOT_DIR/tests" "$STAGE_DIR/"; fi
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
@@ -52,28 +58,52 @@ chmod +x "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/bin/main.
 chmod +x "$STAGE_DIR/bin/replay2.exp" 2>/dev/null || true
 chmod +x "$STAGE_DIR/gateway/dakota-gateway" "$STAGE_DIR/gateway/control/server.py" 2>/dev/null || true
 
-# Remove caches Python e arquivos de estado do stage (não são artefatos oficiais)
+# Remove caches Python, virtualenvs e artefatos de teste do stage
+find "$STAGE_DIR" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 rm -rf \
-  "$STAGE_DIR/gateway/__pycache__" \
-  "$STAGE_DIR/gateway/dakota_gateway/__pycache__" \
-  "$STAGE_DIR/gateway/control/__pycache__" \
-  "$STAGE_DIR/gateway/tests/__pycache__" \
-  "$STAGE_DIR/tests/__pycache__" 2>/dev/null || true
+  "$STAGE_DIR/gateway/.venv" \
+  "$STAGE_DIR/gateway/.pytest_cache" \
+  "$STAGE_DIR/.pytest_cache" \
+  "$STAGE_DIR/.mypy_cache" \
+  "$STAGE_DIR/.ruff_cache" \
+  "$STAGE_DIR/htmlcov" \
+  "$STAGE_DIR/.coverage" 2>/dev/null || true
 
-# Remove arquivos de banco de dados e estado local
+# Remove arquivos sensíveis e de estado local que NUNCA devem ir no artefato
 find "$STAGE_DIR" \
-  -name "*.db" \
+  \( -name "*.db" \
   -o -name "*.db-wal" \
   -o -name "*.db-shm" \
+  -o -name "*.sqlite" \
+  -o -name "*.sqlite3" \
   -o -name "*.pyc" \
-  2>/dev/null | xargs rm -f || true
+  -o -name "*.pyo" \
+  -o -name ".env" \
+  -o -name ".env.*" \
+  -o -name "*.pem" \
+  -o -name "*.key" \
+  -o -name "*.crt" \
+  -o -name "*.pfx" \
+  -o -name "*.ppk" \
+  -o -name "id_rsa*" \
+  -o -name "id_ed25519*" \
+  -o -name "id_ecdsa*" \
+  -o -name ".token.env" \
+  -o -name "*.tmp" \
+  -o -name "*.swp" \
+  -o -name "*.swo" \) \
+  -delete 2>/dev/null || true
 
-# Remove diretório gateway/state se existir vazio, ou deixa estrutura limpa
-if [ -d "$STAGE_DIR/gateway/state" ]; then
-  find "$STAGE_DIR/gateway/state" -maxdepth 1 -type f \
-    \( -name "*.db" -o -name "*.db-*" \) \
-    -delete 2>/dev/null || true
-fi
+# Remove diretórios que NUNCA devem ir no artefato
+rm -rf \
+  "$STAGE_DIR/gateway/state/captures" \
+  "$STAGE_DIR/gateway/state" \
+  "$STAGE_DIR/node_modules" \
+  "$STAGE_DIR/.git" \
+  "$STAGE_DIR/dist" \
+  "$STAGE_DIR/log" \
+  "$STAGE_DIR/logs" 2>/dev/null || true
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$DIST_DIR/${APP_NAME}-${VERSION}-${TIMESTAMP}.tar.gz"

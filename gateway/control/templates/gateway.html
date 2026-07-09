@@ -148,12 +148,32 @@
         <h2 class="r2ctl-section-title text-lg font-semibold">Sessões</h2>
         <p class="r2ctl-section-copy text-sm">Sessões, eventos e compliance por sessão em uma área separada.</p>
       </div>
-      <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        <input id="gw_session_actor" placeholder="ator" class="r2ctl-input" />
-        <input id="gw_session_id_filter" placeholder="session_id" class="r2ctl-input" />
-        <input id="gw_session_event_type" placeholder="tipo de evento" class="r2ctl-input" />
+      <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+        <input id="gw_session_actor" list="gw_session_actor_list" placeholder="ator" class="r2ctl-input" />
+        <input id="gw_session_logname" list="gw_session_logname_list" placeholder="logname" class="r2ctl-input" />
+        <input id="gw_session_id_filter" list="gw_session_id_list" placeholder="session_id" class="r2ctl-input" />
+        <select id="gw_session_event_type" class="r2ctl-input" title="tipo de evento">
+          <option value="">todos os tipos</option>
+        </select>
+        <input id="gw_session_uid" list="gw_session_uid_list" placeholder="uid" inputmode="numeric" class="r2ctl-input hidden" />
+        <select id="gw_session_uid_select" class="r2ctl-input" title="uid">
+          <option value="">todos os uid</option>
+        </select>
+        <input id="gw_session_gid" list="gw_session_gid_list" placeholder="gid" inputmode="numeric" class="r2ctl-input hidden" />
+        <select id="gw_session_gid_select" class="r2ctl-input" title="gid">
+          <option value="">todos os gid</option>
+        </select>
+      </div>
+      <div class="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <input id="gw_session_ts_from" placeholder="data/hora inicial (ms)" type="number" class="r2ctl-input" />
+        <input id="gw_session_ts_to" placeholder="data/hora final (ms)" type="number" class="r2ctl-input" />
         <input id="gw_session_q" placeholder="busca livre" class="r2ctl-input" />
       </div>
+      <datalist id="gw_session_actor_list"></datalist>
+      <datalist id="gw_session_logname_list"></datalist>
+      <datalist id="gw_session_id_list"></datalist>
+      <datalist id="gw_session_uid_list"></datalist>
+      <datalist id="gw_session_gid_list"></datalist>
     </div>
     <div class="mb-3 flex items-center justify-between gap-3">
       <span id="gw_sessions_status" class="text-xs text-stone-400">aguardando log_dir</span>

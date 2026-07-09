@@ -148,12 +148,133 @@ Dakota Replay2 e a base operacional para capturar a realidade do Recital 8, repr
 - relatorio transversal de tendencia por multiplas runs via `/api/reports/runs/trend`, destacando ambientes com mais regressao e fluxos mais sensiveis ao longo do tempo.
 - esse relatorio transversal agora aceita recorte por `environment`, `created_from_ms`, `created_to_ms` e `run_limit`, tanto na API quanto na `/observability`.
 - a `/observability` agora permite salvar esses recortes como cenarios analiticos nomeados, reutilizando investigacoes como `HML ultima semana` sem remontar filtros manualmente.
-- esses cenarios agora aceitam `visibility` (`private`/`shared`) e `tags`, permitindo compartilhamento controlado por equipe e organizacao por area operacional.
-- a lista de cenarios agora pode ser filtrada por `visibility` e `tag`, e cada usuario pode marcar favoritos para priorizar recortes recorrentes.
-- o projeto agora tambem possui base para um catalogo formal de cenarios operacionais executaveis (`replay`/`stress`), com API para instanciar uma run diretamente a partir do cenario salvo.
-- o control plane principal agora expoe esse catalogo operacional na UI, permitindo salvar a configuracao atual como cenario e criar uma run diretamente a partir dele.
-- esse catalogo na UI agora permite reaplicar/editar configuracoes rapidamente e filtrar cenarios por tipo e ambiente para uso diario do time.
-- o editor do catalogo operacional agora suporta descricao/observacoes, e a listagem separa visualmente cenarios `replay` e `stress`.
+
+### P2-A — Synthetic Knowledge Base (v0.2.0)
+
+Motor inteligente de homologacao que analisa o codigo-fonte do sistema alvo,
+descobre entidades, telas, campos e jornadas, e gera dados ficticios validos
+com rastreabilidade auditavel.
+
+**Discovery:**
+
+- `source_analyzer/parser.py` — orquestrador: SQL, ISAM, DBF, Recital, telas, validacoes
+- `source_analyzer/screen_extractor.py` — TITLE, `@ SAY GET inline`, `GET m.campo`, PICTURE/VALID/WHEN, menus numerados
+- `source_analyzer/screen_entity_linker.py` — associa telas a entidades com confianca, evidencias e aliases (`cadcli→CLIENTES`)
+- `source_analyzer/program_catalog.py` — catalogo de programas por modulo, entidade e operacao CRUD
+- `source_analyzer/relationship_mapper.py` — FK por alias (`CLIENTE_ID→CLIENTES`, `CODCLI→CLIENTES`), normalizacao singular/plural
+
+**Synthetic:**
+
+- `synthetic/business_dataset_planner.py` — grafo de dependencia, topological sort, raizes/folhas/ciclos
+- `synthetic/data_synthesizer.py` — `generate_ordered()` com propagacao de FK entre entidades
+- `synthetic/capture_knowledge_integrator.py` — captura real → template semantico → dados ficticios validos (hash estavel)
+- `synthetic/journey_mix.py` — cenarios pre-definidos: `lojas_basico`, `cadastro_intensivo`, `consulta_leve`
+- `synthetic/synthetic_evidence_report.py` — relatorio auditavel JSON com entidades, campos, amostras, warnings
+
+**API e CLI:**
+
+- `GET /api/knowledge-base?source=/caminho/fonte` — discovery report completo (admin auth, `DAKOTA_SOURCE_ROOT` em producao)
+- `dakota-gateway synthetic knowledge-base --source-dir ...` — pipeline P2-A via CLI
+- `dakota-gateway env-profiles lab|production|homologation` — perfis pre-definidos para target environments
+
+**Seguranca (P0):**
+
+- `encoding system utf-8` nos entrypoints Tcl antes de qualquer `source`
+- Cookies com `HttpOnly`, `SameSite=Lax`, `Secure` (producao)
+- `/metrics` com autenticacao em producao
+- Chave HMAC sem ACL para usuario capturado
+- `DAKOTA_ENV=lab|production|homologation` — modo de operacao
+- Senha admin bootstrap removida; `DAKOTA_ADMIN` obrigatorio em producao
+
+**Operacao:**
+
+- `make test-all` — suite completa (P2 + gateway + Tcl)
+- `make smoke-test` — validacao end-to-end (servidor, health, metrics, build)
+- `make check` — health check rapido
+- `scripts/smoke-test.sh` — 9 checks automatizados
+
+## Testes
+
+### Rapidos (desenvolvimento / CI curto)
+
+```bash
+sh scripts/test-fast.sh
+```
+
+### P2-A — Synthetic Knowledge Base
+
+```bash
+sh scripts/test-p2.sh
+```
+
+### Tcl
+
+```bash
+tclsh tests/all.tcl
+```
+
+### Suite completa estrita
+
+```bash
+sh scripts/test-all.sh
+```
+
+### Suite best-effort (testes opcionais/lentos)
+
+```bash
+sh scripts/test-best-effort.sh
+```
+
+### Por marker (pytest)
+
+```bash
+# Rapido (sem slow, selenium, external)
+PYTHONPATH=gateway python3 -m pytest -q -m "not slow and not selenium and not external"
+
+# Apenas P2
+PYTHONPATH=gateway python3 -m pytest -q -m p2
+
+# Apenas API/control
+PYTHONPATH=gateway python3 -m pytest -q tests/test_control_knowledge_base_api.py
+```
+
+### Pipeline P2-A manual
+
+```bash
+PYTHONPATH=gateway python3 -m dakota_gateway synthetic knowledge-base \
+  --source-dir /tmp/replay2_sample \
+  --captures-dir /tmp/replay2_captures \
+  --samples 0
+```
+
+### Capture-to-Synthetic Journey
+
+Transforma captura real em jornadas sinteticas. Nao executa replay.
+
+```bash
+# Gerar template a partir de captura
+dakota-gateway synthetic journey template \
+  --capture captures/cadastro_cliente.jsonl \
+  --source-dir fontes/lojas \
+  --name cadastro_cliente_loja \
+  --out templates/cadastro_cliente_loja.template.json
+
+# Sintetizar jornadas a partir de template
+dakota-gateway synthetic journey synthesize \
+  --template templates/cadastro_cliente_loja.template.json \
+  --samples 1000 \
+  --out synthetic_runs/cadastro_cliente_loja_1000
+
+# Atalho: captura direta → sintese
+dakota-gateway synthetic journey synthesize \
+  --capture captures/cadastro_cliente.jsonl \
+  --source-dir fontes/lojas \
+  --name cadastro_cliente_loja \
+  --samples 1000 \
+  --out synthetic_runs/cadastro_cliente_loja_1000
+```
+
+Saida: `template.json`, `dataset.jsonl`, `sessions/session_*.jsonl`, `report.json`.
 - cada cenario operacional agora mostra historico resumido de uso, ultimo executor, volume total de runs e taxa observada de falha.
 - o catalogo operacional agora tambem aceita recorte por executor e janela temporal, alem de ordenacao por uso, instabilidade, uso recente ou nome.
 - o catalogo operacional agora tambem suporta favoritos por usuario, labels por squad/area/tags e score composto de criticidade para priorizacao operacional.

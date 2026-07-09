@@ -4,6 +4,12 @@
 # CLI com subcomandos para controle/diagnóstico da engine.
 #
 
+########################################################################
+## Configuração inicial — CRÍTICO: encoding antes de qualquer source
+########################################################################
+
+encoding system utf-8
+
 if {[catch {package require Expect} err]} {
     puts stderr "Erro: pacote Expect não encontrado: $err"
     exit 1

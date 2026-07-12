@@ -71,12 +71,16 @@
     <div class="mb-4 flex items-center justify-between gap-3">
       <h3 class="text-lg font-semibold">🎬 Reprodução em Tempo Real</h3>
       <div class="flex gap-2">
+        <button id="playback-first-btn" class="r2ctl-btn-soft text-xs" title="Primeiro evento">⏮</button>
+        <button id="playback-prev-btn" class="r2ctl-btn-soft text-xs" title="Evento anterior">◀</button>
         <button id="playback-pause-btn" class="r2ctl-btn-soft text-xs">⏸ Pausar</button>
+        <button id="playback-next-btn" class="r2ctl-btn-soft text-xs" title="Próximo evento">▶</button>
+        <button id="playback-last-btn" class="r2ctl-btn-soft text-xs" title="Último evento">⏭</button>
         <button id="playback-stop-btn" class="r2ctl-btn-soft text-xs">⏹ Parar</button>
       </div>
     </div>
     
-    <div class="mb-3 grid gap-3 sm:grid-cols-3">
+    <div class="mb-3 grid gap-3 sm:grid-cols-4">
       <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
         <label for="playback-speed" class="text-xs text-stone-400">Velocidade</label>
         <input id="playback-speed" type="range" min="0.25" max="4" step="0.25" value="1" class="w-full mt-2" />
@@ -92,16 +96,25 @@
         <p class="text-xs text-stone-400">Evento</p>
         <p id="playback-event-counter" class="text-sm font-semibold text-stone-200 mt-2">0 / 0</p>
       </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
+        <p class="text-xs text-stone-400">Ir para seq</p>
+        <div class="flex gap-1 mt-1">
+          <input id="playback-seq-goto" type="number" placeholder="seq_global" class="r2ctl-input w-20 text-xs" />
+          <button id="playback-seq-go-btn" class="r2ctl-btn-soft text-xs">Ir</button>
+        </div>
+        <p id="playback-seq-current" class="text-xs text-stone-400 mt-1">seq: -</p>
+      </div>
     </div>
 
     <!-- Terminal para playback -->
     <div class="rounded-2xl bg-black/50 p-4 font-mono text-xs leading-relaxed border border-stone-700/40">
-      <div id="playback-terminal" class="min-h-[240px] max-h-[480px] overflow-auto">
-        <pre id="playback-output" class="text-gray-100 whitespace-pre-wrap"></pre>
+      <div id="playback-terminal" class="min-h-[320px] max-h-[600px] overflow-auto">
+        <pre id="playback-output" class="text-gray-100 whitespace-pre"></pre>
       </div>
     </div>
 
-    <p class="text-xs text-stone-400 mt-3">Dica: Use a barra de velocidade para acelerar/desacelerar a reprodução, ou use os botões de pausa/parar.</p>
+    <p id="playback-geometry-info" class="text-xs text-stone-500 mt-2"></p>
+    <p class="text-xs text-stone-400 mt-1">Dica: Use a barra de velocidade para acelerar/desacelerar a reprodução, ou use os botões de pausa/parar.</p>
   </section>
 
   <!-- Timeline de eventos -->
@@ -130,12 +143,22 @@
 }
 
 #playback-terminal {
-  /* Terminal styling */
-  font-family: "IBM Plex Mono", monospace;
-  color: #10b981;
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+  font-size: 14px;
+  line-height: 14px;
+  color: #cbd5e1;
   background-color: rgba(0, 0, 0, 0.8);
   border-radius: 0.5rem;
   padding: 1rem;
+  letter-spacing: 0;
+  word-spacing: 0;
+  font-variant-ligatures: none;
+  font-kerning: none;
+}
+
+#playback-output .rv {
+  background-color: #cbd5e1;
+  color: #000;
 }
 
 .event-item {
@@ -174,13 +197,21 @@
 
 .event-content {
   overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.75rem;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+  font-size: 14px;
+  line-height: 14px;
   color: #cbd5e1;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
+  letter-spacing: 0;
+  word-spacing: 0;
+  font-variant-ligatures: none;
+  font-kerning: none;
+  margin: 0;
+  padding: 0;
 }
 
 .det-details-toggle {
@@ -234,6 +265,7 @@ input[type="range"] {
   const sessionId = params.get('session_id');
 
   let replayData = null;
+  let termGeometry = { rows: 25, cols: 80, source: 'legacy_fallback' };
   let playbackState = { isRunning: false, isPaused: false, currentEventIndex: 0, speed: 1 };
   let playbackTimeout = null;
   let operationalReplayReady = false;
@@ -241,19 +273,35 @@ input[type="range"] {
   let eventsViewMode = 'grouped';
   const timelinePrefsKey = 'dakota_capture_replay_timeline_prefs_v1';
   const playbackPrefsKey = 'dakota_capture_replay_playback_prefs_v1';
-  const DEC_SPECIAL_GRAPHICS_MAP = {
-    l: '┌',
-    k: '┐',
-    m: '└',
-    j: '┘',
-    q: '─',
-    x: '│',
-    t: '├',
-    u: '┤',
-    v: '┴',
-    w: '┬',
-    n: '┼',
-  };
+
+  // Terminal functions imported via module — available as window.__vt
+  let createVirtualTerminal, feed, renderPlainText, renderHtml, renderCompactText;
+  let eventTimestamp, calcDelay, isBlank;
+  // Timeline core — imported dynamically
+  let _formatEventContent;
+  let _renderEventsCards;
+
+  function makeTerm() { return createVirtualTerminal(termGeometry.rows, termGeometry.cols); }
+
+  function initVT(mod) {
+    createVirtualTerminal = mod.createVirtualTerminal;
+    feed = mod.feed;
+    renderPlainText = mod.renderPlainText;
+    renderHtml = mod.renderHtml;
+    renderCompactText = mod.renderCompactText;
+    eventTimestamp = mod.eventTimestamp;
+    calcDelay = mod.calcDelay;
+    isBlank = mod.isBlank;
+  }
+  window._initVT = initVT;
+
+  // Carrega módulos de timeline compartilhados
+  import('/assets/js/components/timeline_core.js').then((mod) => {
+    _formatEventContent = mod.formatEventContent;
+  });
+  import('/assets/js/components/timeline_table.js').then((mod) => {
+    _renderEventsCards = mod.renderEventsCards;
+  });
 
   // Carregar dados de replay
   async function loadReplayData() {
@@ -269,6 +317,13 @@ input[type="range"] {
         throw new Error(`HTTP ${response.status}`);
       }
       replayData = await response.json();
+      if (replayData?.geometry) {
+        termGeometry = {
+          rows: Number(replayData.geometry.rows) || 25,
+          cols: Number(replayData.geometry.cols) || 80,
+          source: replayData.geometry.geometry_source || 'legacy_fallback',
+        };
+      }
       renderSessionInfo();
       renderEventsList(eventsFilterMode);
     } catch (err) {
@@ -332,12 +387,10 @@ input[type="range"] {
       if (filter === 'all') return true;
       if (filter === 'det') return ev.type === 'deterministic_input';
       return ev.direction === filter;
-    }).filter((ev) => {
-      if (ev.type === 'deterministic_input') return true;
-      return Boolean(formatEventContent(ev).trim());
     });
+    // Não filtrar por conteúdo — eventos de 1 byte são válidos
     const events = eventsViewMode === 'detailed'
-      ? filtered.map((ev) => ({ ...ev, summary: formatEventContent(ev), data_decoded: formatEventContent(ev) }))
+      ? filtered.map((ev) => ({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' }))
       : buildTimelineItems(filtered);
     const container = document.getElementById('events-list');
 
@@ -350,38 +403,37 @@ input[type="range"] {
     }
 
     const decoratedEvents = decorateDeterministicRepeats(events);
-    container.innerHTML = decoratedEvents.map((ev) => `
-      <div class="event-item">
-        <div class="event-direction ${eventDirectionClass(ev)}">
-          ${ev.type === 'deterministic_input' ? '🎯 DET' : (ev.direction === 'in' ? '📥 IN' : '📤 OUT')}
-        </div>
-        <div class="space-y-2">
-          <div class="flex items-center justify-between gap-3 text-xs text-stone-400">
-            <div>
-              <strong>${renderEventSeqLabel(ev)}</strong> | ${renderEventMetaLabel(ev)} | ${new Date(ev.ts_ms).toLocaleTimeString()}
-            </div>
-            ${ev.type === 'deterministic_input' ? `
-              <button type="button" class="det-details-toggle" data-det-toggle="${escapeHtml(String(ev.seq_global || ''))}">
-                Detalhes
-              </button>
-            ` : ''}
-          </div>
-          <div class="event-content">${escapeHtml(formatEventContent(ev))}</div>
-          ${ev.type === 'deterministic_input' ? `
-            <div class="hidden text-xs text-stone-300 whitespace-pre-wrap" data-det-details="${escapeHtml(String(ev.seq_global || ''))}">
-screen=${escapeHtml(ev.screen_sig || '-')}
-source=${escapeHtml(ev.screen_source || '-')}
-kind=${escapeHtml(ev.key_kind || '-')}
-age_ms=${escapeHtml(ev.screen_snapshot_age_ms ?? '-')}
-flags=${ev.is_probable_paste ? 'paste ' : ''}${ev.is_probable_command ? 'command ' : ''}${ev.contains_escape ? 'escape ' : ''}${ev.contains_newline ? 'newline' : ''}
-${ev._repeatDetScreen
-  ? escapeHtml(`mesma tela do DET anterior (${ev._repeatDetIndex}x em sequência)`)
-  : escapeHtml(formatScreenSample(ev.screen_sample || ''))}
-            </div>
-          ` : ''}
-        </div>
-      </div>
-    `).join('');
+    // Usa módulo compartilhado timeline_table.js para renderizar cards
+    if (typeof _renderEventsCards === "function") {
+      _renderEventsCards(decoratedEvents, "#events-list");
+      return;
+    }
+    // Fallback inline (enquanto o módulo não carrega)
+    container.innerHTML = decoratedEvents.map((ev) => {
+      const isSnapshot = ev?.content_kind === 'terminal_snapshot';
+      const displayContent = isSnapshot ? (ev.summary || ev.data_decoded || '') : formatEventContentLocal(ev);
+      const displayTs = ev.timestamp_ms || ev.ts_ms;
+      return '<div class="event-item">' +
+        '<div class="event-direction ' + eventDirectionClass(ev) + '">' +
+          (ev.type === 'deterministic_input' ? '🎯 DET' : (ev.direction === 'in' ? '📥 IN' : '📤 OUT')) +
+        '</div>' +
+        '<div class="space-y-2">' +
+          '<div class="flex items-center justify-between gap-3 text-xs text-stone-400">' +
+            '<div><strong>' + renderEventSeqLabel(ev) + '</strong> | ' + renderEventMetaLabel(ev) + ' | ' + (displayTs ? new Date(displayTs).toLocaleTimeString() : '-') + '</div>' +
+            (ev.type === 'deterministic_input' ? '<button type="button" class="det-details-toggle" data-det-toggle="' + escapeHtml(String(ev.seq_global || '')) + '">Detalhes</button>' : '') +
+          '</div>' +
+          '<pre class="event-content">' + escapeHtml(displayContent) + '</pre>' +
+          (ev.type === 'deterministic_input' ? '<div class="hidden text-xs text-stone-300 whitespace-pre-wrap" data-det-details="' + escapeHtml(String(ev.seq_global || '')) + '">' +
+            'screen=' + escapeHtml(ev.screen_sig || '-') + '\n' +
+            'source=' + escapeHtml(ev.screen_source || '-') + '\n' +
+            'kind=' + escapeHtml(ev.key_kind || '-') + '\n' +
+            'age_ms=' + escapeHtml(ev.screen_snapshot_age_ms ?? '-') + '\n' +
+            'flags=' + (ev.is_probable_paste ? 'paste ' : '') + (ev.is_probable_command ? 'command ' : '') + (ev.contains_escape ? 'escape ' : '') + (ev.contains_newline ? 'newline' : '') + '\n' +
+            (ev._repeatDetScreen ? escapeHtml('mesma tela do DET anterior (' + ev._repeatDetIndex + 'x em sequencia)') : escapeHtml(formatScreenSample(ev.screen_sample || ''))) +
+          '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
   }
 
   function resolveEventByteCount(ev) {
@@ -425,333 +477,115 @@ ${ev._repeatDetScreen
     });
   }
 
-  function normalizeTerminalPreview(text) {
-    const input = String(text || '').replace(/\r\n/g, '\n');
-    const lines = [''];
-    let row = 0;
-    let col = 0;
-
-    for (const ch of input) {
-      if (ch === '\n') {
-        row += 1;
-        lines[row] = lines[row] || '';
-        col = 0;
-        continue;
-      }
-      if (ch === '\r') {
-        col = 0;
-        continue;
-      }
-      if (ch === '\b') {
-        col = Math.max(0, col - 1);
-        continue;
-      }
-      const current = lines[row] || '';
-      const chars = current.split('');
-      while (chars.length < col) chars.push(' ');
-      chars[col] = ch;
-      lines[row] = chars.join('');
-      col += 1;
+  function formatEventContentLocal(ev, term) {
+    // Delega para o módulo compartilhado timeline_core.js
+    if (typeof _formatEventContent === "function") {
+      return _formatEventContent(ev, term);
     }
-
-    return lines
-      .map((line) => line.replace(/[ \t]+$/g, ''))
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trimEnd();
-  }
-
-  function decodeDecGraphics(text) {
-    const input = String(text || '');
-    let out = '';
-    let graphicsMode = false;
-
-    for (let i = 0; i < input.length; i += 1) {
-      const ch = input[i];
-      if (ch === '\x1b') {
-        const next = input[i + 1] || '';
-        const third = input[i + 2] || '';
-        if ((next === '(' || next === ')') && third) {
-          graphicsMode = third === '0';
-          i += 2;
-          continue;
-        }
-      }
-      if (graphicsMode && DEC_SPECIAL_GRAPHICS_MAP[ch]) {
-        out += DEC_SPECIAL_GRAPHICS_MAP[ch];
-      } else {
-        out += ch;
-      }
+    // Fallback inline (enquanto o módulo não carrega)
+    if (ev?.content_kind === 'terminal_snapshot') return ev.summary || '';
+    if (ev?.type === 'deterministic_input') return ev.summary || '';
+    const text = ev?.data_decoded ?? ev?.summary ?? '';
+    if (term) {
+      feed(term, text);
+      return renderCompactText(term);
     }
-    return out;
-  }
-
-  function stripAnsiSequences(text) {
-    return String(text || '')
-      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
-      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-      .replace(/\x1b[PX^_].*?\x1b\\/gs, '')
-      .replace(/\x1b[()#][0-9A-Za-z]/g, '')
-      .replace(/\x1b[=>78]/g, '')
-      .replace(/\x1b[@-Z\\-_]/g, '');
-  }
-
-  function cleanTerminalText(text) {
-    return stripAnsiSequences(decodeDecGraphics(text))
-      .replace(/(^|\n)[0B](?=[┌├└┐┘┤┬┴┼│─])/g, '$1')
-      .replace(/(^|\n)\s*[0B](?=Login do Sistema|Codigo|Senha|Deseja sair do sistema|Modulo|Cadastro|Manutencao)/g, '$1');
-  }
-
-  function squashNoiseLines(lines) {
-    const filtered = lines.filter((line) => line.trim());
-    const hasScreenContent = filtered.some((line) =>
-      /login do sistema|codigo|senha|deseja sair do sistema|modulo|cadastro|manutencao/i.test(line)
-    );
-    if (!hasScreenContent) return lines;
-    return lines.filter((line) => !/^bash:\s/im.test(line));
-  }
-
-  function formatScreenSample(text) {
-    const clean = normalizeTerminalPreview(cleanTerminalText(text));
-    const lines = squashNoiseLines(clean.split('\n'));
-    return lines
-      .filter((line) => !/^[\s│─┌┐└┘├┤┬┴┼]+$/.test(line))
-      .slice(0, 8)
-      .join('\n')
-      .trim();
-  }
-
-  function formatEventContent(ev) {
-    const text = ev?.summary ?? ev?.data_decoded ?? '';
-    if (ev?.type === 'deterministic_input') return text;
-    const clean = normalizeTerminalPreview(cleanTerminalText(text));
-    return squashNoiseLines(clean.split('\n')).join('\n').trim();
+    const t = makeTerm();
+    feed(t, text);
+    return renderCompactText(t);
   }
 
   function buildTimelineItems(events) {
     const items = [];
-    let pendingOut = null;
+    let pendingGroup = null;
+    const sessionTerminal = makeTerm(); // persiste durante toda a sessão
 
-    const flushPendingOut = () => {
-      if (!pendingOut) return;
-      const content = pendingOut.parts.join('\n').trim();
-      if (content) {
+    const flushGroup = () => {
+      if (!pendingGroup) return;
+      const snap = renderCompactText(sessionTerminal);
+      if (snap) {
         items.push({
-          ...pendingOut.base,
           type: 'bytes',
           direction: 'out',
-          n_bytes: pendingOut.nBytes,
-          chunk_count: pendingOut.chunkCount,
-          seq_global_end: pendingOut.seqEnd,
-          summary: content,
-          data_decoded: content,
+          n_bytes: pendingGroup.totalBytes,
+          chunk_count: pendingGroup.events.length,
+          seq_global: pendingGroup.startSeq,
+          seq_global_end: pendingGroup.lastSeq,
+          timestamp_ms: pendingGroup.startTs,
+          end_timestamp_ms: pendingGroup.lastTs,
+          summary: snap,
+          data_decoded: snap,
+          content_kind: 'terminal_snapshot',
         });
       }
-      pendingOut = null;
+      pendingGroup = null;
     };
 
     for (const ev of events) {
-      const content = formatEventContent(ev);
       const isOut = ev?.type === 'bytes' && ev?.direction === 'out';
-      const tsMs = Number(ev?.ts_ms || 0);
+      if (!isOut) {
+        flushGroup();
+        if (ev?.type === 'bytes' && ev?.direction === 'in') {
+          const content = ev?.data_decoded || '';
+          items.push({
+            ...ev,
+            summary: content === '\x1b' ? 'Esc' : content === '\r' ? 'Enter' : content,
+            data_decoded: content,
+          });
+        } else {
+          items.push({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' });
+        }
+        continue;
+      }
+
+      const rawText = ev?.data_decoded ?? ev?.summary ?? '';
+      const tsMs = eventTimestamp(ev);
       const seq = Number(ev?.seq_global || 0);
 
-      if (isOut) {
-        const compact = content.trim();
-        const shouldSkip =
-          !compact ||
-          compact === '0' ||
-          compact === '=' ||
-          compact.length <= 1;
-        if (shouldSkip) continue;
+      // Agrupamento: compara com último timestamp do grupo (lastTs), não startTs
+      const belongsToGroup = pendingGroup &&
+        (tsMs - pendingGroup.lastTs) <= 700 &&
+        pendingGroup.events.length < 8;
 
-        if (
-          pendingOut &&
-          (tsMs - pendingOut.lastTsMs) <= 700 &&
-          pendingOut.parts.length < 8
-        ) {
-          pendingOut.parts.push(compact);
-          pendingOut.nBytes += resolveEventByteCount(ev);
-          pendingOut.chunkCount += 1;
-          pendingOut.lastTsMs = tsMs;
-          pendingOut.seqEnd = seq;
-          continue;
-        }
+      if (!belongsToGroup) {
+        flushGroup();
+      }
 
-        flushPendingOut();
-        pendingOut = {
-          base: { ...ev, summary: compact, data_decoded: compact },
-          parts: [compact],
-          nBytes: resolveEventByteCount(ev),
-          chunkCount: 1,
-          lastTsMs: tsMs,
-          seqEnd: seq,
+      if (!pendingGroup) {
+        pendingGroup = {
+          events: [],
+          startTs: tsMs,
+          lastTs: tsMs,
+          startSeq: seq,
+          lastSeq: seq,
+          totalBytes: 0,
         };
-        continue;
+      } else {
+        pendingGroup.lastTs = tsMs;
+        pendingGroup.lastSeq = seq;
       }
 
-      flushPendingOut();
-      if (ev?.type === 'bytes' && ev?.direction === 'in' && !content.trim()) {
-        items.push({
-          ...ev,
-          summary: ev?.data_decoded === '\x1b' ? 'Esc' : ev?.data_decoded === '\r' ? 'Enter' : content,
-          data_decoded: ev?.data_decoded || content,
-        });
-        continue;
-      }
-      items.push({ ...ev, summary: content, data_decoded: content });
+      feed(sessionTerminal, rawText);
+      pendingGroup.events.push(ev);
+      pendingGroup.totalBytes += Number(ev?.n_bytes ?? ev?.n ?? 0);
     }
 
-    flushPendingOut();
+    flushGroup();
     return items;
   }
 
-  function createVirtualTerminal(rows = 30, cols = 120) {
-    return {
-      rows,
-      cols,
-      cursorRow: 0,
-      cursorCol: 0,
-      savedRow: 0,
-      savedCol: 0,
-      graphicsMode: false,
-      buffer: Array.from({ length: rows }, () => Array(cols).fill(' ')),
-    };
-  }
-
-  function vtScroll(term) {
-    term.buffer.shift();
-    term.buffer.push(Array(term.cols).fill(' '));
-    term.cursorRow = term.rows - 1;
-  }
-
-  function vtSetCursor(term, row, col) {
-    term.cursorRow = Math.max(0, Math.min(term.rows - 1, row));
-    term.cursorCol = Math.max(0, Math.min(term.cols - 1, col));
-  }
-
-  function vtWriteChar(term, ch) {
-    if (term.cursorRow >= term.rows) vtScroll(term);
-    if (term.cursorCol >= term.cols) {
-      term.cursorCol = 0;
-      term.cursorRow += 1;
-      if (term.cursorRow >= term.rows) vtScroll(term);
-    }
-    const rendered = term.graphicsMode && DEC_SPECIAL_GRAPHICS_MAP[ch] ? DEC_SPECIAL_GRAPHICS_MAP[ch] : ch;
-    term.buffer[term.cursorRow][term.cursorCol] = rendered;
-    term.cursorCol += 1;
-  }
-
-  function vtHandleCsi(term, params, finalChar) {
-    const parts = String(params || '').split(';').map((part) => Number(part || 0));
-    const p1 = parts[0] || 0;
-    const p2 = parts[1] || 0;
-    if (finalChar === 'H' || finalChar === 'f') {
-      vtSetCursor(term, Math.max(0, (p1 || 1) - 1), Math.max(0, (p2 || 1) - 1));
-      return;
-    }
-    if (finalChar === 'J') {
-      if (p1 === 2 || p1 === 0) {
-        term.buffer = Array.from({ length: term.rows }, () => Array(term.cols).fill(' '));
-        vtSetCursor(term, 0, 0);
-      }
-      return;
-    }
-    if (finalChar === 'K') {
-      const row = term.buffer[term.cursorRow] || [];
-      for (let col = term.cursorCol; col < term.cols; col += 1) row[col] = ' ';
-      return;
-    }
-    if (finalChar === 'A') {
-      vtSetCursor(term, term.cursorRow - (p1 || 1), term.cursorCol);
-      return;
-    }
-    if (finalChar === 'B') {
-      vtSetCursor(term, term.cursorRow + (p1 || 1), term.cursorCol);
-      return;
-    }
-    if (finalChar === 'C') {
-      vtSetCursor(term, term.cursorRow, term.cursorCol + (p1 || 1));
-      return;
-    }
-    if (finalChar === 'D') {
-      vtSetCursor(term, term.cursorRow, term.cursorCol - (p1 || 1));
-      return;
-    }
-  }
-
-  function vtFeed(term, input) {
-    const text = String(input || '');
-    let i = 0;
-    while (i < text.length) {
-      const ch = text[i];
-      if (ch === '\x1b') {
-        const next = text[i + 1] || '';
-        const third = text[i + 2] || '';
-        if (next === '[') {
-          let j = i + 2;
-          while (j < text.length && !/[@-~]/.test(text[j])) j += 1;
-          if (j < text.length) {
-            vtHandleCsi(term, text.slice(i + 2, j), text[j]);
-            i = j + 1;
-            continue;
-          }
-        }
-        if ((next === '(' || next === ')') && third) {
-          term.graphicsMode = third === '0';
-          i += 3;
-          continue;
-        }
-        if (next === '7') {
-          term.savedRow = term.cursorRow;
-          term.savedCol = term.cursorCol;
-          i += 2;
-          continue;
-        }
-        if (next === '8') {
-          vtSetCursor(term, term.savedRow, term.savedCol);
-          i += 2;
-          continue;
-        }
-        i += 2;
-        continue;
-      }
-      if (ch === '\n') {
-        term.cursorRow += 1;
-        if (term.cursorRow >= term.rows) vtScroll(term);
-        i += 1;
-        continue;
-      }
-      if (ch === '\r') {
-        term.cursorCol = 0;
-        i += 1;
-        continue;
-      }
-      if (ch === '\b') {
-        term.cursorCol = Math.max(0, term.cursorCol - 1);
-        i += 1;
-        continue;
-      }
-      if (ch >= ' ') vtWriteChar(term, ch);
-      i += 1;
-    }
-  }
-
-  function vtRender(term) {
-    const lines = term.buffer.map((row) => row.join('').replace(/[ \t]+$/g, ''));
-    const trimmed = squashNoiseLines(lines).join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
-    return trimmed || '';
-  }
-
   function escapeHtml(text) {
-    const map = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#039;'
-    };
-    return String(text || '').replace(/[&<>"']/g, m => map[m]);
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return String(text || '').replace(/[&<>"']/g, (m) => map[m]);
+  }
+
+  function formatScreenSample(text) {
+    if (!text) return '';
+    const t = makeTerm();
+    feed(t, text);
+    const lines = renderCompactText(t).split('\n');
+    return lines.filter((l) => !/^[\s\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u2534\u252C\u253C]+$/.test(l))
+      .slice(0, 8).join('\n').trim();
   }
 
   // Controles de playback
@@ -762,11 +596,10 @@ ${ev._repeatDetScreen
       clearTimeout(playbackTimeout);
       playbackTimeout = null;
     }
-    const panel = document.getElementById('playback-panel');
-    const startBtn = document.getElementById('playback-start-btn');
     const pauseBtn = document.getElementById('playback-pause-btn');
+    const startBtn = document.getElementById('playback-start-btn');
     const statusMsg = document.getElementById('playback-status-message');
-    panel?.classList.add('hidden');
+    // Mantém o painel visível com o frame final (req 10)
     startBtn?.classList.remove('hidden');
     if (startBtn) startBtn.textContent = '▶ Reproduzir novamente';
     if (pauseBtn) pauseBtn.textContent = '⏸ Pausar';
@@ -809,6 +642,55 @@ ${ev._repeatDetScreen
     playbackState.speed = parseFloat(e.target.value);
     document.getElementById('playback-speed-label').textContent = playbackState.speed.toFixed(2) + 'x';
     persistPlaybackPrefs({ speed: playbackState.speed });
+  });
+
+  // Navegação por seq_global
+  function seekToEvent(index) {
+    if (!replayData) return;
+    const events = replayData.playback?.events || [];
+    if (index < 0 || index >= events.length) return;
+    playbackState.isPaused = true;
+    playbackState.currentEventIndex = index;
+    playbackState.terminal = makeTerm();
+    // Replay all events up to current index
+    for (let i = 0; i <= index; i++) {
+      if (events[i].direction === 'out') {
+        feed(playbackState.terminal, events[i].content);
+      }
+    }
+    const outputEl = document.getElementById('playback-output');
+    outputEl.innerHTML = renderHtml(playbackState.terminal);
+    const counter = document.getElementById('playback-event-counter');
+    counter.textContent = `${index + 1} / ${events.length}`;
+    const progressBar = document.getElementById('playback-progress-bar');
+    progressBar.style.width = ((index + 1) / events.length * 100) + '%';
+    const currentEv = events[index];
+    document.getElementById('playback-seq-current').textContent = 'seq: ' + (currentEv?.seq ?? '-');
+  }
+
+  document.getElementById('playback-first-btn')?.addEventListener('click', () => {
+    playbackState.isPaused = true;
+    seekToEvent(0);
+  });
+  document.getElementById('playback-prev-btn')?.addEventListener('click', () => {
+    const idx = Math.max(0, playbackState.currentEventIndex - 1);
+    seekToEvent(idx);
+  });
+  document.getElementById('playback-next-btn')?.addEventListener('click', () => {
+    const events = replayData?.playback?.events || [];
+    const idx = Math.min(events.length - 1, playbackState.currentEventIndex + 1);
+    seekToEvent(idx);
+  });
+  document.getElementById('playback-last-btn')?.addEventListener('click', () => {
+    const events = replayData?.playback?.events || [];
+    seekToEvent(events.length - 1);
+  });
+  document.getElementById('playback-seq-go-btn')?.addEventListener('click', () => {
+    const seqVal = parseInt(document.getElementById('playback-seq-goto')?.value);
+    if (isNaN(seqVal)) return;
+    const events = replayData?.playback?.events || [];
+    const idx = events.findIndex(e => (e.seq || 0) >= seqVal);
+    if (idx >= 0) seekToEvent(idx);
   });
 
   // Filtros de eventos
@@ -1019,8 +901,8 @@ ${ev._repeatDetScreen
 
   function startPlayback() {
     const events = replayData.playback?.events || [];
-    playbackState.terminal = createVirtualTerminal();
-    document.getElementById('playback-output').textContent = '';
+    playbackState.terminal = makeTerm();
+    document.getElementById('playback-output').innerHTML = '';
     document.getElementById('playback-event-counter').textContent = `0 / ${events.length}`;
     document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
     playNextEvent();
@@ -1041,23 +923,28 @@ ${ev._repeatDetScreen
     const counter = document.getElementById('playback-event-counter');
 
     if (event.direction === 'out') {
-      vtFeed(playbackState.terminal, event.content);
-      outputEl.textContent = vtRender(playbackState.terminal);
+      feed(playbackState.terminal, event.content);
+      outputEl.innerHTML = renderHtml(playbackState.terminal);
     }
 
-    // Scroll automático
     const terminal = document.getElementById('playback-terminal');
     terminal.scrollTop = terminal.scrollHeight;
 
-    // Atualizar progresso
     const progress = ((playbackState.currentEventIndex + 1) / events.length) * 100;
     progressBar.style.width = progress + '%';
     counter.textContent = `${playbackState.currentEventIndex + 1} / ${events.length}`;
+    document.getElementById('playback-seq-current').textContent = 'seq: ' + (event?.seq ?? '-');
+    document.getElementById('playback-geometry-info').textContent =
+      'geom: ' + termGeometry.rows + '\u00D7' + termGeometry.cols + ' (' + termGeometry.source + ')';
+
+    // Delay: next.timestamp_ms - current.timestamp_ms, divided by speed
+    const nextIdx = playbackState.currentEventIndex + 1;
+    let delay = 50;
+    if (nextIdx < events.length) {
+      delay = calcDelay(event, events[nextIdx], playbackState.speed);
+    }
 
     playbackState.currentEventIndex++;
-
-    // Calcular delay baseado na velocidade
-    const delay = Math.max(30, 180 / playbackState.speed); // 1x mais próximo de revisão operacional
     playbackTimeout = setTimeout(playNextEvent, delay);
   }
 
@@ -1074,6 +961,14 @@ ${ev._repeatDetScreen
   loadTimelinePrefs();
   updateViewButtons(eventsViewMode);
   updateFilterButtons(eventsFilterMode);
-  loadReplayData();
+  // Deferred: called after VT module loads via bridge script
+  window._startReplay = function() { loadReplayData(); };
 })();
+</script>
+<script src="/assets/js/virtual_terminal.cjs"></script>
+<script>
+  if (typeof DakVT !== 'undefined' && typeof window._initVT === 'function') {
+    window._initVT(DakVT);
+    if (typeof window._startReplay === 'function') window._startReplay();
+  }
 </script>

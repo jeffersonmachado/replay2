@@ -84,6 +84,32 @@ REPLACE NUMERO WITH cNum, CLIENTE_ID WITH nCliId
         # Deve ter 2 operacoes
         self.assertEqual(len(cliente.operations), 2)
 
+    def test_collect_source_files_prefers_prg_and_falls_back_to_dbo(self):
+        self._write_file("cadcli.prg", "USE CLIENTES")
+        self._write_file("cadcli.dbo", "USE CLIENTES")
+        self._write_file("somente_dbo.dbo", "USE PRODUTOS")
+
+        parser = SourceParser(str(self.source_dir))
+        files = parser._collect_source_files()
+
+        names = [p.name for p in files]
+        self.assertIn("cadcli.prg", names)
+        self.assertIn("somente_dbo.dbo", names)
+        self.assertNotIn("cadcli.dbo", names)
+
+    def test_parse_standalone_dbo_file(self):
+        self._write_file("cadprod.dbo", """
+USE PRODUTOS
+APPEND BLANK
+REPLACE CODIGO WITH cCod, DESCRICAO WITH cDesc
+""")
+
+        parser = SourceParser(str(self.source_dir))
+        entities, _ = parser.parse_all()
+
+        produtos = next((e for e in entities if e.name == "PRODUTOS"), None)
+        self.assertIsNotNone(produtos)
+
 
 class SyntheticInferencerTests(unittest.TestCase):
 

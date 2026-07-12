@@ -44,8 +44,7 @@ def handle_admin_get_route(handler, parsed_path, *, gateway_service_status, quer
             "policy_ok": bool(policy.get("policy_ok")),
             "capture_available": bool(policy.get("capture_available")),
             "ssh_desired_route": policy.get("desired_ssh_route"),
-            "ssh_effective_route": policy.get("effective_ssh_route"),
-        }
+            "ssh_effective_route": policy.get("effective_ssh_route"),            "capture_log_dir": getattr(handler.server, "capture_log_dir", ""),        }
         write_json(handler, 200, merged)
         return True
 

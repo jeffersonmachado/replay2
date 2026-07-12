@@ -4,6 +4,36 @@ import { buildQuery } from "../components/filters.js";
 import { runLinkCard, runSummaryCards } from "../components/run_views.js";
 import { statList } from "../components/tables.js";
 
+async function loadCaptures() {
+  const result = await apiJson("/api/captures?limit=50");
+  if (!result?.data) return;
+  const captures = result.data.captures || [];
+  text("#dashboard_captures_total", captures.length);
+  text("#dashboard_captures_active", captures.filter((c) => c.status === "active").length);
+  text("#dashboard_captures_finished", captures.filter((c) => c.status === "finished").length);
+  text("#dashboard_captures_interrupted", captures.filter((c) => c.status === "interrupted").length);
+  html(
+    "#dashboard_recent_captures",
+    captures.length
+      ? captures.slice(0, 5).map((cap) => {
+          const dateStr = cap.started_at_ms ? formatAgo(cap.started_at_ms) : "-";
+          const statusCls = cap.status === "active" ? "text-emerald-300" : cap.status === "finished" ? "text-stone-300" : "text-amber-300";
+          return `<div class="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium text-stone-200">#${cap.id} ${escapeHtml(cap.created_by_username || "-")}</div>
+              <div class="text-xs text-stone-400">${escapeHtml(cap.notes || "sem notas")}</div>
+            </div>
+            <div class="shrink-0 text-right">
+              <div class="text-xs ${statusCls} font-semibold">${escapeHtml(cap.status)}</div>
+              <div class="text-xs text-stone-500">${dateStr}</div>
+            </div>
+          </div>`;
+        }).join("")
+      : '<div class="text-sm text-stone-400">Nenhuma captura registrada.</div>',
+  );
+  text("#dashboard_captures_status", `${captures.length} capturas carregadas`);
+}
+
 async function loadRuns() {
   const result = await apiJson("/api/runs?limit=20");
   if (!result?.data) return [];
@@ -54,11 +84,13 @@ async function loadAlerts() {
 
 async function loadGateway() {
   const status = await apiJson("/api/gateway/status");
+  let defaultLogDir = "";
   if (status?.data) {
     text("#dashboard_gateway_service", status.data.running ? "ativo" : "inativo");
+    defaultLogDir = status.data.capture_log_dir || "";
   }
   const input = document.getElementById("dashboard_log_dir");
-  const logDir = (input?.value || localStorage.getItem("gatewayMonitorLogDir") || "").trim();
+  const logDir = (input?.value || localStorage.getItem("gatewayMonitorLogDir") || defaultLogDir || "").trim();
   if (input && logDir && !input.value) input.value = logDir;
   if (!logDir) {
     text("#dashboard_gateway_status", "aguardando log_dir");
@@ -76,6 +108,7 @@ async function loadGateway() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  loadCaptures();
   loadRuns();
   loadAlerts();
   loadGateway();

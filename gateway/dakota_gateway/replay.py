@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import os
 import pty
 import selectors
+import struct
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import termios
+except Exception:  # pragma: no cover
+    termios = None
 
 from .screen import build_screen_snapshot_from_bytes
 
@@ -42,6 +49,7 @@ class _TargetSession:
         self.session_id = session_id
         self.target_user_override = target_user_override
         self.master_fd, self.slave_fd = pty.openpty()
+        self._configure_pty(rows=25, cols=80)
         self.proc = subprocess.Popen(
             self._ssh_argv(),
             stdin=self.slave_fd,
@@ -49,10 +57,22 @@ class _TargetSession:
             stderr=self.slave_fd,
             preexec_fn=os.setsid,
             close_fds=True,
+            env=dict(os.environ, TERM="xterm"),
         )
         os.close(self.slave_fd)
         self.screen_buf = b""
         self.last_out_ms = int(time.time() * 1000)
+
+    @staticmethod
+    def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
+        """Apply TIOCSWINSZ to set terminal window size on the PTY."""
+        if termios is None:
+            return
+        try:
+            winsize = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+        except Exception:
+            pass
 
     def _ssh_argv(self) -> list[str]:
         if not self.cfg.target_host:

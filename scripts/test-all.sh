@@ -7,6 +7,10 @@ cd "$(dirname "$0")/.."
 
 echo "=== Full Test Suite (strict) ==="
 
+# Bloco JS — virtual terminal tests
+echo "--- JS: virtual_terminal ---"
+node --test gateway/control/static/js/virtual_terminal.test.mjs
+
 # Bloco P2
 echo "--- P2-A ---"
 PYTHONPATH=gateway python3 -m pytest -q \

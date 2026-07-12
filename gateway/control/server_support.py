@@ -13,6 +13,11 @@ def is_weak_password(password: str) -> bool:
     if len(value) < 8:
         return True
     lower = value.lower()
+    # Senhas com caracteres especiais + números são consideradas fortes
+    has_digit = any(c.isdigit() for c in value)
+    has_special = any(not c.isalnum() for c in value)
+    if has_digit and has_special and len(value) >= 10:
+        return False
     common = {
         "admin123",
         "password",
@@ -78,11 +83,37 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
             return {"platform": "aix", "service": "sshd", "running": False, "available": False, "error": "lssrc não encontrado"}
         rc, out = run_cmd_fn(["lssrc", "-s", "sshd"])
         running = ("active" in out.lower()) and rc == 0
+        # Verifica integracao do gateway com SSH (AIX)
+        capture_installed = os.path.isfile("/usr/local/bin/dakota-capture-session")
+        capture_configs = []
+        # AIX: /etc/ssh/sshd_config (arquivo unico) ou sshd_config.d (se existir)
+        sshd_config_file = "/etc/ssh/sshd_config"
+        sshd_config_dir = "/etc/ssh/sshd_config.d"
+        if os.path.isdir(sshd_config_dir):
+            for fname in os.listdir(sshd_config_dir):
+                fpath = os.path.join(sshd_config_dir, fname)
+                try:
+                    with open(fpath) as f:
+                        if "dakota-capture-session" in f.read():
+                            capture_configs.append(fname)
+                except Exception:
+                    pass
+        elif os.path.isfile(sshd_config_file):
+            try:
+                with open(sshd_config_file) as f:
+                    if "dakota-capture-session" in f.read():
+                        capture_configs.append("sshd_config")
+            except Exception:
+                pass
+        capture_active = capture_installed and len(capture_configs) > 0
         return {
             "platform": "aix",
             "service": "sshd",
             "running": running,
             "available": True,
+            "capture_installed": capture_installed,
+            "capture_configs": capture_configs,
+            "capture_active": capture_active,
             "error": None if running else (out or "sshd inativo"),
         }
 
@@ -110,6 +141,21 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
             socket_running, _socket_state = _linux_service_is_active(socket, run_cmd_fn=run_cmd_fn)
 
         running = service_running or socket_running
+        # Verifica integração do gateway com SSH
+        capture_installed = os.path.isfile("/usr/local/bin/dakota-capture-session")
+        capture_configs = []
+        sshd_config_dir = "/etc/ssh/sshd_config.d"
+        if os.path.isdir(sshd_config_dir):
+            for fname in os.listdir(sshd_config_dir):
+                fpath = os.path.join(sshd_config_dir, fname)
+                try:
+                    with open(fpath) as f:
+                        content = f.read()
+                    if "dakota-capture-session" in content or "Match User" in content or "Match Group" in content:
+                        capture_configs.append(fname)
+                except Exception:
+                    pass
+        capture_active = capture_installed and len(capture_configs) > 0
         return {
             "platform": "linux",
             "service": service or "unavailable",
@@ -118,7 +164,13 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
             "service_running": service_running,
             "socket_running": socket_running,
             "available": True,
-            "error": None,
+            "capture_installed": capture_installed,
+            "capture_configs": capture_configs,
+            "capture_active": capture_active,
+            "error": None if capture_active else (
+                "wrapper nao instalado" if not capture_installed else
+                "Match User/Group nao configurado no sshd"
+            ),
         }
 
     return {"platform": system or "unknown", "service": "unknown", "running": False, "available": False, "error": "sistema não suportado"}

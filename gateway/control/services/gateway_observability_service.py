@@ -56,7 +56,7 @@ def read_gateway_monitor(log_dir: str, limit: int = 40) -> dict:
     if not p.exists() or not p.is_dir():
         return {"log_dir": clean_dir, "files_scanned": 0, "events": [], "summary": summarize_gateway_events([]), "error": "log_dir não encontrado"}
 
-    files = sorted(p.glob("audit-*.jsonl"))
+    files = sorted(p.rglob("audit-*.jsonl"))
     if not files:
         return {"log_dir": clean_dir, "files_scanned": 0, "events": [], "summary": summarize_gateway_events([]), "error": "nenhum arquivo audit-*.jsonl encontrado"}
 
@@ -113,7 +113,7 @@ def read_gateway_sessions(
     if not p.exists() or not p.is_dir():
         return {"log_dir": clean_dir, "files_scanned": 0, "sessions": [], "summary": {"total_sessions": 0, "returned_sessions": 0}, "error": "log_dir não encontrado"}
 
-    files = sorted(p.glob("audit-*.jsonl"))
+    files = sorted(p.rglob("audit-*.jsonl"))
     if not files:
         return {"log_dir": clean_dir, "files_scanned": 0, "sessions": [], "summary": {"total_sessions": 0, "returned_sessions": 0}, "error": "nenhum arquivo audit-*.jsonl encontrado"}
 
@@ -241,7 +241,7 @@ def read_gateway_session_detail(
     if not target_session:
         return {"log_dir": clean_dir, "session": None, "events": [], "failures": [], "error": "sessão não encontrada"}
 
-    files = sorted(Path(clean_dir).glob("audit-*.jsonl"))
+    files = sorted(Path(clean_dir).rglob("audit-*.jsonl"))
     events: list[dict] = []
     for file_path in files:
         try:

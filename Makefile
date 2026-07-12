@@ -11,6 +11,7 @@ help:
 	@echo "  make test-all       - Executa TODOS os testes (Python + verificação Tcl)"
 	@echo "  make test-p2        - Executa apenas testes do P2 (Knowledge Base)"
 	@echo "  make build          - Gera tarball de distribuição"
+	@echo "  make tailwind       - Rebuilda tailwind.css com todas as classes usadas"
 	@echo "  make knowledge-base - Pipeline P2-A: analisa fonte e gera relatório"
 	@echo "  make check          - Health check rápido (compileall + smoke test)"
 	@echo "  make demo           - Executa demo P2-A com sistema de lojas fake"
@@ -78,6 +79,10 @@ test-p2:
 
 build:
 	@./scripts/build-tarball.sh
+
+tailwind:
+	@cd gateway && npx tailwindcss --input control/tailwind.input.css --output control/static/tailwind.css --config ../tailwind.config.cjs
+	@echo "✓ tailwind.css rebuildado ($(shell wc -c < gateway/control/static/tailwind.css) bytes)"
 
 knowledge-base:
 	@if [ -z "$${SOURCE_DIR:-}" ]; then \

@@ -4,6 +4,7 @@ Captura nascida da UI, vinculada ao estado do gateway, sem dependência de CLI.
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import uuid
@@ -24,6 +25,29 @@ def _serialize(row) -> dict:
         except Exception:
             item[key] = {}
     item["active"] = item.get("status") == "active"
+
+    # Para capturas ativas, session_count no banco pode estar desatualizado.
+    # Computa do sistema de arquivos (audit-*.jsonl no log_dir).
+    session_count = item.get("session_count", 0)
+    event_count = item.get("event_count", 0)
+    if item["active"]:
+        log_dir = item.get("log_dir", "")
+        if log_dir and os.path.isdir(log_dir):
+            audit_files = glob.glob(os.path.join(log_dir, "audit-*.jsonl"))
+            live_session_count = len(audit_files)
+            if live_session_count > 0:
+                session_count = live_session_count
+                # Contagem leve de eventos (soma linhas dos arquivos)
+                live_event_count = 0
+                for f in audit_files:
+                    try:
+                        with open(f) as fh:
+                            live_event_count += sum(1 for _ in fh)
+                    except OSError:
+                        pass
+                event_count = live_event_count
+    item["session_count"] = session_count
+    item["event_count"] = event_count
     return item
 
 
@@ -75,8 +99,9 @@ def start_capture(
             started_at_ms, environment_json,
             connection_profile_id, connection_profile_name,
             operational_user_id, gateway_state_snapshot_json,
-            log_dir, target_env_id, notes
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            log_dir, target_env_id, notes,
+            session_count, event_count
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             session_uuid,
@@ -92,6 +117,8 @@ def start_capture(
             log_dir,
             target_env_id,
             notes or "",
+            0,
+            0
         ),
     )
     row = query_one(con, "SELECT * FROM capture_sessions WHERE session_uuid=?", (session_uuid,))
@@ -106,9 +133,21 @@ def stop_capture(con, capture_id: int, *, username: str, now_ms_fn) -> dict:
     if row["status"] != "active":
         raise ValueError(f"Sessão não está ativa (status atual: {row['status']}).")
     ts = now_ms_fn()
+    # Conta sessoes e eventos do disco antes de finalizar
+    log_dir = row["log_dir"]
+    session_count = 0
+    event_count = 0
+    if log_dir and os.path.isdir(log_dir):
+        session_count = len(glob.glob(os.path.join(log_dir, "audit-*.jsonl")))
+        for f in glob.glob(os.path.join(log_dir, "audit-*.jsonl")):
+            try:
+                with open(f) as fh:
+                    event_count += sum(1 for _ in fh)
+            except Exception:
+                pass
     con.execute(
-        "UPDATE capture_sessions SET status='finished', ended_at_ms=? WHERE id=?",
-        (ts, capture_id),
+        "UPDATE capture_sessions SET status='finished', ended_at_ms=?, session_count=?, event_count=? WHERE id=?",
+        (ts, session_count, event_count, capture_id),
     )
     row = query_one(con, "SELECT * FROM capture_sessions WHERE id=?", (capture_id,))
     return _serialize(row)
@@ -117,15 +156,33 @@ def stop_capture(con, capture_id: int, *, username: str, now_ms_fn) -> dict:
 def interrupt_stale_captures(con, *, now_ms_fn) -> int:
     """Marca capturas 'active' como 'interrupted' ao iniciar o servidor.
     Isso resolve capturas órfãs de ciclos anteriores do processo.
+    Conta sessoes/eventos do disco antes de finalizar.
     Retorna o número de capturas marcadas.
     """
     ts = now_ms_fn()
-    result = con.execute(
-        "UPDATE capture_sessions SET status='interrupted', ended_at_ms=? "
-        "WHERE status='active'",
-        (ts,),
-    )
-    return result.rowcount
+    stale = con.execute(
+        "SELECT id, log_dir FROM capture_sessions WHERE status='active'"
+    ).fetchall()
+    count = 0
+    for row in stale:
+        session_count = 0
+        event_count = 0
+        log_dir = row["log_dir"]
+        if log_dir and os.path.isdir(log_dir):
+            session_count = len(glob.glob(os.path.join(log_dir, "audit-*.jsonl")))
+            for f in glob.glob(os.path.join(log_dir, "audit-*.jsonl")):
+                try:
+                    with open(f) as fh:
+                        event_count += sum(1 for _ in fh)
+                except Exception:
+                    pass
+        con.execute(
+            "UPDATE capture_sessions SET status='interrupted', ended_at_ms=?,"
+            " session_count=?, event_count=? WHERE id=?",
+            (ts, session_count, event_count, row["id"]),
+        )
+        count += 1
+    return count
 
 
 def ensure_active_capture_for_gateway(
@@ -170,14 +227,58 @@ def ensure_active_capture_for_gateway(
     )
 
 
-def list_captures(con, *, limit: int = 60) -> list[dict]:
-    """Lista sessões de captura ordenadas por data de início (mais recentes primeiro)."""
-    rows = query_all(
-        con,
-        "SELECT * FROM capture_sessions ORDER BY started_at_ms DESC LIMIT ?",
-        (limit,),
-    )
-    return [_serialize(row) for row in rows]
+def list_captures(con, *, limit: int = 20, offset: int = 0, search: str = "",
+                  created_by: str = "", ts_from: int = 0, ts_to: int = 0, status: str = "") -> tuple:
+    """Lista capturas com paginacao, busca e filtros. Retorna (items, total)."""
+    search_clean = (search or "").strip()
+    author_clean = (created_by or "").strip()
+    status_clean = (status or "").strip()
+
+    # Busca por ID exato
+    if search_clean:
+        try:
+            search_id = int(search_clean)
+            rows = query_all(con,
+                "SELECT * FROM capture_sessions WHERE id = ? ORDER BY started_at_ms DESC",
+                (search_id,))
+            total = len(rows)
+            return [_serialize(row) for row in rows[offset:offset + limit]], total
+        except ValueError:
+            pass
+
+    # Query com filtros
+    where = ["1=1"]
+    params = []
+
+    if search_clean:
+        where.append("session_uuid LIKE ?")
+        params.append(f"%{search_clean}%")
+
+    if author_clean:
+        where.append("created_by_username LIKE ?")
+        params.append(f"%{author_clean}%")
+
+    if ts_from > 0:
+        where.append("started_at_ms >= ?")
+        params.append(ts_from)
+
+    if ts_to > 0:
+        where.append("started_at_ms <= ?")
+        params.append(ts_to)
+
+    if status_clean:
+        where.append("status = ?")
+        params.append(status_clean)
+
+    where_clause = " AND ".join(where)
+
+    total_row = query_one(con, f"SELECT COUNT(*) as c FROM capture_sessions WHERE {where_clause}", tuple(params))
+    total = total_row["c"] if total_row else 0
+
+    rows = query_all(con,
+        f"SELECT * FROM capture_sessions WHERE {where_clause} ORDER BY started_at_ms DESC LIMIT ? OFFSET ?",
+        tuple(params) + (limit, offset))
+    return [_serialize(row) for row in rows], total
 
 
 def get_capture(con, capture_id: int) -> dict | None:

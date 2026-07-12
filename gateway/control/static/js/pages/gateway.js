@@ -3,6 +3,9 @@ import { escapeHtml, formatAgo, formatCount, html, text } from "../core/dom.js";
 import { gatewayMetricRows, gatewaySessionCard, gatewaySignalRows } from "../components/gateway_views.js";
 import { buildQuery } from "../components/filters.js";
 import { activatePageSections } from "../components/page_sections.js";
+import { connectWs } from "../core/ws.js";
+import { initCombobox } from "../components/combobox.js";
+import { renderEventsTable, renderEventsCards } from "../components/timeline_table.js";
 
 // ── Feedback ───────────────────────────────────────────────────────────────
 
@@ -153,10 +156,25 @@ async function loadAdvancedSelections() {
   }
 }
 
-// ── Monitor / Sessões (mantidos do original) ───────────────────────────────
+// ── Monitor / Sessões ─────────────────────────────────────────────────────
 
 function currentLogDir() {
   return (document.getElementById("monitor_log_dir")?.value || localStorage.getItem("gatewayMonitorLogDir") || "").trim();
+}
+
+async function resolveLogDir() {
+  let logDir = currentLogDir();
+  if (logDir) return logDir;
+  try {
+    const status = await apiJson("/api/gateway/status");
+    if (status?.data?.capture_log_dir) {
+      logDir = status.data.capture_log_dir;
+      localStorage.setItem("gatewayMonitorLogDir", logDir);
+      const input = document.getElementById("monitor_log_dir");
+      if (input && !input.value) input.value = logDir;
+    }
+  } catch (_) { /* ignora */ }
+  return logDir;
 }
 
 function renderGatewayMonitor(data) {
@@ -170,37 +188,73 @@ function renderGatewayMonitor(data) {
   html("#gw_top_types", gatewayMetricRows((summary.top_types || []).map((item) => ({ label: item.type, value: item.count })), "Sem eventos para resumir."));
   const lastSignal = summary.last_event || {};
   html("#gw_last_signal", gatewaySignalRows(lastSignal, ["type", "actor", "session_id", "dir", "n", "screen_sig", "key_kind"]));
-  html("#gw_recent_events", JSON.stringify(data.events || [], null, 2));
+  renderEventsTable(data.events || []);
+  // também popula a visão de cards (oculta por padrão)
+  renderEventsCards(data.events || [], "#gw_events_cards_view");
+}
+
+// ── Toggle tabela / cards ──────────────────────────────────────────────────
+
+const VIEW_PREF_KEY = "dakota_gateway_timeline_view";
+
+function getViewPref() {
+  return localStorage.getItem(VIEW_PREF_KEY) || "table";
+}
+
+function setViewPref(view) {
+  localStorage.setItem(VIEW_PREF_KEY, view);
+}
+
+function applyViewToggle(tableContainerId, cardsContainerId, toggleBtnId, countId) {
+  const view = getViewPref();
+  const tableEl = document.getElementById(tableContainerId);
+  const cardsEl = document.getElementById(cardsContainerId);
+  const btn = document.getElementById(toggleBtnId);
+  if (!tableEl || !cardsEl) return;
+  if (view === "cards") {
+    tableEl.classList.add("hidden");
+    cardsEl.classList.remove("hidden");
+    if (btn) btn.textContent = "📊 Tabela";
+  } else {
+    tableEl.classList.remove("hidden");
+    cardsEl.classList.add("hidden");
+    if (btn) btn.textContent = "🃏 Cards";
+  }
+  if (btn) {
+    btn.addEventListener("click", () => {
+      const current = getViewPref();
+      const next = current === "cards" ? "table" : "cards";
+      setViewPref(next);
+      applyViewToggle(tableContainerId, cardsContainerId, toggleBtnId, countId);
+    });
+  }
 }
 
 async function loadGatewayMonitor() {
-  const logDir = currentLogDir();
+  const logDir = await resolveLogDir();
   if (!logDir) {
     text("#gw_monitor_status", "informe um log_dir para monitorar");
     return;
   }
-  localStorage.setItem("gatewayMonitorLogDir", logDir);
   const result = await apiJson(`/api/gateway/monitor?log_dir=${encodeURIComponent(logDir)}&limit=40`);
   if (result?.data) renderGatewayMonitor(result.data);
 }
 
 function renderGatewaySessionDetail(data) {
-  html("#gw_session_detail", JSON.stringify(data, null, 2));
+  const events = data.events || [];
+  if (!events.length) {
+    html("#gw_session_detail", '<tr><td colspan="6" class="px-3 py-6 text-center text-stone-500">Nenhum evento nesta sessão.</td></tr>');
+    html("#gw_session_detail_cards", '<div class="text-stone-400 text-sm p-3">Nenhum evento nesta sessão.</div>');
+    text("#gw_session_detail_status", "0 eventos");
+    return;
+  }
+  text("#gw_session_detail_status", `${events.length} eventos`);
+  renderEventsTable(events, "#gw_session_detail", "#gw_session_detail_status");
+  renderEventsCards(events, "#gw_detail_cards_view", "#gw_session_detail_status");
 }
 
 function uniqueSorted(items) {
   return Array.from(new Set((items || []).filter((item) => item !== null && item !== undefined && String(item).trim() !== ""))).sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
-}
-
-function fillDatalist(listId, values) {
-  const listEl = document.getElementById(listId);
-  if (!listEl) return;
-  listEl.innerHTML = "";
-  uniqueSorted(values || []).forEach((value) => {
-    const option = document.createElement("option");
-    option.value = String(value);
-    listEl.appendChild(option);
-  });
 }
 
 function fillSimpleSelect(selectId, values, allLabel) {
@@ -223,34 +277,42 @@ function fillSimpleSelect(selectId, values, allLabel) {
   selectEl.value = current;
 }
 
-function setUidGidFilterMode(field, values) {
-  const threshold = 20;
-  const uniq = uniqueSorted(values || []);
-  const inputEl = document.getElementById(`gw_session_${field}`);
-  const selectEl = document.getElementById(`gw_session_${field}_select`);
-  if (!inputEl || !selectEl) return;
+// ── População de filtros de sessão ────────────────────────────────────────
 
-  const useSelect = uniq.length > 0 && uniq.length <= threshold;
-  if (useSelect) {
-    inputEl.value = "";
-    inputEl.classList.add("hidden");
-    selectEl.classList.remove("hidden");
-    fillSimpleSelect(selectEl.id, uniq, `todos os ${field}`);
-  } else {
-    selectEl.value = "";
-    selectEl.classList.add("hidden");
-    inputEl.classList.remove("hidden");
-    fillDatalist(`gw_session_${field}_list`, uniq);
+function fillComboBoxOptions(outputSelectId, values, emptyLabel) {
+  const selectEl = document.getElementById(outputSelectId);
+  if (!selectEl) return;
+  const current = selectEl.value || "";
+  selectEl.innerHTML = "";
+  const emptyOpt = document.createElement("option");
+  emptyOpt.value = "";
+  emptyOpt.textContent = emptyLabel;
+  selectEl.appendChild(emptyOpt);
+  uniqueSorted(values || []).forEach((value) => {
+    const opt = document.createElement("option");
+    opt.value = String(value);
+    opt.textContent = String(value);
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = current;
+  // Reinicializa o combobox com as novas opções
+  const wrapper = selectEl.closest("[data-combobox]");
+  if (wrapper) {
+    initCombobox(wrapper);
   }
 }
 
-function currentUidGidValue(field) {
-  const inputEl = document.getElementById(`gw_session_${field}`);
-  const selectEl = document.getElementById(`gw_session_${field}_select`);
-  if (selectEl && !selectEl.classList.contains("hidden")) {
-    return selectEl.value || "";
-  }
-  return inputEl?.value || "";
+function updateSessionFilterCombos(data) {
+  const sessions = data?.sessions || [];
+  fillComboBoxOptions("gw_session_actor_output", sessions.map((item) => item.actor || ""), "todos os atores");
+  fillComboBoxOptions("gw_session_logname_output", sessions.map((item) => item.logname || ""), "todos os lognames");
+  fillComboBoxOptions("gw_session_id_filter_output", sessions.map((item) => item.session_id || ""), "todas as sessões");
+  fillSimpleSelect("gw_session_uid_select", sessions.map((item) => item.uid), "todos os uid");
+  fillSimpleSelect("gw_session_gid_select", sessions.map((item) => item.gid), "todos os gid");
+  fillEventTypeSelect(
+    "gw_session_event_type",
+    sessions.flatMap((item) => (item.event_types || []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+  );
 }
 
 function fillEventTypeSelect(selectId, values) {
@@ -270,23 +332,10 @@ function fillEventTypeSelect(selectId, values) {
   selectEl.value = current;
 }
 
-function updateSessionFilterCombos(data) {
-  const sessions = data?.sessions || [];
-  fillDatalist("gw_session_actor_list", sessions.map((item) => item.actor || ""));
-  fillDatalist("gw_session_logname_list", sessions.map((item) => item.logname || ""));
-  fillDatalist("gw_session_id_list", sessions.map((item) => item.session_id || ""));
-  setUidGidFilterMode("uid", sessions.map((item) => item.uid));
-  setUidGidFilterMode("gid", sessions.map((item) => item.gid));
-  fillEventTypeSelect(
-    "gw_session_event_type",
-    sessions.flatMap((item) => (item.event_types || []).map((entry) => String(entry || "").trim()).filter(Boolean)),
-  );
-}
-
 async function loadGatewaySessionDetail(sessionId) {
   if (!sessionId) return;
   window.currentGatewaySessionId = sessionId;
-  const logDir = currentLogDir();
+  const logDir = await resolveLogDir();
   if (!logDir) return;
   const qs = buildQuery({
     log_dir: logDir,
@@ -310,12 +359,16 @@ function renderGatewaySessions(data) {
       : '<div class="text-sm text-stone-400">Nenhuma sessão encontrada.</div>',
   );
   document.querySelectorAll("[data-session]").forEach((button) => {
-    button.addEventListener("click", () => loadGatewaySessionDetail(button.dataset.session));
+    button.addEventListener("click", () => {
+      const sessionId = button.dataset.session;
+      window.currentGatewaySessionId = sessionId;
+      window.location.href = '/gateway/compliance?session_id=' + encodeURIComponent(sessionId);
+    });
   });
 }
 
 async function loadGatewaySessions() {
-  const logDir = currentLogDir();
+  const logDir = await resolveLogDir();
   if (!logDir) {
     text("#gw_sessions_status", "informe um log_dir para monitorar");
     return;
@@ -323,12 +376,12 @@ async function loadGatewaySessions() {
   const qs = buildQuery({
     log_dir: logDir,
     limit: "60",
-    actor: document.getElementById("gw_session_actor")?.value || "",
-    logname: document.getElementById("gw_session_logname")?.value || "",
-    session_id: document.getElementById("gw_session_id_filter")?.value || "",
+    actor: document.getElementById("gw_session_actor_output")?.value || "",
+    logname: document.getElementById("gw_session_logname_output")?.value || "",
+    session_id: document.getElementById("gw_session_id_filter_output")?.value || "",
     event_type: document.getElementById("gw_session_event_type")?.value || "",
-    uid: currentUidGidValue("uid"),
-    gid: currentUidGidValue("gid"),
+    uid: document.getElementById("gw_session_uid_select")?.value || "",
+    gid: document.getElementById("gw_session_gid_select")?.value || "",
     ts_from: document.getElementById("gw_session_ts_from")?.value || "",
     ts_to: document.getElementById("gw_session_ts_to")?.value || "",
     q: document.getElementById("gw_session_q")?.value || "",
@@ -336,6 +389,61 @@ async function loadGatewaySessions() {
   const result = await apiJson(`/api/gateway/sessions?${qs}`);
   if (result?.data) renderGatewaySessions(result.data);
 }
+
+// ── WebSocket — status do serviço em tempo real ────────────────────────────
+
+let _wsGateway = null;
+let _wsLastUpdate = null;
+
+function renderServiceStatus(data) {
+  const yes = (v) => v ? '<span class="text-emerald-300">sim</span>' : '<span class="text-rose-300">não</span>';
+  const run = (v) => v ? '<span class="text-emerald-300">rodando</span>' : '<span class="text-rose-300">parado</span>';
+  const svc = data.service || "?";
+  const ss = data.service_running ? "running" : (data.socket_running ? "socket" : "dead");
+  html("#gw_svc_sshd", `${run(data.running)} <span class="text-xs text-stone-500">(${svc} ${ss})</span>`);
+  html("#gw_svc_wrapper", data.capture_installed ? yes(true) : '<span class="text-rose-300">não instalado</span>');
+  const cfgs = data.capture_configs || [];
+  html("#gw_svc_ssh_int", cfgs.length
+    ? `<span class="text-emerald-300">sim</span> <span class="text-xs text-stone-500">(${cfgs.join(", ")})</span>`
+    : '<span class="text-rose-300">não configurado</span>');
+  html("#gw_svc_active", data.capture_active
+    ? '<span class="text-emerald-300">pronta</span>'
+    : '<span class="text-amber-300">incompleta</span>');
+  const errEl = document.getElementById("gw_svc_error");
+  if (data.error) {
+    errEl.classList.remove("hidden");
+    errEl.textContent = data.error;
+  } else {
+    errEl.classList.add("hidden");
+  }
+  _wsLastUpdate = Date.now();
+  updateWsAge();
+}
+
+function updateWsAge() {
+  const el = document.getElementById("gw_ws_age");
+  if (!el || !_wsLastUpdate) return;
+  const s = Math.round((Date.now() - _wsLastUpdate) / 1000);
+  el.textContent = s < 60 ? `atualizado há ${s}s` : `atualizado há ${Math.floor(s/60)}min`;
+}
+
+function connectGatewayWs() {
+  if (_wsGateway) return;
+  _wsGateway = connectWs("/ws/gateway-status", {
+    onMessage: (data) => renderServiceStatus(data),
+    onOpen: () => {
+      const ind = document.getElementById("gw_ws_indicator");
+      if (ind) { ind.className = "ml-2 inline-block w-2 h-2 rounded-full bg-emerald-400"; ind.title = "websocket conectado"; }
+    },
+    onClose: () => {
+      const ind = document.getElementById("gw_ws_indicator");
+      if (ind) { ind.className = "ml-2 inline-block w-2 h-2 rounded-full bg-rose-400"; ind.title = "websocket desconectado"; }
+    },
+  });
+}
+
+// Atualiza o age a cada 10s
+setInterval(updateWsAge, 10000);
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -348,19 +456,35 @@ window.addEventListener("DOMContentLoaded", () => {
   loadAdvancedSelections();
   loadGatewayMonitor();
   loadGatewaySessions();
+  connectGatewayWs();
+
+  // Auto-load session detail from URL param
+  const urlParams = new URLSearchParams(window.location.search);
+  const sidParam = urlParams.get('session_id');
+  if (sidParam) {
+    activatePageSections("gateway", "compliance");
+    window.currentGatewaySessionId = sidParam;
+    // Wait for logDir to be available
+    setTimeout(() => loadGatewaySessionDetail(sidParam), 500);
+  }
 
   document.getElementById("gateway_activate_btn")?.addEventListener("click", activateGateway);
   document.getElementById("gateway_deactivate_btn")?.addEventListener("click", () => deactivateGateway(false));
   document.getElementById("load_gateway_monitor_btn")?.addEventListener("click", loadGatewayMonitor);
   document.getElementById("load_gateway_sessions_btn")?.addEventListener("click", loadGatewaySessions);
 
-  ["gw_session_event_type", "gw_session_uid_select", "gw_session_gid_select"].forEach((id) => {
+  ["gw_session_event_type", "gw_session_actor_output", "gw_session_logname_output", "gw_session_id_filter_output", "gw_session_uid_select", "gw_session_gid_select"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", loadGatewaySessions);
   });
-  ["gw_session_actor", "gw_session_logname", "gw_session_id_filter", "gw_session_uid", "gw_session_gid", "gw_session_ts_from", "gw_session_ts_to", "gw_session_q"].forEach((id) => {
+  // Campos de texto livre: input event para filtro em tempo real
+  ["gw_session_ts_from", "gw_session_ts_to", "gw_session_q"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", loadGatewaySessions);
   });
   ["gw_detail_seq_from", "gw_detail_seq_to", "gw_detail_ts_from", "gw_detail_ts_to", "gw_detail_limit"].forEach((id) =>
     document.getElementById(id)?.addEventListener("input", () => loadGatewaySessionDetail(window.currentGatewaySessionId)),
   );
+
+  // Inicializa toggles de visualização tabela/cards
+  applyViewToggle("gw_events_table_view", "gw_events_cards_view", "gw_events_view_toggle", "gw_events_count");
+  applyViewToggle("gw_detail_table_view", "gw_detail_cards_view", "gw_detail_view_toggle", "gw_session_detail_status");
 });

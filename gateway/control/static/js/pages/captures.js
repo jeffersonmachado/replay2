@@ -56,6 +56,12 @@ function buildReplayViewHref(captureId, sessionId) {
   return `/captures/${captureId}/replay?${params.toString()}`;
 }
 
+function normalizeNumber(value, fallback, min, max) {
+  const num = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(num, max));
+}
+
 function renderCaptureSessionCard(captureId, session, preferredSessionId) {
   const sessionId = String(session?.session_id || "").trim();
   const actor = String(session?.actor || "-").trim() || "-";
@@ -108,6 +114,9 @@ function renderCaptureSessionCard(captureId, session, preferredSessionId) {
 function renderCaptureCard(cap) {
   const env = cap.environment || {};
   const envName = env.env_name || env.hostname || "-";
+  const sessionCount = cap.session_count ?? "-";
+  const eventCount = cap.event_count ?? "-";
+  const reason = cap.stop_reason || cap.interrupted_reason || cap.notes || "";
   return `
     <div class="r2ctl-detail-surface rounded-2xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
       <div class="flex-1 min-w-0">
@@ -116,27 +125,93 @@ function renderCaptureCard(cap) {
           <span class="text-xs text-stone-400">#${cap.id} · ${fmt(cap.started_at_ms)}</span>
         </div>
         <div class="text-xs text-stone-400 space-x-2">
-          <span>por <span class="text-stone-300">${cap.created_by_username || "-"}</span></span>
+          <span>criada por <span class="text-stone-300">${cap.created_by_username || "-"}</span></span>
           <span>·</span>
           <span>env: <span class="text-stone-300 font-mono">${envName}</span></span>
           ${cap.connection_profile_name ? `<span>·</span><span>perfil: <span class="text-stone-300">${cap.connection_profile_name}</span></span>` : ""}
+          <span>·</span>
+          <span>sessões: <span class="text-stone-300">${sessionCount}</span></span>
+          ${eventCount !== "-" ? `<span>·</span><span>eventos: <span class="text-stone-300">${eventCount}</span></span>` : ""}
           ${cap.ended_at_ms ? `<span>·</span><span>encerrou ${fmt(cap.ended_at_ms)}</span>` : ""}
         </div>
+        ${reason ? `<div class="text-xs text-amber-300/80 italic mt-1">Motivo: ${escapeHtml(reason)}</div>` : ""}
       </div>
       <a href="/captures/${cap.id}" class="r2ctl-btn-soft text-xs shrink-0">Ver detalhe</a>
     </div>`;
 }
 
+// ── Paginação ──────────────────────────────────────────────────────────────
+
+let _capturesPage = 0;
+let _capturesTotal = 0;
+
+function capturesPageSize() {
+  return parseInt(document.getElementById("captures_page_size")?.value || "20", 10);
+}
+
+function capturesSearch() {
+  return document.getElementById("captures_search")?.value?.trim() || "";
+}
+
+function goToPage(page) {
+  if (page < 0) page = 0;
+  const totalPages = Math.max(1, Math.ceil(_capturesTotal / capturesPageSize()));
+  if (page >= totalPages) page = totalPages - 1;
+  _capturesPage = page;
+  loadCaptures();
+}
+
 async function loadCaptures() {
-  const result = await apiJson("/api/captures?limit=60");
+  const limit = capturesPageSize();
+  const offset = _capturesPage * limit;
+  const search = capturesSearch();
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (search) params.set("search", search);
+
+  const author = (document.getElementById("captures_author")?.value || "").trim();
+  const tsFrom = document.getElementById("captures_ts_from")?.value || "";
+  const tsTo = document.getElementById("captures_ts_to")?.value || "";
+  const status = document.getElementById("captures_status")?.value || "";
+  if (author) params.set("created_by", author);
+  // Converte data YYYY-MM-DD para ms (início/fim do dia UTC)
+  if (tsFrom) params.set("ts_from", String(new Date(tsFrom + "T00:00:00Z").getTime()));
+  if (tsTo) params.set("ts_to", String(new Date(tsTo + "T23:59:59.999Z").getTime()));
+  if (status) params.set("status", status);
+
+  const result = await apiJson(`/api/captures?${params.toString()}`);
   if (!result) return;
   const items = (result.data?.captures || []);
+  _capturesTotal = result.data?.total || items.length;
+
   html(
     "#captures_list_content",
     items.length
       ? items.map(renderCaptureCard).join("")
-      : '<div class="text-sm text-stone-400">Nenhuma captura registrada ainda.</div>',
+      : '<div class="text-sm text-stone-400">Nenhuma captura ' + (search ? 'para "' + search + '"' : 'registrada ainda.') + '</div>',
   );
+
+  // Atualiza controles de paginação
+  const totalPages = Math.max(1, Math.ceil(_capturesTotal / capturesPageSize()));
+  const pagDiv = document.getElementById("captures_pagination");
+  if (pagDiv) pagDiv.classList.toggle("hidden", _capturesTotal <= capturesPageSize());
+
+  const info = document.getElementById("captures_page_info");
+  if (info) {
+    const from = _capturesTotal > 0 ? offset + 1 : 0;
+    const to = Math.min(offset + items.length, _capturesTotal);
+    info.textContent = `${from}-${to} de ${_capturesTotal}`;
+  }
+
+  document.getElementById("captures_page_first")?.classList.toggle("opacity-40", _capturesPage === 0);
+  document.getElementById("captures_page_prev")?.classList.toggle("opacity-40", _capturesPage === 0);
+  document.getElementById("captures_page_next")?.classList.toggle("opacity-40", _capturesPage >= totalPages - 1);
+  document.getElementById("captures_page_last")?.classList.toggle("opacity-40", _capturesPage >= totalPages - 1);
+
+  // Banner de info
+  const infoBanner = document.getElementById("captures_gateway_info");
+  if (infoBanner) {
+    infoBanner.classList.toggle("hidden", items.length > 0 || !_gatewayActive);
+  }
 }
 
 // ── Estado do gateway para nova captura ───────────────────────────────────
@@ -161,10 +236,12 @@ async function loadGatewayState() {
   const startBtn = document.getElementById("cap_start_btn");
   const inactiveMsg = document.getElementById("cap_gw_inactive_msg");
   const alertBanner = document.getElementById("captures_gateway_alert");
+  const infoBanner = document.getElementById("captures_gateway_info");
 
   if (startBtn) startBtn.disabled = !_gatewayActive;
   if (inactiveMsg) inactiveMsg.classList.toggle("hidden", _gatewayActive);
   if (alertBanner) alertBanner.classList.toggle("hidden", _gatewayActive);
+  // Info banner controlado pelo loadCaptures (mostra só se não houver capturas)
 }
 
 // ── Seleções avancadas ─────────────────────────────────────────────────────
@@ -257,6 +334,7 @@ async function loadCaptureDetail(captureId) {
   text("#cap_detail_profile", cap.connection_profile_name || "nenhum");
   text("#cap_detail_logdir", cap.log_dir || "-");
   window._currentCaptureLogDir = cap.log_dir || "";
+  setupSynthesisPanel(captureId, cap);
 
   // Botao de encerrar
   const stopBtn = document.getElementById("cap_stop_btn");
@@ -319,6 +397,98 @@ async function loadCaptureDetail(captureId) {
   window._currentCaptureId = captureId;
 }
 
+function setupSynthesisPanel(captureId, capture) {
+  const panel = document.getElementById("cap_synthesis_panel");
+  if (!panel) return;
+  const isFinished = String(capture?.status || "") === "finished";
+  panel.classList.toggle("hidden", !isFinished);
+  if (!isFinished) return;
+
+  const sourceInput = document.getElementById("cap_synth_source_dir");
+  const samplesInput = document.getElementById("cap_synth_samples");
+  const seedInput = document.getElementById("cap_synth_seed");
+  if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || "";
+  if (samplesInput && !samplesInput.value) samplesInput.value = localStorage.getItem("replay2.captureSynth.samples") || "10";
+  if (seedInput && !seedInput.value) seedInput.value = localStorage.getItem("replay2.captureSynth.seed") || "42";
+
+  const btn = document.getElementById("cap_synthesize_btn");
+  if (btn) btn.onclick = () => synthesizeCapture(captureId);
+}
+
+async function synthesizeCapture(captureId) {
+  const btn = document.getElementById("cap_synthesize_btn");
+  const sourceInput = document.getElementById("cap_synth_source_dir");
+  const samplesInput = document.getElementById("cap_synth_samples");
+  const seedInput = document.getElementById("cap_synth_seed");
+  const feedback = document.getElementById("cap_synthesis_feedback");
+  const resultEl = document.getElementById("cap_synthesis_result");
+
+  const sourceDir = String(sourceInput?.value || "").trim();
+  const samples = normalizeNumber(samplesInput?.value, 10, 1, 10000);
+  const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
+
+  if (!sourceDir) {
+    if (feedback) {
+      feedback.className = "mt-3 text-sm text-amber-300";
+      feedback.textContent = "Informe o source_dir.";
+    }
+    return;
+  }
+
+  localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
+  localStorage.setItem("replay2.captureSynth.samples", String(samples));
+  localStorage.setItem("replay2.captureSynth.seed", String(seed));
+
+  if (btn) { btn.disabled = true; btn.textContent = "Gerando..."; }
+  if (feedback) {
+    feedback.className = "mt-3 text-sm text-stone-300";
+    feedback.textContent = "Gerando template, dataset e sessões sintéticas...";
+  }
+  if (resultEl) {
+    resultEl.classList.add("hidden");
+    resultEl.innerHTML = "";
+  }
+
+  const response = await apiJson(`/api/captures/${captureId}/synthesize`, jsonRequest("POST", {
+    source_dir: sourceDir,
+    samples,
+    seed,
+    name: `capture_${captureId}_seed_${seed}`,
+    validate: true,
+  }));
+
+  if (btn) { btn.disabled = false; btn.textContent = "Gerar"; }
+
+  if (!response?.ok) {
+    if (feedback) {
+      feedback.className = "mt-3 text-sm text-rose-300";
+      feedback.textContent = response?.data?.error || "Falha ao gerar dados sintéticos.";
+    }
+    return;
+  }
+
+  const data = response.data || {};
+  const artifacts = data.artifacts || {};
+  const validation = data.validation || {};
+  if (feedback) {
+    feedback.className = "mt-3 text-sm text-emerald-300";
+    feedback.textContent = `${formatCount(data.generated_sessions || 0)} sessão(ões) gerada(s).`;
+  }
+  if (resultEl) {
+    resultEl.classList.remove("hidden");
+    resultEl.innerHTML = `
+      <div class="grid gap-2 text-xs md:grid-cols-2">
+        <span>jornada: <span class="font-mono text-emerald-50">${escapeHtml(data.journey_id || "-")}</span></span>
+        <span>validas: <span class="font-mono text-emerald-50">${formatCount(validation.valid_sessions || 0)}/${formatCount(validation.total_sessions || data.generated_sessions || 0)}</span></span>
+        <span class="md:col-span-2">template: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.template || "-")}</span></span>
+        <span class="md:col-span-2">dataset: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.dataset || "-")}</span></span>
+        <span class="md:col-span-2">sessões: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.sessions_dir || "-")}</span></span>
+        <span class="md:col-span-2">relatório: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.report || "-")}</span></span>
+      </div>
+    `;
+  }
+}
+
 function renderCaptureSessions(captureId, capture, sessions, preferredSessionId) {
   const listEl = document.getElementById("cap_sessions_list");
   const summaryEl = document.getElementById("cap_sessions_summary");
@@ -371,7 +541,24 @@ window.addEventListener("DOMContentLoaded", async () => {
     activatePageSections("captures", "list");
     await loadCaptures();
     await loadGatewayState();
-    document.getElementById("reload_captures_btn")?.addEventListener("click", loadCaptures);
+    // Paginação
+    document.getElementById("captures_page_first")?.addEventListener("click", () => goToPage(0));
+    document.getElementById("captures_page_prev")?.addEventListener("click", () => goToPage(_capturesPage - 1));
+    document.getElementById("captures_page_next")?.addEventListener("click", () => goToPage(_capturesPage + 1));
+    document.getElementById("captures_page_last")?.addEventListener("click", () => goToPage(Math.ceil(_capturesTotal / capturesPageSize()) - 1));
+    document.getElementById("captures_page_size")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
+    // Filtro com debounce para campos de texto
+    let searchTimer = null;
+    const debouncedReload = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { _capturesPage = 0; loadCaptures(); }, 300);
+    };
+    document.getElementById("captures_search")?.addEventListener("input", debouncedReload);
+    document.getElementById("captures_author")?.addEventListener("input", debouncedReload);
+    // Filtros sem debounce (select e number)
+    document.getElementById("captures_status")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
+    document.getElementById("captures_ts_from")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
+    document.getElementById("captures_ts_to")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
     document.getElementById("cap_start_btn")?.addEventListener("click", startCapture);
   }
 });

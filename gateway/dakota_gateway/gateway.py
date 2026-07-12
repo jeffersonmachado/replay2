@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import pty
 import selectors
+import struct
 import subprocess
 import time
 import tty
@@ -21,6 +23,17 @@ from .screen import (
     build_screen_snapshot_from_bytes,
     split_input_for_deterministic_record,
 )
+
+
+def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
+    """Apply TIOCSWINSZ to set terminal window size on the PTY."""
+    if termios is None:
+        return
+    try:
+        winsize = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+    except Exception:
+        pass
 
 
 _CLEAR_PATTERNS = [
@@ -266,6 +279,8 @@ class TerminalGateway:
             or ""
         )
         master_fd, slave_fd = pty.openpty()
+        # Configurar geometria do terminal
+        _configure_pty(slave_fd, rows=25, cols=80)
         batch_mode = str(self.cfg.ssh_batch_mode or "no").strip().lower()
         use_setsid = batch_mode == "yes"
         try:
@@ -276,6 +291,7 @@ class TerminalGateway:
                 stderr=slave_fd,
                 preexec_fn=os.setsid if use_setsid else None,
                 close_fds=True,
+                env=dict(os.environ, TERM="xterm"),
             )
         finally:
             os.close(slave_fd)

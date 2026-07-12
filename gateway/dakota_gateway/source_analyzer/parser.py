@@ -19,6 +19,7 @@ from .relationship_mapper import RelationshipMapper, RelationshipMap
 from .menu_analyzer import MenuAnalyzer, MenuTree
 from .screen_entity_linker import ScreenEntityLinker, ScreenEntityBinding
 from .program_catalog import ProgramCatalog, ProgramEntry
+from .source_inventory import collect_preferred_source_files
 from ..synthetic.ddl_parser import DDLParser
 from ..synthetic.business_dataset_planner import (
     BusinessDatasetPlanner,
@@ -211,16 +212,8 @@ class SourceParser:
     # ------------------------------------------------------------------
 
     def _collect_source_files(self) -> list[Path]:
-        # .prg = codigo fonte legado, .sql = schema DDL/DML de apoio
-        extensions = {".prg", ".sql"}
-        files: list[Path] = []
-        if self.source_dir.is_file():
-            if self.source_dir.suffix.lower() in extensions:
-                return [self.source_dir]
-            return []
-        for ext in extensions:
-            files.extend(self.source_dir.rglob(f"*{ext}"))
-        return sorted(files)
+        # Prefere .prg quando existe par .dbo do mesmo programa.
+        return collect_preferred_source_files(self.source_dir, {".prg", ".sql", ".dbo"})
 
     def _parse_file(self, file_path: Path, content: str) -> None:
         if file_path.suffix.lower() == ".sql":

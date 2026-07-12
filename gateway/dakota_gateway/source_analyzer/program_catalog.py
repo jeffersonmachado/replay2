@@ -13,6 +13,7 @@ from typing import Optional
 
 from .entity_catalog import EntityDefinition
 from .screen_entity_linker import ScreenEntityBinding
+from .source_inventory import collect_preferred_source_files
 
 
 @dataclass
@@ -232,13 +233,13 @@ class ProgramCatalog:
 
         entity_names = {e.name.upper() for e in entities}
 
-        for prg_file in sorted(self.source_dir.rglob("*.prg")):
-            src_str = str(prg_file)
+        for source_file in collect_preferred_source_files(self.source_dir, {".prg", ".dbo"}):
+            src_str = str(source_file)
             if src_str in bindings_by_file:
                 continue
 
             try:
-                content = prg_file.read_text(encoding="utf-8", errors="replace")
+                content = source_file.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
 
@@ -264,7 +265,7 @@ class ProgramCatalog:
                         if op_name not in operations:
                             operations.append(op_name)
 
-            name = prg_file.stem
+            name = source_file.stem
             module, submodule = self._infer_module(src_str, name)
 
             entry = ProgramEntry(

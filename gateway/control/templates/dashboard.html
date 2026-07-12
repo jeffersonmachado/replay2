@@ -91,6 +91,41 @@
     <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
       <div class="mb-4 flex items-center justify-between gap-3">
         <div>
+          <h2 class="r2ctl-section-title text-lg font-semibold">Capturas</h2>
+          <p class="r2ctl-section-copy text-sm">Sessões de captura de produção vinculadas ao gateway.</p>
+        </div>
+        <a href="/captures" class="r2ctl-btn-soft">Abrir Capturas</a>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-4">
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Total</div>
+          <div id="dashboard_captures_total" class="mt-2 text-lg font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Ativas</div>
+          <div id="dashboard_captures_active" class="mt-2 text-lg font-semibold text-emerald-300">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Finalizadas</div>
+          <div id="dashboard_captures_finished" class="mt-2 text-lg font-semibold text-stone-100">0</div>
+        </div>
+        <div class="r2ctl-detail-surface rounded-2xl p-4">
+          <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Interrompidas</div>
+          <div id="dashboard_captures_interrupted" class="mt-2 text-lg font-semibold text-amber-300">0</div>
+        </div>
+      </div>
+      <div class="mt-4">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Últimas capturas</h3>
+          <span id="dashboard_captures_status" class="text-xs text-stone-400">carregando</span>
+        </div>
+        <div id="dashboard_recent_captures" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
           <h2 class="r2ctl-section-title text-lg font-semibold">Ferramentas de Engenharia</h2>
           <p class="r2ctl-section-copy text-sm">Pipeline de descoberta, benchmark entre ambientes e AI Assessment.</p>
         </div>

@@ -10,6 +10,7 @@ from typing import Any, Optional
 from .journey import JourneyDefinition, JourneyStep, JourneyDataset
 from ..source_analyzer.parser import SourceParser
 from ..source_analyzer.entity_catalog import ScreenDefinition
+from ..source_analyzer.source_inventory import collect_preferred_source_files
 
 # Padrões para detectar navegação em código legado Recital/xBase
 _RE_DO_PROGRAM = re.compile(r"DO\s+(\w+(?:/\w+)*)", re.IGNORECASE)
@@ -262,13 +263,7 @@ class JourneyInferencer:
     def _collect_source_files(self) -> list[Path]:
         if not self.source_dir:
             return []
-        extensions = {".prg", ".src"}
-        files: list[Path] = []
-        if self.source_dir.is_file():
-            return [self.source_dir]
-        for ext in extensions:
-            files.extend(self.source_dir.rglob(f"*{ext}"))
-        return sorted(files)
+        return collect_preferred_source_files(self.source_dir, {".prg", ".src", ".dbo"})
 
     @staticmethod
     def _extract_calls(content: str) -> list[str]:

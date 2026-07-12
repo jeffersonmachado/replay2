@@ -19,6 +19,7 @@ from control.services.capture_service import (
     start_capture as _start_capture,
     stop_capture as _stop_capture,
 )
+from control.services.capture_synthesis_service import synthesize_capture as _synthesize_capture
 from control.services.gateway_observability_service import (
     read_gateway_sessions as _read_gateway_sessions,
 )
@@ -40,13 +41,20 @@ def handle_capture_get_route(
         if not user:
             return True
         qs = parse_qs_fn(parsed_path.query or "")
-        limit = max(1, min(int((qs.get("limit") or ["60"])[0] or 60), 500))
+        limit = max(1, min(int((qs.get("limit") or ["20"])[0] or 20), 500))
+        offset = max(0, int((qs.get("offset") or ["0"])[0] or 0))
+        search = (qs.get("search") or [""])[0] or ""
+        created_by = (qs.get("created_by") or [""])[0] or ""
+        ts_from = max(0, int((qs.get("ts_from") or ["0"])[0] or 0))
+        ts_to = max(0, int((qs.get("ts_to") or ["0"])[0] or 0))
+        status = (qs.get("status") or [""])[0] or ""
         con = handler._db()
         try:
-            items = _list_captures(con, limit=limit)
+            items, total = _list_captures(con, limit=limit, offset=offset, search=search,
+                                          created_by=created_by, ts_from=ts_from, ts_to=ts_to, status=status)
         finally:
             handler._db_release(con)
-        write_json(handler, 200, {"captures": items, "total": len(items)})
+        write_json(handler, 200, {"captures": items, "total": total, "limit": limit, "offset": offset})
         return True
 
     # GET /api/captures/{id}/events — lê todos os eventos do log_dir da sessão
@@ -254,6 +262,51 @@ def handle_capture_post_route(
         finally:
             handler._db_release(con)
         write_json(handler, 200, capture)
+        return True
+
+    # POST /api/captures/{id}/synthesize
+    if path.startswith("/api/captures/") and path.endswith("/synthesize"):
+        user = handler._require(roles={"admin", "operator"})
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+
+        source_dir = str(body.get("source_dir") or "").strip()
+        if not source_dir:
+            write_json(handler, 400, {"error": "source_dir obrigatório"})
+            return True
+
+        con = handler._db()
+        try:
+            payload = _synthesize_capture(
+                con,
+                capture_id,
+                source_dir=source_dir,
+                samples=int(body.get("samples", 10)),
+                seed=body.get("seed"),
+                name=str(body.get("name") or "").strip(),
+                out_dir=str(body.get("out_dir") or "").strip(),
+                include_validation=bool(body.get("validate", True)),
+                include_stress=bool(body.get("stress", False)),
+                concurrency=int(body.get("concurrency", 5)),
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status = 404 if "não encontrada" in message else 400
+            write_json(handler, status, {"ok": False, "error": message})
+            return True
+        except Exception as exc:
+            write_json(handler, 500, {"ok": False, "error": str(exc)})
+            return True
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
         return True
 
     return False

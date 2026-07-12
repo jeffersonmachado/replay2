@@ -10,6 +10,9 @@ import traceback
 from typing import Callable
 
 
+CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
+
+
 def error_guard(method: Callable) -> Callable:
     """Decorator que envolve um metodo handler com try/except global.
 
@@ -21,6 +24,9 @@ def error_guard(method: Callable) -> Callable:
     def wrapper(self, *args, **kwargs):
         try:
             return method(self, *args, **kwargs)
+        except CLIENT_DISCONNECT_ERRORS:
+            # Cliente fechou a conexao antes da resposta terminar.
+            return None
         except Exception as exc:
             traceback.print_exc()
             try:
@@ -32,6 +38,8 @@ def error_guard(method: Callable) -> Callable:
                     ensure_ascii=False,
                 )
                 self.wfile.write(payload.encode("utf-8"))
+            except CLIENT_DISCONNECT_ERRORS:
+                return None
             except Exception:
                 pass  # conexao pode ja estar fechada
 
@@ -49,5 +57,7 @@ def safe_write_json(handler, status_code: int, payload: dict | list) -> None:
         handler.send_header("Content-Type", "application/json; charset=utf-8")
         handler.end_headers()
         handler.wfile.write(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
+    except CLIENT_DISCONNECT_ERRORS:
+        return None
     except Exception:
         pass

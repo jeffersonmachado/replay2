@@ -22,6 +22,7 @@ if str(GATEWAY_DIR) not in sys.path:
 from dakota_gateway.source_analyzer.parser import SourceParser
 from dakota_gateway.source_analyzer.screen_entity_linker import ScreenEntityLinker
 from dakota_gateway.source_analyzer.program_catalog import ProgramCatalog
+from dakota_gateway.source_analyzer.source_inventory import collect_preferred_source_files
 from dakota_gateway.synthetic.business_dataset_planner import BusinessDatasetPlanner
 from dakota_gateway.synthetic.synthetic_evidence_report import SyntheticEvidenceReportBuilder
 from dakota_gateway.synthetic.data_synthesizer import DataSynthesizer
@@ -299,7 +300,7 @@ def main():
             relationships=rels,
             dependency_graph=graph,
             program_catalog=catalog,
-            source_files_count=len(list(base_dir.rglob("*.prg"))),
+            source_files_count=len(collect_preferred_source_files(base_dir, {".prg", ".dbo", ".sql"})),
         )
         print(f"  Warnings: {len(evidence.warnings)}", file=sys.stderr)
         for w in evidence.warnings[:5]:

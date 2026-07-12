@@ -3,13 +3,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import platform
 import secrets
 import shutil
+import sys
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+# ── Logging padronizado ──
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-5s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stderr,
+)
+log = logging.getLogger("replay2")
 
 from dakota_gateway import auth
 from dakota_gateway.source_analyzer.audit import get_audit_log, clear_audit_log, set_db_pool
@@ -132,6 +144,12 @@ from control.server_support import (
     run_cmd as _support_run_cmd,
 )
 from control.error_middleware import error_guard
+from control.websocket_support import (
+    ws_handshake,
+    ws_recv_frame,
+    ws_send_ping,
+    get_broadcaster,
+)
 
 
 def _is_weak_password(password: str) -> bool:
@@ -150,6 +168,35 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 def _gateway_service_status() -> dict:
     return _support_gateway_service_status(run_cmd_fn=lambda cmd: _run_cmd(cmd))
+
+
+def _full_gateway_status(con) -> dict:
+    """Status completo do gateway: serviço + estado lógico + política."""
+    service_status = _gateway_service_status()
+    try:
+        from control.services.gateway_state_service import build_operational_policy, get_gateway_state
+        logical_state = get_gateway_state(con)
+    except Exception:
+        logical_state = {}
+        build_operational_policy = None
+    if build_operational_policy is not None:
+        policy = build_operational_policy(
+            logical_active=bool(logical_state.get("active")),
+            service_running=bool(service_status.get("running")),
+        )
+    else:
+        policy = {"policy_ok": False, "reason": "falha ao avaliar política"}
+    return {
+        **service_status,
+        "logical_active": bool(logical_state.get("active")),
+        "activated_by_username": logical_state.get("activated_by_username"),
+        "activated_at_ms": logical_state.get("activated_at_ms"),
+        "environment": logical_state.get("environment") or {},
+        "policy": policy,
+        "capture_available": bool(policy.get("capture_available")),
+        "ssh_desired_route": policy.get("desired_ssh_route"),
+        "ssh_effective_route": policy.get("effective_ssh_route"),
+    }
 
 
 def _gateway_toggle(enabled: bool) -> dict:
@@ -185,6 +232,7 @@ class ControlServer(ThreadingHTTPServer):
         hmac_key: bytes,
         capture_log_dir: str = "",
         hmac_key_file: str = "",
+        gateway_auto_activate: bool = False,
     ):
         super().__init__(addr, handler)
         self.db_path = db_path
@@ -203,13 +251,16 @@ class ControlServer(ThreadingHTTPServer):
             )
             stale = int(startup_state.get("stale_captures_interrupted") or 0)
             if stale:
-                print(f"[startup] {stale} captura(s) ativa(s) marcada(s) como interrupted (processo anterior encerrado)")
+                log.info("[startup] %s captura(s) ativa(s) marcada(s) como interrupted (processo anterior encerrado)", stale)
             resumed = startup_state.get("resumed_capture")
             if resumed:
-                print(
-                    f"[startup] captura retomada automaticamente para gateway ativo "
-                    f"(capture_id={int(resumed.get('id') or 0)})"
+                log.info(
+                    "[startup] captura retomada automaticamente para gateway ativo "
+                    "(capture_id=%s)", int(resumed.get('id') or 0)
                 )
+            # Auto-ativação do gateway no boot
+            if gateway_auto_activate and not resumed:
+                self._auto_activate_gateway(con)
         finally:
             self.db_pool.release(con)
         # Injeta conexao DB no modulo de auditoria para persistencia
@@ -224,6 +275,32 @@ class ControlServer(ThreadingHTTPServer):
             project_root=default_project_root_from_file(__file__),
             hmac_key_file=hmac_key_file,
         )
+
+    def _auto_activate_gateway(self, con):
+        """Ativa o gateway automaticamente no boot."""
+        from dakota_gateway.state_db import now_ms
+        # Busca o admin para usar como activated_by
+        admin = con.execute("SELECT id, username FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+        if not admin:
+            log.warning("[startup] gateway auto-ativacao abortada: nenhum admin encontrado")
+            return
+        env = {"hostname": platform.node(), "fqdn": platform.node(), "platform": platform.system(),
+               "platform_release": platform.release(), "pid": os.getpid(), "env_name": platform.node()}
+        env_json = json.dumps(env)
+        con.execute(
+            "INSERT OR REPLACE INTO gateway_state (id, active, activated_by_username, activated_by_id,"
+            " activated_at_ms, environment_json, connection_profile_id)"
+            " VALUES (1, 1, ?, ?, ?, ?, NULL)",
+            (admin["username"], admin["id"], now_ms(), env_json),
+        )
+        con.execute(
+            "INSERT INTO capture_sessions (session_uuid, status, created_by, created_by_username,"
+            " started_at_ms, environment_json, log_dir, notes)"
+            " VALUES (?, 'active', ?, ?, ?, ?, ?, 'auto-activado no boot')",
+            (str(uuid.uuid4()), admin["id"], admin["username"], now_ms(), env_json, self.capture_log_dir),
+        )
+        con.commit()
+        log.info("[startup] gateway auto-ativado por %s (DAKOTA_GATEWAY_AUTO_ACTIVATE=true)", admin["username"])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -378,6 +455,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
 
+    def _handle_ws_gateway_status(self):
+        """WebSocket /ws/gateway-status — push em tempo real do status completo (serviço + lógico)."""
+        if not ws_handshake(self):
+            self.send_response(400)
+            self.end_headers()
+            return
+        def full_status():
+            con = self._db()
+            try:
+                return _full_gateway_status(con)
+            finally:
+                self._db_release(con)
+        broadcaster = get_broadcaster(status_fn=full_status)
+        broadcaster.add_client(self)
+        try:
+            while True:
+                frame = ws_recv_frame(self)
+                if frame is None:
+                    break
+                if frame["opcode"] == 0x8:  # close
+                    break
+                if frame["opcode"] == 0x9:  # ping → pong
+                    pass
+        finally:
+            broadcaster.remove_client(self)
+
     def _serve_knowledge_base(self, p):
         """Endpoint /api/knowledge-base — P2-A (admin only)."""
         from urllib.parse import parse_qs as _parse_qs
@@ -445,23 +548,24 @@ class Handler(BaseHTTPRequestHandler):
         # Limite de arquivos
         import time as _time
         start = _time.time()
-        prg_count = len(list(Path(source_dir).rglob("*.prg")))
-        if prg_count > 5000:
+        from dakota_gateway.source_analyzer.parser import SourceParser
+
+        parser = SourceParser(source_dir)
+        source_count = len(parser._collect_source_files())
+        if source_count > 5000:
             self.send_response(400)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps({
-                "error": f"muitos arquivos .prg ({prg_count}). Limite: 5000",
+                "error": f"muitos arquivos fonte ({source_count}). Limite: 5000",
             }, ensure_ascii=False).encode("utf-8"))
             return
 
         try:
-            from dakota_gateway.source_analyzer.parser import SourceParser
-            parser = SourceParser(source_dir)
             parser.parse_all()
             report = parser.discovery_report()
             elapsed = _time.time() - start
-            report["_meta"] = {"elapsed_s": round(elapsed, 2), "files_scanned": prg_count}
+            report["_meta"] = {"elapsed_s": round(elapsed, 2), "files_scanned": source_count}
         except Exception as exc:
             self.send_response(500)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -487,6 +591,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
+
+        # ── WebSocket gateway status (tempo real) ──
+        if p.path == "/ws/gateway-status":
+            self._handle_ws_gateway_status()
+            return
 
         # ── Healthcheck endpoints (sem auth) ──
         if p.path == "/health":
@@ -661,6 +770,8 @@ def main():
         ap.add_argument("--cookie-secret-file", required=True)
         ap.add_argument("--hmac-key-file", required=True)
         ap.add_argument("--bootstrap-admin", default="")  # username:password
+        ap.add_argument("--gateway-auto-activate", action="store_true",
+                        help="Ativa o gateway automaticamente no boot do servidor")
         args = ap.parse_args()
 
         host, port_s = args.listen.rsplit(":", 1)
@@ -678,33 +789,33 @@ def main():
         # ── DAKOTA_ENV: modo de operação ──
         dakota_env = os.environ.get("DAKOTA_ENV", "lab").strip().lower()
         if dakota_env not in ("lab", "production", "homologation"):
-                print(f"Aviso: DAKOTA_ENV='{dakota_env}' desconhecido. Use: lab, production, homologation")
+                log.warning("DAKOTA_ENV='%s' desconhecido. Use: lab, production, homologation", dakota_env)
                 dakota_env = "lab"
 
         if dakota_env == "production":
-                print("🔒 MODO PRODUÇÃO ATIVO — segurança reforçada")
+                log.warning("MODO PRODUCAO ATIVO — seguranca reforcada")
                 if not os.environ.get("DAKOTA_ADMIN"):
                         raise SystemExit(
                             "DAKOTA_ENV=production requer DAKOTA_ADMIN definido.\n"
                             "Defina via: export DAKOTA_ADMIN='admin:senha-forte'"
                         )
         else:
-                print(f"Modo: {dakota_env}")
+                log.info("Modo: %s", dakota_env)
 
         env_admin = os.environ.get("DAKOTA_ADMIN", "").strip()
         bootstrap_admin = (args.bootstrap_admin or env_admin).strip()
         if args.bootstrap_admin and env_admin:
-                print("Aviso: DAKOTA_ADMIN foi ignorada porque --bootstrap-admin foi informado.")
+                log.warning("DAKOTA_ADMIN ignorada porque --bootstrap-admin foi informado.")
 
         con = connect(db_path)
         init_db(con)
-        print(f"Banco inicializado: {db_path}")
+        log.info("Banco inicializado: %s", db_path)
 
         existing_admin = con.execute(
                 "SELECT username FROM users WHERE role='admin' ORDER BY id LIMIT 1"
         ).fetchone()
         if existing_admin:
-                print(f"Admin já existente: {existing_admin['username']}")
+                log.info("Admin ja existente: %s", existing_admin["username"])
         elif bootstrap_admin:
                 if ":" not in bootstrap_admin:
                         raise SystemExit("bootstrap admin deve ser username:password (via --bootstrap-admin ou DAKOTA_ADMIN)")
@@ -713,16 +824,33 @@ def main():
                 if not u:
                         raise SystemExit("bootstrap admin inválido: username vazio")
                 if _is_weak_password(p):
-                        print("Aviso: senha de bootstrap parece fraca. Use uma senha forte em produção.")
+                        log.warning("Senha de bootstrap parece fraca. Use uma senha forte em producao.")
                 ph = auth.pbkdf2_hash_password(p)
                 con.execute(
                         "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?, 'admin', ?)",
                         (u, ph, now_ms()),
                 )
-                print(f"Admin criado: {u}")
+                log.info("Admin criado: %s", u)
         else:
-                print("Admin não criado: informe --bootstrap-admin ou DAKOTA_ADMIN para bootstrap inicial.")
+                log.warning("Admin nao criado: informe --bootstrap-admin ou DAKOTA_ADMIN para bootstrap inicial.")
+
+        # ── Bootstrap: cria perfil de conexão padrão se não existir ──
+        existing_profile = con.execute(
+                "SELECT id FROM connection_profiles WHERE profile_id='default' LIMIT 1"
+        ).fetchone()
+        if not existing_profile:
+                ts = now_ms()
+                con.execute(
+                        "INSERT INTO connection_profiles"
+                        " (profile_id, name, transport, port, auth_mode, created_at_ms, updated_at_ms)"
+                        " VALUES ('default', 'SSH Direto (padrão)', 'ssh', 22, 'external', ?, ?)",
+                        (ts, ts),
+                )
+                log.info("[bootstrap] perfil de conexao 'default' criado (SSH porta 22)")
         con.close()
+
+        # Auto-ativação: flag CLI ou env var DAKOTA_GATEWAY_AUTO_ACTIVATE=true
+        gateway_auto_activate = args.gateway_auto_activate or os.environ.get("DAKOTA_GATEWAY_AUTO_ACTIVATE", "").strip().lower() == "true"
 
         srv = ControlServer(
                 (host, port),
@@ -731,9 +859,10 @@ def main():
                 cookie_secret=cookie_secret,
                 hmac_key=hmac_key,
                 capture_log_dir=args.capture_log_dir,
-            hmac_key_file=args.hmac_key_file,
+                hmac_key_file=args.hmac_key_file,
+                gateway_auto_activate=gateway_auto_activate,
         )
-        print(f"listening on http://{host}:{port}")
+        log.info("listening on http://%s:%s", host, port)
         srv.serve_forever()
 
 

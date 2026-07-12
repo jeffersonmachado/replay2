@@ -408,6 +408,81 @@ ENDDO
         listed = json.loads(list_handler.wfile.data.decode("utf-8"))["datasets"]
         self.assertTrue(any(ds["id"] == data["dataset_id"] for ds in listed))
 
+    def test_synthesize_capture_endpoint_generates_artifacts(self):
+        from control.routes.capture_routes import handle_capture_post_route
+
+        capture_log_dir = Path(self.tmpdir.name) / "captures" / "cap-001"
+        capture_log_dir.mkdir(parents=True)
+        events = [
+            {
+                "type": "checkpoint",
+                "session_id": "sess-001",
+                "screen_sig": "SIG_CLIENTES",
+                "screen_sample": "Cadastro de Clientes",
+                "seq_global": 1,
+                "norm_len": 400,
+            },
+            {"type": "bytes", "session_id": "sess-001", "key_text": "123.456.789-09", "seq_global": 2},
+            {"type": "bytes", "session_id": "sess-001", "key_text": "JOAO TESTE", "seq_global": 3},
+            {"type": "bytes", "session_id": "sess-001", "key_text": "{KEY:F10}", "seq_global": 4},
+        ]
+        (capture_log_dir / "audit-20260709.part001.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events),
+            encoding="utf-8",
+        )
+
+        self.con.execute(
+            "INSERT INTO users(id, username, password_hash, role, created_at_ms) VALUES (?,?,?,?,?)",
+            (1, "admin", "hash", "admin", 1),
+        )
+        self.con.execute(
+            """
+            INSERT INTO capture_sessions(
+                session_uuid, status, created_by, created_by_username,
+                started_at_ms, environment_json, gateway_state_snapshot_json, log_dir, notes
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "cap-001",
+                "finished",
+                1,
+                "admin",
+                123,
+                "{}",
+                "{}",
+                str(capture_log_dir),
+                "",
+            ),
+        )
+        self.con.commit()
+        capture_id = self.con.execute("SELECT id FROM capture_sessions WHERE session_uuid=?", ("cap-001",)).fetchone()[0]
+
+        handler = _FakeHandler(self.db_path, method="POST", body={
+            "source_dir": str(self.source_dir),
+            "samples": 3,
+            "seed": 42,
+            "name": "api_capture_synth",
+        })
+        parsed = _FakeParsedPath(f"/api/captures/{capture_id}/synthesize")
+        handled = handle_capture_post_route(
+            handler,
+            parsed,
+            handler._body,
+            now_ms_fn=lambda: 456,
+            log_dir_base=str(Path(self.tmpdir.name) / "captures"),
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.status_code, 200)
+        data = json.loads(handler.wfile.data.decode("utf-8"))
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated_sessions"], 3)
+        self.assertIn("artifacts", data)
+        self.assertTrue(Path(data["artifacts"]["template"]).exists())
+        self.assertTrue(Path(data["artifacts"]["dataset"]).exists())
+        self.assertTrue(Path(data["artifacts"]["sessions_dir"]).is_dir())
+        self.assertEqual(data["validation"]["total_sessions"], 3)
+
 
 # ---------------------------------------------------------------------------
 # Fake HTTP handler para testes
@@ -434,7 +509,7 @@ class _FakeHandler:
         self.rfile = _FakeRFile(body_bytes)
         self.wfile = _FakeWFile()
 
-    def _require(self):
+    def _require(self, roles=None):
         return {"username": "admin", "role": "admin"}
 
     def _db(self):

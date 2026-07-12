@@ -11,9 +11,16 @@ SECRETS_DIR="${SECRETS_DIR:-.local-secrets}"
 COOKIE_SECRET_FILE="${COOKIE_SECRET_FILE:-$SECRETS_DIR/cookie_secret.key}"
 HMAC_KEY_FILE="${HMAC_KEY_FILE:-$SECRETS_DIR/hmac.key}"
 BOOTSTRAP_ADMIN="${BOOTSTRAP_ADMIN:-${DAKOTA_ADMIN:-}}"
+GATEWAY_AUTO_ACTIVATE="${GATEWAY_AUTO_ACTIVATE:-${DAKOTA_GATEWAY_AUTO_ACTIVATE:-}}"
 if [ -z "$BOOTSTRAP_ADMIN" ]; then
   echo "AVISO: DAKOTA_ADMIN não definido. Nenhum admin será criado automaticamente." >&2
   echo "Defina via: export DAKOTA_ADMIN='admin:senha-segura'" >&2
+fi
+if [ "${GATEWAY_AUTO_ACTIVATE,,}" = "true" ] || [ "${GATEWAY_AUTO_ACTIVATE}" = "1" ]; then
+  echo "Gateway auto-ativacao: LIGADA (DAKOTA_GATEWAY_AUTO_ACTIVATE=true)" >&2
+  AUTO_ACTIVATE_FLAG="--gateway-auto-activate"
+else
+  AUTO_ACTIVATE_FLAG=""
 fi
 LOG_FILE="${LOG_FILE:-$LOG_DIR/replay2-control.log}"
 PID_FILE="${PID_FILE:-/tmp/replay2-control.pid}"
@@ -67,6 +74,7 @@ if is_listen_busy "$LISTEN"; then
 fi
 
 export PYTHONPATH="$PROJECT_ROOT/gateway${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1
 
 CMD=(
   python3 gateway/control/server.py
@@ -78,6 +86,10 @@ CMD=(
 
 if [[ -n "$BOOTSTRAP_ADMIN" ]]; then
   CMD+=(--bootstrap-admin "$BOOTSTRAP_ADMIN")
+fi
+
+if [[ -n "$AUTO_ACTIVATE_FLAG" ]]; then
+  CMD+=($AUTO_ACTIVATE_FLAG)
 fi
 
 nohup "${CMD[@]}" > "$LOG_FILE" 2>&1 &

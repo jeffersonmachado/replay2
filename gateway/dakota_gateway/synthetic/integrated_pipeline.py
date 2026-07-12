@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..source_analyzer.parser import SourceParser
+from ..source_analyzer.source_inventory import collect_preferred_source_files
 from ..source_analyzer.crud_detector import CRUDDetector
 from ..source_analyzer.field_classifier import FieldClassifier
 from ..source_analyzer.relationship_mapper import RelationshipMapper
@@ -95,8 +96,9 @@ class IntegratedPipeline:
             if progress_callback:
                 progress_callback(phase, step, pct, extra or {})
 
+        source_files = collect_preferred_source_files(source_dir, {".prg", ".dbo", ".sql"})
         _progress("discovery", "analisando arquivos fonte", 3,
-                  {"total_files": len(list(Path(source_dir).rglob("*.prg"))) if Path(source_dir).is_dir() else 0})
+                  {"total_files": len(source_files)})
 
         # ------------------------------------------------------------------
         # Fase 1: Discovery
@@ -208,7 +210,7 @@ class IntegratedPipeline:
             relationships=rels,
             dependency_graph=graph,
             program_catalog=catalog,
-            source_files_count=len(list(Path(source_dir).rglob("*.prg"))) if Path(source_dir).is_dir() else 0,
+            source_files_count=len(source_files),
         )
         result.evidence_report = json.loads(evidence_builder.to_json(evidence))
 

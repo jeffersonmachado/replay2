@@ -42,6 +42,15 @@ def init_db(con: sqlite3.Connection) -> None:
     if "validated_at_ms" not in cols:
         con.execute("ALTER TABLE replay_runs ADD COLUMN validated_at_ms INTEGER")
 
+    # ── capture_sessions ──
+    cap_cols = {row["name"] for row in con.execute("PRAGMA table_info(capture_sessions)").fetchall()}
+    if cap_cols:
+        if "session_count" not in cap_cols:
+            con.execute("ALTER TABLE capture_sessions ADD COLUMN session_count INTEGER NOT NULL DEFAULT 0")
+        if "event_count" not in cap_cols:
+            con.execute("ALTER TABLE capture_sessions ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0")
+
+    # ── target_environments ──
     target_cols = {row["name"] for row in con.execute("PRAGMA table_info(target_environments)").fetchall()}
     if target_cols:
         if "gateway_required" not in target_cols:

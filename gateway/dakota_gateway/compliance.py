@@ -107,7 +107,7 @@ def _has_gateway_route(params: dict | None) -> bool:
 
 
 def _iter_audit_events(log_dir: str):
-    for file_path in sorted(Path(log_dir).glob("audit-*.jsonl")):
+    for file_path in sorted(Path(log_dir).rglob("audit-*.jsonl")):
         try:
             lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:

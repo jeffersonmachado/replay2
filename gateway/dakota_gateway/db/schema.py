@@ -251,7 +251,9 @@ CREATE TABLE IF NOT EXISTS capture_sessions (
   gateway_state_snapshot_json TEXT,
   log_dir TEXT NOT NULL,
   target_env_id INTEGER REFERENCES target_environments(id),
-  notes TEXT
+  notes TEXT,
+  session_count INTEGER NOT NULL DEFAULT 0,
+  event_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS capture_sessions_status

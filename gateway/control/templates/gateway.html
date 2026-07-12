@@ -69,6 +69,33 @@
     <!-- Feedback de operações -->
     <div id="gateway_feedback" class="text-sm text-stone-400 mb-4">verificando estado do gateway...</div>
 
+    <!-- Serviço do sistema (tempo real via WebSocket) -->
+    <div id="gw_service_section" class="r2ctl-detail-surface rounded-2xl p-4 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs uppercase tracking-[0.18em] text-stone-400">Serviço do sistema <span id="gw_ws_indicator" class="ml-2 inline-block w-2 h-2 rounded-full bg-amber-400" title="conectando websocket..."></span></p>
+        <p id="gw_ws_age" class="text-xs text-stone-500">--</p>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
+          <p class="text-xs text-stone-400">SSH Daemon</p>
+          <p id="gw_svc_sshd" class="mt-1 text-sm font-semibold text-stone-200">conectando...</p>
+        </div>
+        <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
+          <p class="text-xs text-stone-400">Wrapper de captura</p>
+          <p id="gw_svc_wrapper" class="mt-1 text-sm font-semibold text-stone-200">...</p>
+        </div>
+        <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
+          <p class="text-xs text-stone-400">Integração SSH</p>
+          <p id="gw_svc_ssh_int" class="mt-1 text-sm font-semibold text-stone-200">...</p>
+        </div>
+        <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
+          <p class="text-xs text-stone-400">Captura ativa</p>
+          <p id="gw_svc_active" class="mt-1 text-sm font-semibold text-stone-200">...</p>
+        </div>
+      </div>
+      <div id="gw_svc_error" class="mt-2 text-xs text-stone-500 hidden"></div>
+    </div>
+
     <!-- Opcoes avancadas colapsaveis -->
     <details class="r2ctl-detail-surface rounded-2xl">
       <summary class="cursor-pointer px-4 py-3 text-xs uppercase tracking-[0.18em] text-stone-400 select-none">
@@ -137,9 +164,27 @@
   <section id="gateway-events" data-section="events" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="mb-3 flex items-center justify-between gap-3">
       <h2 class="r2ctl-section-title text-lg font-semibold">Eventos recentes</h2>
-      <span class="text-xs text-stone-400">Últimos 40 eventos</span>
+      <div class="flex items-center gap-2">
+        <button id="gw_events_view_toggle" class="r2ctl-btn-soft text-xs" title="Alternar visualização">🃏 Cards</button>
+        <span id="gw_events_count" class="text-xs text-stone-400">Últimos 40 eventos</span>
+      </div>
     </div>
-    <pre id="gw_recent_events" class="r2ctl-detail-surface max-h-80 overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap"></pre>
+    <div id="gw_events_table_view" class="r2ctl-detail-surface max-h-[32rem] overflow-auto rounded-2xl">
+      <table class="w-full text-xs text-stone-200">
+        <thead class="sticky top-0 bg-stone-800/95 text-stone-400 uppercase tracking-[0.12em]">
+          <tr>
+            <th class="px-3 py-2 text-left w-12">#</th>
+            <th class="px-3 py-2 text-left w-24">Timestamp</th>
+            <th class="px-3 py-2 text-left w-28">Tipo</th>
+            <th class="px-3 py-2 text-left w-20">Ator</th>
+            <th class="px-3 py-2 text-left w-12">Dir</th>
+            <th class="px-3 py-2 text-left">Detalhes</th>
+          </tr>
+        </thead>
+        <tbody id="gw_recent_events"></tbody>
+      </table>
+    </div>
+    <div id="gw_events_cards_view" class="hidden space-y-2 max-h-[32rem] overflow-auto"></div>
   </section>
 
   <section id="gateway-sessions" data-section="sessions" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
@@ -149,17 +194,36 @@
         <p class="r2ctl-section-copy text-sm">Sessões, eventos e compliance por sessão em uma área separada.</p>
       </div>
       <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
-        <input id="gw_session_actor" list="gw_session_actor_list" placeholder="ator" class="r2ctl-input" />
-        <input id="gw_session_logname" list="gw_session_logname_list" placeholder="logname" class="r2ctl-input" />
-        <input id="gw_session_id_filter" list="gw_session_id_list" placeholder="session_id" class="r2ctl-input" />
+        <!-- ator — Combobox -->
+        <div class="relative" data-combobox='{"minSearchLength":0}'>
+          <input id="gw_session_actor" data-combobox-input class="r2ctl-input w-full" placeholder="ator" autocomplete="off" />
+          <div data-combobox-dropdown class="absolute z-50 mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 shadow-lg max-h-60 overflow-auto hidden"></div>
+          <select id="gw_session_actor_output" data-combobox-output hidden>
+            <option value="">todos os atores</option>
+          </select>
+        </div>
+        <!-- logname — Combobox -->
+        <div class="relative" data-combobox='{"minSearchLength":0}'>
+          <input id="gw_session_logname" data-combobox-input class="r2ctl-input w-full" placeholder="logname" autocomplete="off" />
+          <div data-combobox-dropdown class="absolute z-50 mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 shadow-lg max-h-60 overflow-auto hidden"></div>
+          <select id="gw_session_logname_output" data-combobox-output hidden>
+            <option value="">todos os lognames</option>
+          </select>
+        </div>
+        <!-- session_id — Combobox -->
+        <div class="relative" data-combobox='{"minSearchLength":0}'>
+          <input id="gw_session_id_filter" data-combobox-input class="r2ctl-input w-full" placeholder="session_id" autocomplete="off" />
+          <div data-combobox-dropdown class="absolute z-50 mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 shadow-lg max-h-60 overflow-auto hidden"></div>
+          <select id="gw_session_id_filter_output" data-combobox-output hidden>
+            <option value="">todas as sessões</option>
+          </select>
+        </div>
         <select id="gw_session_event_type" class="r2ctl-input" title="tipo de evento">
           <option value="">todos os tipos</option>
         </select>
-        <input id="gw_session_uid" list="gw_session_uid_list" placeholder="uid" inputmode="numeric" class="r2ctl-input hidden" />
         <select id="gw_session_uid_select" class="r2ctl-input" title="uid">
           <option value="">todos os uid</option>
         </select>
-        <input id="gw_session_gid" list="gw_session_gid_list" placeholder="gid" inputmode="numeric" class="r2ctl-input hidden" />
         <select id="gw_session_gid_select" class="r2ctl-input" title="gid">
           <option value="">todos os gid</option>
         </select>
@@ -169,11 +233,6 @@
         <input id="gw_session_ts_to" placeholder="data/hora final (ms)" type="number" class="r2ctl-input" />
         <input id="gw_session_q" placeholder="busca livre" class="r2ctl-input" />
       </div>
-      <datalist id="gw_session_actor_list"></datalist>
-      <datalist id="gw_session_logname_list"></datalist>
-      <datalist id="gw_session_id_list"></datalist>
-      <datalist id="gw_session_uid_list"></datalist>
-      <datalist id="gw_session_gid_list"></datalist>
     </div>
     <div class="mb-3 flex items-center justify-between gap-3">
       <span id="gw_sessions_status" class="text-xs text-stone-400">aguardando log_dir</span>
@@ -185,7 +244,10 @@
   <section id="gateway-compliance" data-section="compliance" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="mb-3 flex items-center justify-between gap-3">
       <h2 class="r2ctl-section-title text-lg font-semibold">Timeline e compliance</h2>
-      <span class="text-xs text-stone-400">Selecione uma sessão para aprofundar</span>
+      <div class="flex items-center gap-2">
+        <button id="gw_detail_view_toggle" class="r2ctl-btn-soft text-xs" title="Alternar visualização">🃏 Cards</button>
+        <span id="gw_session_detail_status" class="text-xs text-stone-400">Selecione uma sessão para aprofundar</span>
+      </div>
     </div>
     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
       <input id="gw_detail_seq_from" placeholder="seq_global de" class="r2ctl-input" />
@@ -194,6 +256,21 @@
       <input id="gw_detail_ts_to" placeholder="ts_ms até" class="r2ctl-input" />
       <input id="gw_detail_limit" placeholder="limite timeline" class="r2ctl-input" value="200" />
     </div>
-    <pre id="gw_session_detail" class="r2ctl-detail-surface mt-4 max-h-[480px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma sessão para ver a timeline detalhada.</pre>
+    <div id="gw_detail_table_view" class="r2ctl-detail-surface mt-4 max-h-[480px] overflow-auto rounded-2xl">
+      <table class="w-full text-xs text-stone-200">
+        <thead class="sticky top-0 bg-stone-800/95 text-stone-400 uppercase tracking-[0.12em]">
+          <tr>
+            <th class="px-3 py-2 text-left w-12">#</th>
+            <th class="px-3 py-2 text-left w-24">Timestamp</th>
+            <th class="px-3 py-2 text-left w-28">Tipo</th>
+            <th class="px-3 py-2 text-left w-20">Ator</th>
+            <th class="px-3 py-2 text-left w-12">Dir</th>
+            <th class="px-3 py-2 text-left">Detalhes</th>
+          </tr>
+        </thead>
+        <tbody id="gw_session_detail"></tbody>
+      </table>
+    </div>
+    <div id="gw_detail_cards_view" class="hidden mt-4 space-y-2 max-h-[480px] overflow-auto"></div>
   </section>
 </div>

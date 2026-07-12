@@ -75,11 +75,54 @@ LOG_DIR=/var/log/dakota npm run dev
 # Banco de dados
 DB_PATH=gateway/state/replay.db npm run dev
 
-# Admin inicial
+# Admin inicial (equivale a DAKOTA_ADMIN)
 BOOTSTRAP_ADMIN=user:senha npm run dev
 
-# Combinação
-LOG_DIR=./log LISTEN=0.0.0.0:5000 npm run dev
+# Admin via env var (alternativa a --bootstrap-admin)
+DAKOTA_ADMIN='admin:senha-segura' npm run dev
+
+# Auto-ativação do gateway no boot (após reset)
+DAKOTA_GATEWAY_AUTO_ACTIVATE=true npm run dev
+
+# Modo de operação (lab, production, homologation)
+DAKOTA_ENV=production npm run dev
+
+# Combinação completa para bootstrap após reset
+DAKOTA_ADMIN='admin:Dakota@2026!' \
+  DAKOTA_GATEWAY_AUTO_ACTIVATE=true \
+  npm run dev
+```
+
+### Bootstrap e Reset do Banco
+
+Após `rm -f gateway/state/replay.db`, o servidor recria o banco do zero e executa
+o **bootstrap automático**:
+
+| Variável | Efeito |
+|---|---|
+| `DAKOTA_ADMIN=user:senha` | Cria admin inicial se não existir |
+| `DAKOTA_GATEWAY_AUTO_ACTIVATE=true` | Ativa o gateway no boot |
+
+O bootstrap também cria automaticamente:
+- **Perfil de conexão padrão**: `SSH Direto (padrão)` — SSH porta 22, auth externa
+- **Captura ativa**: se o gateway foi auto-ativado, uma captura é iniciada
+
+**Exemplo completo de bootstrap após reset:**
+```bash
+# 1. Zerar banco
+rm -f gateway/state/replay.db gateway/state/replay.db-shm gateway/state/replay.db-wal
+
+# 2. Iniciar com bootstrap completo
+DAKOTA_ADMIN='admin:Dakota@2026!' DAKOTA_GATEWAY_AUTO_ACTIVATE=true ./scripts/start-control.sh
+```
+
+**Log esperado:**
+```
+Modo: lab
+Admin criado: admin
+[bootstrap] perfil de conexao 'default' criado (SSH porta 22)
+[startup] gateway auto-ativado por admin (DAKOTA_GATEWAY_AUTO_ACTIVATE=true)
+listening on http://127.0.0.1:8090
 ```
 
 ## Estrutura de Desenvolvimento

@@ -41,11 +41,11 @@ def _serve_static_asset(handler, asset_path: str) -> bool:
     content_type = "application/octet-stream"
     if fs_path.suffix == ".css":
         content_type = "text/css; charset=utf-8"
-    elif fs_path.suffix == ".js":
+    elif fs_path.suffix in (".js", ".cjs", ".mjs"):
         content_type = "application/javascript; charset=utf-8"
     handler.send_response(200)
     handler.send_header("Content-Type", content_type)
-    handler.send_header("Cache-Control", "no-store, max-age=0")
+    handler.send_header("Cache-Control", "no-cache")
     handler.end_headers()
     handler.wfile.write(fs_path.read_bytes())
     return True

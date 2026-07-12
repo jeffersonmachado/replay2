@@ -134,7 +134,7 @@ def activate_gateway(
             deactivated_at_ms, deactivated_by_username,
             environment_json, connection_profile_id, operational_user_id,
             capture_enabled, updated_at_ms
-        ) VALUES (1, 1, ?, ?, ?, NULL, NULL, ?, ?, ?, 0, ?)
+        ) VALUES (1, 1, ?, ?, ?, NULL, NULL, ?, ?, ?, 1, ?)
         ON CONFLICT(id) DO UPDATE SET
             active = 1,
             activated_at_ms = excluded.activated_at_ms,
@@ -145,7 +145,7 @@ def activate_gateway(
             environment_json = excluded.environment_json,
             connection_profile_id = excluded.connection_profile_id,
             operational_user_id = excluded.operational_user_id,
-            capture_enabled = 0,
+            capture_enabled = 1,
             updated_at_ms = excluded.updated_at_ms
         """,
         (ts, user_id, username, json.dumps(env), connection_profile_id, operational_user_id, ts),

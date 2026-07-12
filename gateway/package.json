@@ -1,0 +1,8 @@
+{
+  "name": "dakota-replay2-gateway",
+  "private": true,
+  "description": "Dakota Replay2 Gateway - Frontend dependencies",
+  "devDependencies": {
+    "tailwindcss": "^3.4.19"
+  }
+}

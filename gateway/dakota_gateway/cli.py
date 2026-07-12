@@ -763,7 +763,7 @@ def _handle_knowledge_base(ns) -> int:
         relationships=rels,
         dependency_graph=graph,
         program_catalog=catalog,
-        source_files_count=len(list(Path(source_dir).rglob("*.prg"))),
+        source_files_count=len(parser._collect_source_files()),
     )
 
     # ── Synthetic Samples ──

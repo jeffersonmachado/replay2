@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .journey import JourneyDefinition, JourneyStep
+from ..source_analyzer.source_inventory import collect_preferred_source_files
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ class ExpandedInferencer:
         flows: list[ConditionalFlow] = []
         base = Path(source_dir)
 
-        for prg_file in sorted(base.rglob("*.prg")):
+        for prg_file in collect_preferred_source_files(base, {".prg", ".dbo"}):
             try:
                 content = prg_file.read_text(encoding="utf-8", errors="replace")
             except Exception:
@@ -141,7 +142,7 @@ class ExpandedInferencer:
         deps: list[DataDependency] = []
         base = Path(source_dir)
 
-        for prg_file in sorted(base.rglob("*.prg")):
+        for prg_file in collect_preferred_source_files(base, {".prg", ".dbo"}):
             try:
                 content = prg_file.read_text(encoding="utf-8", errors="replace")
             except Exception:
@@ -203,7 +204,7 @@ class ExpandedInferencer:
         transactions: list[TransactionBlock] = []
         base = Path(source_dir)
 
-        for prg_file in sorted(base.rglob("*.prg")):
+        for prg_file in collect_preferred_source_files(base, {".prg", ".dbo"}):
             try:
                 content = prg_file.read_text(encoding="utf-8", errors="replace")
             except Exception:

@@ -12,6 +12,7 @@ from .inferencer import SyntheticInferencer
 from .providers import ProviderRegistry, default_registry
 from .relationship_resolver import RelationshipResolver
 from .schema import FieldSchema, ScreenSchema, SyntheticSchema
+from ..source_analyzer.source_inventory import collect_preferred_source_files
 
 if TYPE_CHECKING:
     from .business_dataset_planner import BusinessDependencyGraph
@@ -417,7 +418,7 @@ class DataSynthesizer:
         title_re = re.compile(r'(?:TITLE|TITULO|CAPTION)\s+["\']([^"\']+)["\']', re.IGNORECASE)
         get_re = re.compile(r'@\s*\d+\s*,\s*\d+\s+GET\s+(\w+)', re.IGNORECASE)
 
-        for file_path in sorted(Path(source_dir).rglob("*.prg")):
+        for file_path in collect_preferred_source_files(source_dir, {".prg", ".dbo"}):
             try:
                 content = file_path.read_text(encoding="utf-8", errors="replace")
             except Exception:

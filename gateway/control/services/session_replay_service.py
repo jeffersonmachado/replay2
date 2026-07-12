@@ -8,7 +8,32 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
+
+
+def _detect_geometry(events: list[dict]) -> dict:
+    """Detecta geometria apenas de resize explícito (CSI 8;rows;cols t) ou fallback."""
+    rows = None
+    cols = None
+    for ev in events:
+        data = ev.get("data_b64") or ""
+        if not data:
+            continue
+        try:
+            raw = base64.b64decode(data)
+        except Exception:
+            continue
+        # Apenas resize explícito: CSI 8 ; rows ; cols t
+        for match in re.finditer(rb'\x1b\[8;(\d+);(\d+)t', raw):
+            r = int(match.group(1))
+            c = int(match.group(2))
+            if 1 <= r <= 200 and 1 <= c <= 500:
+                rows = r
+                cols = c
+    if rows and cols:
+        return {"rows": rows, "cols": cols, "geometry_source": "pty_resize"}
+    return {"rows": 25, "cols": 80, "geometry_source": "legacy_fallback"}
 
 
 def prepare_session_replay_data(
@@ -51,6 +76,8 @@ def prepare_session_replay_data(
 
     events.sort(key=lambda x: int(x.get("seq_global") or 0))
 
+    geometry = _detect_geometry(events)
+
     replay_events = []
     deterministic_events = []
     timeline = []
@@ -92,11 +119,12 @@ def prepare_session_replay_data(
             timeline.append({
                 "seq_global": seq_global,
                 "ts_ms": ts_ms,
+                "timestamp_ms": ts_ms,
                 "type": "bytes",
                 "direction": direction,
                 "n_bytes": n,
                 "data_decoded": data_str,
-                "summary": data_str[:160],
+                "summary": data_str[:400],
             })
         elif ev_type == "deterministic_input":
             seq_global = int(ev.get("seq_global") or 0)
@@ -127,6 +155,7 @@ def prepare_session_replay_data(
             timeline.append({
                 "seq_global": seq_global,
                 "ts_ms": ts_ms,
+                "timestamp_ms": ts_ms,
                 "type": "deterministic_input",
                 "screen_sig": deterministic_item["screen_sig"],
                 "screen_sample": deterministic_item["screen_sample"],
@@ -160,6 +189,7 @@ def prepare_session_replay_data(
         "session_id": clean_sid,
         "session_start": session_start,
         "session_end": session_end,
+        "geometry": geometry,
         "replay_events": replay_events,
         "deterministic_events": deterministic_events,
         "timeline": sorted(timeline, key=lambda item: (int(item.get("seq_global") or 0), int(item.get("ts_ms") or 0))),

@@ -19,6 +19,7 @@ from dakota_gateway.synthetic.journey import (
 )
 from dakota_gateway.synthetic.journey_builder import JourneyBuilder
 from dakota_gateway.synthetic.journey_inferencer import JourneyInferencer
+from dakota_gateway.source_analyzer.menu_analyzer import MenuAnalyzer
 from dakota_gateway.state_db import connect, init_db
 
 
@@ -170,6 +171,63 @@ ENDDO
         self.assertIsNotNone(journey)
         self.assertIn("Cadastros", [s.screen_title for s in journey.steps])
         self.assertIn("Financeiro", [s.screen_title for s in journey.steps])
+
+    def test_menu_analyzer_detects_dakota_menu_patterns(self):
+        self._write_file("sig.prg", """
+do while .t.
+   numrot = [0]
+   rotina = fTraduz(p_idioma,"MENU PRINCIPAL","U",16,.f.,"")
+   if !fTelaExp(p_empresa,p_sistema,numrot,rotina)
+      return .f.
+   endif
+
+   @ 05,02 prompt " 1. " + fTraduz(p_idioma,"Configuracoes","P",27,.f.,"")
+   @ 06,02 prompt " 2. " + fTraduz(p_idioma,"Movimentos","P",27,.f.,"")
+
+   p_opcao000=gmenu(p_opcao000)
+
+   do case
+      case p_opcao000 = 1
+           do sig100
+      case p_opcao000 = 2
+           do sig200
+   endcase
+enddo
+""")
+
+        analyzer = MenuAnalyzer(str(self.source_dir))
+        tree = analyzer.analyze(str(self.source_dir))
+
+        self.assertIsNotNone(tree.root)
+        self.assertEqual(tree.total_menus, 1)
+        self.assertEqual(tree.root.label, "MENU PRINCIPAL")
+        labels = [c.label for c in tree.root.children if c.node_type == "option"]
+        programs = [c.program_name for c in tree.root.children if c.node_type == "program"]
+
+        self.assertIn("1. Configuracoes", labels)
+        self.assertIn("2. Movimentos", labels)
+        self.assertIn("SIG100", programs)
+        self.assertIn("SIG200", programs)
+        self.assertNotIn("WHILE", programs)
+        self.assertNotIn("CASE", programs)
+
+    def test_menu_analyzer_ignores_prompt_dialog_without_program_calls(self):
+        self._write_file("dialogo.prg", """
+rotina = "ARQUIVOS"
+@ 03, 01 prompt " 1. Loja A "
+@ 04, 01 prompt " 2. Loja B "
+menu to nEmpresa
+if lastkey() = 27
+   return
+endif
+return
+""")
+
+        analyzer = MenuAnalyzer(str(self.source_dir))
+        tree = analyzer.analyze(str(self.source_dir))
+
+        self.assertIsNone(tree.root)
+        self.assertEqual(tree.total_menus, 0)
 
 
 class JourneyBuilderTests(unittest.TestCase):

@@ -12,11 +12,60 @@ import re
 from pathlib import Path
 
 
-def _detect_geometry(events: list[dict]) -> dict:
-    """Detecta geometria apenas de resize explícito (CSI 8;rows;cols t) ou fallback."""
+def _detect_encoding(events: list[dict], session_start: dict | None = None) -> str:
+    """Detecta encoding a partir de metadados ou heuristica nos dados.
+
+    Prioridade:
+    1. Metadados do session_start (campo 'encoding')
+    2. Heuristica: se houver bytes com charset DEC ou ISO-2022, usa latin1
+    3. Fallback: utf-8
+    """
+    # Prioridade 1: metadados
+    if session_start:
+        enc = str(session_start.get("encoding") or "").strip().lower()
+        if enc in ("utf-8", "utf8", "latin1", "iso-8859-1", "ascii", "cp1252"):
+            return "utf-8" if enc in ("utf-8", "utf8", "ascii") else enc
+
+    # Prioridade 2: heuristica — charset DEC ou ISO-2022
+    for ev in events:
+        data_b64 = str(ev.get("data_b64") or "").strip()
+        if not data_b64:
+            continue
+        try:
+            raw = base64.b64decode(data_b64)
+        except Exception:
+            continue
+        # DEC special graphics / ISO-2022 shift sequences
+        if b'\x0e' in raw or b'\x0f' in raw or b'\x1b(' in raw or b'\x1b)' in raw:
+            return "latin1"
+        # CSI sequences with 8-bit chars suggest non-UTF-8
+        if any(b > 0x7f and b < 0xa0 for b in raw):
+            return "latin1"
+
+    # Prioridade 3: fallback
+    return "utf-8"
+
+
+def _detect_geometry(events: list[dict], session_start: dict | None = None) -> dict:
+    """Detecta geometria a partir de metadados (prioridade) ou resize explícito."""
+    # Prioridade 1: metadados do session_start
+    if session_start:
+        s_rows = session_start.get("rows")
+        s_cols = session_start.get("cols")
+        if isinstance(s_rows, int) and isinstance(s_cols, int) and 1 <= s_rows <= 200 and 1 <= s_cols <= 500:
+            return {
+                "rows": s_rows, "cols": s_cols,
+                "term": str(session_start.get("term") or "xterm"),
+                "encoding": str(session_start.get("encoding") or "utf-8"),
+                "geometry_source": "session_metadata",
+            }
+
+    # Prioridade 2: resize via CSI 8;rows;cols t (apenas eventos OUT)
     rows = None
     cols = None
     for ev in events:
+        if ev.get("direction") == "in":
+            continue  # resize de entrada é ignorado (seção 12)
         data = ev.get("data_b64") or ""
         if not data:
             continue
@@ -24,7 +73,6 @@ def _detect_geometry(events: list[dict]) -> dict:
             raw = base64.b64decode(data)
         except Exception:
             continue
-        # Apenas resize explícito: CSI 8 ; rows ; cols t
         for match in re.finditer(rb'\x1b\[8;(\d+);(\d+)t', raw):
             r = int(match.group(1))
             c = int(match.group(2))
@@ -32,8 +80,8 @@ def _detect_geometry(events: list[dict]) -> dict:
                 rows = r
                 cols = c
     if rows and cols:
-        return {"rows": rows, "cols": cols, "geometry_source": "pty_resize"}
-    return {"rows": 25, "cols": 80, "geometry_source": "legacy_fallback"}
+        return {"rows": rows, "cols": cols, "encoding": "utf-8", "geometry_source": "pty_resize"}
+    return {"rows": 25, "cols": 80, "encoding": "utf-8", "geometry_source": "legacy_fallback"}
 
 
 def prepare_session_replay_data(
@@ -76,13 +124,22 @@ def prepare_session_replay_data(
 
     events.sort(key=lambda x: int(x.get("seq_global") or 0))
 
-    geometry = _detect_geometry(events)
+    # Extrai session_start antes da deteccao de geometria
+    session_start = None
+    session_end = None
+    for ev in events:
+        ev_type = str(ev.get("type") or "").strip()
+        if ev_type == "session_start" and session_start is None:
+            session_start = ev
+        elif ev_type == "session_end" and session_end is None:
+            session_end = ev
+
+    geometry = _detect_geometry(events, session_start)
+    detected_encoding = _detect_encoding(events, session_start)
 
     replay_events = []
     deterministic_events = []
     timeline = []
-    session_start = None
-    session_end = None
 
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
@@ -101,7 +158,7 @@ def prepare_session_replay_data(
             try:
                 data_raw = base64.b64decode(data_b64) if data_b64 else b""
                 try:
-                    data_str = data_raw.decode("utf-8", errors="replace")
+                    data_str = data_raw.decode(detected_encoding, errors="replace")
                 except Exception:
                     data_str = data_raw.hex()
             except Exception:
@@ -178,8 +235,10 @@ def prepare_session_replay_data(
     for ev in replay_events:
         playback_script.append({
             "seq": ev["seq_global"],
+            "seq_global": ev["seq_global"],
             "direction": ev["direction"],
             "bytes": ev["n_bytes"],
+            "data_b64": ev.get("data_b64", ""),
             "content": ev["data_decoded"],
             "timestamp_ms": ev["ts_ms"],
         })

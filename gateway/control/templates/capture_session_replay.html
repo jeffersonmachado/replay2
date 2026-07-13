@@ -276,7 +276,7 @@ input[type="range"] {
 
   // Terminal functions imported via module — available as window.__vt
   let createVirtualTerminal, feed, renderPlainText, renderHtml, renderCompactText;
-  let eventTimestamp, calcDelay, isBlank;
+  let eventTimestamp, calcDelay, isBlank, screenSig, visualSig;
   // Timeline core — imported dynamically
   let _formatEventContent;
   let _renderEventsCards;
@@ -292,16 +292,16 @@ input[type="range"] {
     eventTimestamp = mod.eventTimestamp;
     calcDelay = mod.calcDelay;
     isBlank = mod.isBlank;
+    screenSig = mod.screenSig;
+    visualSig = mod.visualSig;
   }
   window._initVT = initVT;
 
-  // Carrega módulos de timeline compartilhados
-  import('/assets/js/components/timeline_core.js').then((mod) => {
-    _formatEventContent = mod.formatEventContent;
-  });
-  import('/assets/js/components/timeline_table.js').then((mod) => {
-    _renderEventsCards = mod.renderEventsCards;
-  });
+  // Carrega módulos de timeline ANTES de qualquer renderização
+  const _timelineReady = Promise.all([
+    import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; }),
+    import('/assets/js/components/timeline_table.js').then(mod => { _renderEventsCards = mod.renderEventsCards; }),
+  ]);
 
   // Carregar dados de replay
   async function loadReplayData() {
@@ -311,19 +311,36 @@ input[type="range"] {
     }
 
     try {
-      // Tenta buscar com autenticação
       const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       replayData = await response.json();
       if (replayData?.geometry) {
-        termGeometry = {
-          rows: Number(replayData.geometry.rows) || 25,
-          cols: Number(replayData.geometry.cols) || 80,
-          source: replayData.geometry.geometry_source || 'legacy_fallback',
-        };
+        const rawRows = Number(replayData.geometry.rows);
+        const rawCols = Number(replayData.geometry.cols);
+        // Valida limites de geometria (seção 13)
+        const MIN_ROWS = 1, MAX_ROWS = 200;
+        const MIN_COLS = 1, MAX_COLS = 500;
+        const MAX_CELLS = MAX_ROWS * MAX_COLS;
+        const rows = (Number.isFinite(rawRows) && rawRows >= MIN_ROWS && rawRows <= MAX_ROWS) ? rawRows : 25;
+        const cols = (Number.isFinite(rawCols) && rawCols >= MIN_COLS && rawCols <= MAX_COLS) ? rawCols : 80;
+        if (rows * cols > MAX_CELLS) {
+          console.warn('Geometria excede limite máximo de células, usando fallback 25x80');
+          termGeometry = { rows: 25, cols: 80, source: 'client_fallback_too_large' };
+        } else if (rawRows !== rows || rawCols !== cols) {
+          console.warn('Geometria inválida corrigida:', {rawRows, rawCols, correctedRows: rows, correctedCols: cols});
+          termGeometry = { rows, cols, source: 'client_corrected' };
+        } else {
+          termGeometry = {
+            rows,
+            cols,
+            source: replayData.geometry.geometry_source || 'legacy_fallback',
+          };
+        }
       }
+      // Aguarda módulos de timeline antes de renderizar
+      await _timelineReady;
       renderSessionInfo();
       renderEventsList(eventsFilterMode);
     } catch (err) {
@@ -383,15 +400,17 @@ input[type="range"] {
     eventsFilterMode = filter;
     persistTimelinePrefs();
     const allEvents = replayData.timeline || [];
-    const filtered = allEvents.filter((ev) => {
-      if (filter === 'all') return true;
-      if (filter === 'det') return ev.type === 'deterministic_input';
-      return ev.direction === filter;
-    });
-    // Não filtrar por conteúdo — eventos de 1 byte são válidos
-    const events = eventsViewMode === 'detailed'
-      ? filtered.map((ev) => ({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' }))
-      : buildTimelineItems(filtered);
+    // Constrói timeline items a partir de TODOS os eventos (IN são fronteiras de grupo)
+    let events = eventsViewMode === 'detailed'
+      ? allEvents.map((ev) => ({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' }))
+      : buildTimelineItems(allEvents);
+    // Filtro visual aplicado DEPOIS do agrupamento (IN continuam sendo fronteiras)
+    if (filter !== 'all') {
+      events = events.filter((ev) => {
+        if (filter === 'det') return ev.type === 'deterministic_input';
+        return ev.direction === filter || ev.content_kind === 'terminal_snapshot';
+      });
+    }
     const container = document.getElementById('events-list');
 
     if (events.length === 0) {
@@ -502,8 +521,10 @@ input[type="range"] {
 
     const flushGroup = () => {
       if (!pendingGroup) return;
-      const snap = renderCompactText(sessionTerminal);
-      if (snap) {
+      // Snapshot canonico: preserva geometria completa 25x80
+      const snap = renderPlainText ? renderPlainText(sessionTerminal) : renderCompactText(sessionTerminal);
+      // Tela vazia é um frame válido (seção 15)
+      if (snap !== null && snap !== undefined) {
         items.push({
           type: 'bytes',
           direction: 'out',
@@ -516,6 +537,8 @@ input[type="range"] {
           summary: snap,
           data_decoded: snap,
           content_kind: 'terminal_snapshot',
+          text_sig: screenSig ? screenSig(sessionTerminal) : null,
+          visual_sig: visualSig ? visualSig(sessionTerminal) : null,
         });
       }
       pendingGroup = null;
@@ -613,7 +636,8 @@ input[type="range"] {
       return;
     }
     playbackState.isRunning = true;
-    playbackState.currentEventIndex = 0;
+    playbackState.displayedEventIndex = -1;
+    playbackState.nextEventIndex = 0;
     document.getElementById('playback-panel').classList.remove('hidden');
     document.getElementById('playback-start-btn').classList.add('hidden');
     document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
@@ -650,7 +674,10 @@ input[type="range"] {
     const events = replayData.playback?.events || [];
     if (index < 0 || index >= events.length) return;
     playbackState.isPaused = true;
-    playbackState.currentEventIndex = index;
+    // displayedEventIndex: frame atualmente visivel
+    // nextEventIndex: proximo evento a processar (evita replay duplo)
+    playbackState.displayedEventIndex = index;
+    playbackState.nextEventIndex = index + 1;
     playbackState.terminal = makeTerm();
     // Replay all events up to current index
     for (let i = 0; i <= index; i++) {
@@ -673,12 +700,12 @@ input[type="range"] {
     seekToEvent(0);
   });
   document.getElementById('playback-prev-btn')?.addEventListener('click', () => {
-    const idx = Math.max(0, playbackState.currentEventIndex - 1);
+    const idx = Math.max(0, (playbackState.displayedEventIndex ?? 0) - 1);
     seekToEvent(idx);
   });
   document.getElementById('playback-next-btn')?.addEventListener('click', () => {
     const events = replayData?.playback?.events || [];
-    const idx = Math.min(events.length - 1, playbackState.currentEventIndex + 1);
+    const idx = Math.min(events.length - 1, (playbackState.displayedEventIndex ?? 0) + 1);
     seekToEvent(idx);
   });
   document.getElementById('playback-last-btn')?.addEventListener('click', () => {
@@ -689,8 +716,14 @@ input[type="range"] {
     const seqVal = parseInt(document.getElementById('playback-seq-goto')?.value);
     if (isNaN(seqVal)) return;
     const events = replayData?.playback?.events || [];
-    const idx = events.findIndex(e => (e.seq || 0) >= seqVal);
-    if (idx >= 0) seekToEvent(idx);
+    // Busca exata por seq_global (não >=)
+    const idx = events.findIndex(e => e.seq === seqVal);
+    if (idx < 0) {
+      document.getElementById('playback-seq-current').textContent = 'seq: ' + seqVal + ' não encontrado';
+      return;
+    }
+    playbackState.isPaused = true;
+    seekToEvent(idx);
   });
 
   // Filtros de eventos
@@ -902,6 +935,8 @@ input[type="range"] {
   function startPlayback() {
     const events = replayData.playback?.events || [];
     playbackState.terminal = makeTerm();
+    playbackState.displayedEventIndex = -1;
+    playbackState.nextEventIndex = 0;
     document.getElementById('playback-output').innerHTML = '';
     document.getElementById('playback-event-counter').textContent = `0 / ${events.length}`;
     document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
@@ -912,12 +947,13 @@ input[type="range"] {
     if (!playbackState.isRunning || playbackState.isPaused) return;
 
     const events = replayData.playback?.events || [];
-    if (playbackState.currentEventIndex >= events.length) {
+    const idx = playbackState.nextEventIndex ?? 0;
+    if (idx >= events.length) {
       finalizePlaybackUi();
       return;
     }
 
-    const event = events[playbackState.currentEventIndex];
+    const event = events[idx];
     const outputEl = document.getElementById('playback-output');
     const progressBar = document.getElementById('playback-progress-bar');
     const counter = document.getElementById('playback-event-counter');
@@ -930,21 +966,21 @@ input[type="range"] {
     const terminal = document.getElementById('playback-terminal');
     terminal.scrollTop = terminal.scrollHeight;
 
-    const progress = ((playbackState.currentEventIndex + 1) / events.length) * 100;
+    const progress = ((idx + 1) / events.length) * 100;
     progressBar.style.width = progress + '%';
-    counter.textContent = `${playbackState.currentEventIndex + 1} / ${events.length}`;
+    counter.textContent = `${idx + 1} / ${events.length}`;
     document.getElementById('playback-seq-current').textContent = 'seq: ' + (event?.seq ?? '-');
     document.getElementById('playback-geometry-info').textContent =
       'geom: ' + termGeometry.rows + '\u00D7' + termGeometry.cols + ' (' + termGeometry.source + ')';
 
-    // Delay: next.timestamp_ms - current.timestamp_ms, divided by speed
-    const nextIdx = playbackState.currentEventIndex + 1;
+    playbackState.displayedEventIndex = idx;
+    playbackState.nextEventIndex = idx + 1;
+
+    const nextIdx = playbackState.nextEventIndex;
     let delay = 50;
     if (nextIdx < events.length) {
       delay = calcDelay(event, events[nextIdx], playbackState.speed);
     }
-
-    playbackState.currentEventIndex++;
     playbackTimeout = setTimeout(playNextEvent, delay);
   }
 

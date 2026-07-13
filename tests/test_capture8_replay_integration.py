@@ -22,22 +22,23 @@ from dakota_gateway.compliance import (
     summarize_capture_sessions,
 )
 from control.services.session_replay_service import (
+    _detect_encoding,
     _detect_geometry,
     prepare_session_replay_data,
 )
 
-# ── Fixture: load real capture 8 data ──────────────────────────────────────
+# ── Fixture: load sanitized capture 8 data ──────────────────────────────────
+
+FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "capture8_replay_fixture.json"
 
 
 @pytest.fixture(scope="module")
 def capture8_data():
-    """Load replay data for capture 8 without requiring a running server."""
-    log_dir = "gateway/state/captures/e85e2676-0d80-464e-b9ac-e17291ed64bb"
-    session_id = "758f897c-572e-4f5d-b1eb-cb2fcd16f726"
-    result = prepare_session_replay_data(log_dir, session_id)
-    if result.get("error"):
-        pytest.skip(f"Data not available: {result['error']}")
-    return result
+    """Load sanitized capture 8 replay data from fixture file."""
+    if not FIXTURE_PATH.exists():
+        pytest.skip(f"Fixture not found: {FIXTURE_PATH}")
+    with open(FIXTURE_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ── Geometry ───────────────────────────────────────────────────────────────
@@ -84,6 +85,35 @@ def test_geometry_resize_detected():
     result2 = _detect_geometry(fake_huge)
     assert result2["rows"] == 25, "oversized resize rejected"
     assert result2["cols"] == 80
+
+
+# ── Encoding ───────────────────────────────────────────────────────────────
+
+
+def test_encoding_default_utf8():
+    """Sem metadados, encoding padrao e utf-8."""
+    result = _detect_encoding([])
+    assert result == "utf-8"
+
+
+def test_encoding_from_metadata():
+    """Metadados do session_start tem prioridade."""
+    result = _detect_encoding([], {"encoding": "latin1"})
+    assert result == "latin1"
+
+
+def test_encoding_heuristic_dec_graphics():
+    """Bytes com charset DEC graphics sugerem latin1."""
+    events = [{"data_b64": base64.b64encode(b"\x1b(0\x0eABC\x0f").decode()}]
+    result = _detect_encoding(events)
+    assert result == "latin1"
+
+
+def test_encoding_heuristic_high_bytes():
+    """Bytes com chars 0x80-0x9F (nao UTF-8) sugerem latin1."""
+    events = [{"data_b64": base64.b64encode(b"\x80\x90").decode()}]
+    result = _detect_encoding(events)
+    assert result == "latin1"
 
 
 # ── Timeline ───────────────────────────────────────────────────────────────
@@ -140,7 +170,9 @@ def test_playback_has_data_b64(capture8_data):
     """Playback events must preserve data_b64 for UTF-8 decoder."""
     playback = capture8_data.get("playback", {})
     for ev in playback.get("events", [])[:10]:
-        assert "content" in ev or "data_b64" in ev, "must have content or data_b64"
+        assert "data_b64" in ev, f"seq {ev.get('seq')} must have data_b64"
+        assert isinstance(ev["data_b64"], str), f"data_b64 must be string"
+        assert ev["data_b64"] != "", f"seq {ev.get('seq')} data_b64 cannot be empty"
 
 
 def test_playback_total_bytes_consistent(capture8_data):

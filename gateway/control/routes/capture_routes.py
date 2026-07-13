@@ -11,6 +11,7 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 from __future__ import annotations
 
 import json
+import os
 
 from control.routes.route_helpers import write_json
 from control.services.capture_service import (
@@ -172,6 +173,32 @@ def handle_capture_get_route(
         con = handler._db()
         try:
             capture = _get_capture(con, capture_id)
+            # Real-time: conta sessoes/eventos do disco para capturas ativas
+            if capture and capture.get("active"):
+                import glob as _glob
+                log_dir = capture.get("log_dir") or ""
+                session_count = 0
+                event_count = 0
+                if log_dir and os.path.isdir(log_dir):
+                    # audiencias diretas: audit-*.jsonl no proprio log_dir
+                    for fpath in _glob.glob(os.path.join(log_dir, "audit-*.jsonl")):
+                        session_count += 1
+                        try:
+                            with open(fpath) as fh:
+                                event_count += sum(1 for _ in fh)
+                        except Exception:
+                            pass
+                    # audiencias em subdiretorios (compatibilidade com captures antigas)
+                    if session_count == 0:
+                        for fpath in _glob.glob(os.path.join(log_dir, "*", "audit-*.jsonl")):
+                            session_count += 1
+                            try:
+                                with open(fpath) as fh:
+                                    event_count += sum(1 for _ in fh)
+                            except Exception:
+                                pass
+                capture["session_count"] = session_count
+                capture["event_count"] = event_count
         finally:
             handler._db_release(con)
         if not capture:

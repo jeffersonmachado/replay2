@@ -61,7 +61,25 @@ export function formatEventContent(ev, term) {
       return term.renderCompactText(term);
     }
   }
-  return text;
+  // Sanitiza ANSI para visualização detalhada (seção 27)
+  return sanitizeAnsiForDisplay(text);
+}
+
+/**
+ * Remove sequências ANSI/CSI para exibição segura.
+ * Mantém texto visível, remove escapes não-imprimíveis.
+ */
+export function sanitizeAnsiForDisplay(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // CSI sequences
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')  // OSC sequences
+    .replace(/\x1b[()][0-9A-Za-z]/g, '')   // DEC charset
+    .replace(/\x1b[=>]/g, '')               // DECKPAM/DECKPNM
+    .replace(/\x1b[7-8]/g, '')              // save/restore cursor
+    .replace(/\x1b[MDEc]/g, '')             // RI, IND, NEL, RIS
+    .replace(/\x1b/g, '')                   // any remaining bare ESC
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ''); // other control chars (keep \t \n \r)
 }
 
 export function resolveEventByteCount(ev) {

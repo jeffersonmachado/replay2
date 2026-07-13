@@ -43,7 +43,12 @@ if [ -d "$ROOT_DIR/gateway" ]; then
   # Remove itens que NÃO devem ir para o artefato
   rm -rf "$STAGE_DIR/gateway/.venv" \
     "$STAGE_DIR/gateway/.pytest_cache" \
+    "$STAGE_DIR/gateway/node_modules" \
     "$STAGE_DIR/gateway/state/captures" 2>/dev/null || true
+  # Remove __pycache__ e caches em qualquer nivel
+  find "$STAGE_DIR" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+  find "$STAGE_DIR" -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true
+  find "$STAGE_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
 fi
 if [ -d "$ROOT_DIR/tests" ]; then cp -R "$ROOT_DIR/tests" "$STAGE_DIR/"; fi
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"

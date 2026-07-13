@@ -287,6 +287,9 @@ class ControlServer(ThreadingHTTPServer):
         env = {"hostname": platform.node(), "fqdn": platform.node(), "platform": platform.system(),
                "platform_release": platform.release(), "pid": os.getpid(), "env_name": platform.node()}
         env_json = json.dumps(env)
+        session_uuid = str(uuid.uuid4())
+        log_dir = os.path.join(self.capture_log_dir, session_uuid)
+        os.makedirs(log_dir, exist_ok=True)
         con.execute(
             "INSERT OR REPLACE INTO gateway_state (id, active, activated_by_username, activated_by_id,"
             " activated_at_ms, environment_json, connection_profile_id)"
@@ -295,9 +298,9 @@ class ControlServer(ThreadingHTTPServer):
         )
         con.execute(
             "INSERT INTO capture_sessions (session_uuid, status, created_by, created_by_username,"
-            " started_at_ms, environment_json, log_dir, notes)"
-            " VALUES (?, 'active', ?, ?, ?, ?, ?, 'auto-activado no boot')",
-            (str(uuid.uuid4()), admin["id"], admin["username"], now_ms(), env_json, self.capture_log_dir),
+            " started_at_ms, environment_json, log_dir, notes, session_count, event_count)"
+            " VALUES (?, 'active', ?, ?, ?, ?, ?, 'auto-activado no boot', 0, 0)",
+            (session_uuid, admin["id"], admin["username"], now_ms(), env_json, log_dir),
         )
         con.commit()
         log.info("[startup] gateway auto-ativado por %s (DAKOTA_GATEWAY_AUTO_ACTIVATE=true)", admin["username"])

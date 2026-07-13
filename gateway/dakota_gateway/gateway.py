@@ -71,6 +71,12 @@ class GatewayConfig:
     capture_id: int = 0
     capture_session_uuid: str = ""
 
+    # Geometry metadata
+    rows: int = 25
+    cols: int = 80
+    term: str = "xterm"
+    encoding: str = "utf-8"
+
     checkpoint_quiet_ms: int = 250
     checkpoint_min_bytes: int = 512
     max_screen_bytes: int = 65535
@@ -145,6 +151,17 @@ class TerminalGateway:
         }
 
     def _screen_snapshot_from_buf(self, screen_buf: bytes) -> ScreenSnapshot:
+        """Converte buffer bruto de tela (screen_buf) em ScreenSnapshot.
+
+        O screen_buf e o buffer incremental de bytes capturados do terminal.
+        A renderizacao visual (atributos, cores, box-drawing) e delegada ao
+        terminal virtual no frontend (virtual_terminal.cjs), que processa os
+        mesmos bytes e produz a matriz canonica de celulas.
+
+        Esta funcao faz a ponte: extrai texto normalizado e assinatura (text_sig)
+        do buffer cru. A assinatura visual (visual_sig) e gerada no frontend
+        pelo terminal virtual.
+        """
         return build_screen_snapshot_from_bytes(screen_buf)
 
     def _select_snapshot_for_input(
@@ -266,10 +283,64 @@ class TerminalGateway:
         original_cmd = str(os.environ.get("SSH_ORIGINAL_COMMAND") or "").strip()
         command = str(self.cfg.source_command or "").strip() or original_cmd
         if command:
-            return ["/bin/sh", "-lc", command]
+            return ["/bin/sh", "-c", command]
 
         shell = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
         return [shell, "-l"]
+
+    def _run_batch_pipe(self, gateway_endpoint: str) -> int:
+        """Modo batch sem PTY: captura saida de comando via pipe (compativel com AIX)."""
+        command = str(self.cfg.source_command or "").strip()
+        self._append(
+            AuditEvent(
+                v="v1", seq_global=0, ts_ms=self._ts_ms(),
+                type="session_start", actor=self.actor, session_id=self.session_id,
+                seq_session=self._next_seq_session(),
+                **self._capture_refs(),
+                entry_mode="gateway_ssh", via_gateway=True,
+                gateway_session_id=self.session_id, gateway_endpoint=gateway_endpoint,
+                source_host=self.cfg.source_host or "",
+                source_user=self.cfg.source_user or "",
+                source_command=command,
+                rows=self.cfg.rows, cols=self.cfg.cols,
+                term=self.cfg.term, encoding=self.cfg.encoding,
+            )
+        )
+        try:
+            proc = subprocess.Popen(
+                ["/bin/sh", "-c", command],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+            )
+            out, _ = proc.communicate(timeout=300)
+            if out:
+                os.write(1, out)
+                self._append(
+                    AuditEvent(
+                        v="v1", seq_global=0, ts_ms=self._ts_ms(),
+                        type="bytes", actor=self.actor, session_id=self.session_id,
+                        seq_session=self._next_seq_session(),
+                        **self._capture_refs(),
+                        dir="out", data_b64=b64(out), n=len(out),
+                    )
+                )
+            rc = proc.returncode
+        except Exception as e:
+            out = str(e).encode()
+            os.write(1, out)
+            rc = 1
+        self._append(
+            AuditEvent(
+                v="v1", seq_global=0, ts_ms=self._ts_ms(),
+                type="session_end", actor=self.actor, session_id=self.session_id,
+                seq_session=self._next_seq_session(),
+                **self._capture_refs(),
+            )
+        )
+        self.writer.close()
+        return int(rc or 0)
 
     def run(self) -> int:
         gateway_endpoint = (
@@ -278,10 +349,16 @@ class TerminalGateway:
             or os.environ.get("HOSTNAME")
             or ""
         )
-        master_fd, slave_fd = pty.openpty()
-        # Configurar geometria do terminal
-        _configure_pty(slave_fd, rows=25, cols=80)
         batch_mode = str(self.cfg.ssh_batch_mode or "no").strip().lower()
+        command = str(self.cfg.source_command or "").strip()
+
+        # ── Fast path: batch mode sem PTY (compativel com AIX) ──
+        if batch_mode == "yes" and command and not self.cfg.source_host:
+            return self._run_batch_pipe(gateway_endpoint)
+
+        master_fd, slave_fd = pty.openpty()
+        # Configurar geometria do terminal usando metadata da config
+        _configure_pty(slave_fd, rows=self.cfg.rows, cols=self.cfg.cols)
         use_setsid = batch_mode == "yes"
         try:
             proc = subprocess.Popen(
@@ -291,7 +368,7 @@ class TerminalGateway:
                 stderr=slave_fd,
                 preexec_fn=os.setsid if use_setsid else None,
                 close_fds=True,
-                env=dict(os.environ, TERM="xterm"),
+                env=dict(os.environ, TERM=self.cfg.term),
             )
         finally:
             os.close(slave_fd)
@@ -324,6 +401,8 @@ class TerminalGateway:
                 source_host=self.cfg.source_host,
                 source_user=self.cfg.source_user,
                 source_command=self.cfg.source_command,
+                rows=self.cfg.rows, cols=self.cfg.cols,
+                term=self.cfg.term, encoding=self.cfg.encoding,
             )
         )
 

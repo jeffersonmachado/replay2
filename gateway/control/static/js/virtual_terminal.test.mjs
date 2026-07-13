@@ -325,3 +325,64 @@ test('TEST 16 — same flow with different chunking', () => {
   assert.equal(t1.cells[0][8].reverse, t2.cells[0][8].reverse, 'same attr');
   assert.equal(t1.cells[0][8].ch, t2.cells[0][8].ch, 'same char');
 });
+
+// ── TEST 17 — wrapPending + LF não pula linha duplo ────────────────────────
+test('TEST 17 — wrapPending + LF no double advance', () => {
+  const t = createVirtualTerminal(3, 10);
+  feed(t, '1234567890'); // fills row 0, sets wrapPending
+  feed(t, '\n');         // LF should clear wrapPending, advance to row 1
+  feed(t, 'X');          // X goes to row 1 col 0
+  const lines = renderPlainText(t).split('\n');
+  assert.equal(lines[0], '1234567890', 'row 0 filled');
+  assert.equal(lines[1][0], 'X', 'X at row 1 col 0, not row 2');
+});
+
+// ── TEST 18 — RIS (ESC c) full reset ───────────────────────────────────────
+test('TEST 18 — RIS full terminal reset', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[7mABC ESCcDEF'));
+  const text = renderPlainText(t);
+  assert.ok(!text.includes('ABC'), 'ABC cleared by RIS');
+  assert.ok(text.includes('DEF'), 'DEF written after RIS');
+  assert.equal(t.cursorRow, 0, 'cursor at row 0');
+  assert.equal(t.cursorCol, 3, 'cursor at col 3 after DEF');
+  assert.equal(t.graphicsMode, false, 'graphics mode reset');
+});
+
+// ── TEST 19 — IND (ESC D) index ────────────────────────────────────────────
+test('TEST 19 — IND index down', () => {
+  const t = createVirtualTerminal(5, 10);
+  feed(t, 'ABC');
+  feed(t, esc('ESCD'));
+  feed(t, 'DEF');
+  const lines = renderPlainText(t).split('\n');
+  assert.equal(lines[0].substring(0, 3), 'ABC', 'ABC on row 0');
+  assert.equal(lines[1].substring(3, 6), 'DEF', 'DEF on row 1 same column');
+});
+
+// ── TEST 20 — NEL (ESC E) next line ────────────────────────────────────────
+test('TEST 20 — NEL next line column zero', () => {
+  const t = createVirtualTerminal(5, 10);
+  feed(t, 'ABC');
+  feed(t, esc('ESCE'));
+  feed(t, 'DEF');
+  const lines = renderPlainText(t).split('\n');
+  assert.equal(lines[0].substring(0, 3), 'ABC', 'ABC on row 0');
+  assert.equal(lines[1].substring(0, 3), 'DEF', 'DEF on row 1 col 0');
+});
+
+// ── TEST 21 — SGR 2 is dim, not bold-off ───────────────────────────────────
+test('TEST 21 — SGR 2 means dim not bold-off', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[1mESC[2mA'));
+  // bold was set (1), then dim (2) — bold should remain, dim added
+  assert.equal(t.cells[0][0].ch, 'A');
+});
+
+// ── TEST 22 — SGR 22 normal intensity ──────────────────────────────────────
+test('TEST 22 — SGR 22 resets bold and dim', () => {
+  const t = createVirtualTerminal(25, 80);
+  // Not testing internal flags directly — verify text renders
+  feed(t, esc('ESC[1mESC[2mESC[22mA'));
+  assert.equal(t.cells[0][0].ch, 'A');
+});

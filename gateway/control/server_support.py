@@ -145,16 +145,19 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
         capture_installed = os.path.isfile("/usr/local/bin/dakota-capture-session")
         capture_configs = []
         sshd_config_dir = "/etc/ssh/sshd_config.d"
-        if os.path.isdir(sshd_config_dir):
-            for fname in os.listdir(sshd_config_dir):
-                fpath = os.path.join(sshd_config_dir, fname)
-                try:
-                    with open(fpath) as f:
-                        content = f.read()
-                    if "dakota-capture-session" in content or "Match User" in content or "Match Group" in content:
-                        capture_configs.append(fname)
-                except Exception:
-                    pass
+        try:
+            if os.path.isdir(sshd_config_dir):
+                for fname in os.listdir(sshd_config_dir):
+                    fpath = os.path.join(sshd_config_dir, fname)
+                    try:
+                        with open(fpath) as f:
+                            content = f.read()
+                        if "dakota-capture-session" in content or "Match User" in content or "Match Group" in content:
+                            capture_configs.append(fname)
+                    except Exception:
+                        pass
+        except PermissionError:
+            pass
         capture_active = capture_installed and len(capture_configs) > 0
         return {
             "platform": "linux",

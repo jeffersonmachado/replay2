@@ -1,0 +1,199 @@
+{
+  "error": null,
+  "session_id": "758f897c-572e-4f5d-b1eb-cb2fcd16f726",
+  "session_start": {
+    "type": "session_start",
+    "v": "v1",
+    "seq_global": 1,
+    "ts_ms": 1000,
+    "actor": "results",
+    "session_id": "758f897c-572e-4f5d-b1eb-cb2fcd16f726",
+    "seq_session": 1,
+    "entry_mode": "gateway_ssh",
+    "via_gateway": true,
+    "source_host": "recital24",
+    "source_user": "results",
+    "source_command": "menu principal",
+    "rows": 25,
+    "cols": 80,
+    "term": "xterm",
+    "encoding": "utf-8",
+    "geometry_source": "session_metadata"
+  },
+  "session_end": {
+    "type": "session_end",
+    "v": "v1",
+    "seq_global": 100,
+    "ts_ms": 30000,
+    "actor": "results",
+    "session_id": "758f897c-572e-4f5d-b1eb-cb2fcd16f726",
+    "seq_session": 50
+  },
+  "geometry": {
+    "rows": 25,
+    "cols": 80,
+    "geometry_source": "legacy_fallback"
+  },
+  "replay_events": [
+    {
+      "seq_global": 2,
+      "ts_ms": 2000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 57,
+      "data_decoded": "\u001b[2J\u001b[H\u001b(0\u000d\n\u001b(B  Login do Sistema  \u001b(0\u000d\n\u001b(B",
+      "data_b64": "G1syShsBABsoMA0KABsoQiBMb2dpbiBkbyBTaXN0ZW1hIBsoMA0KABsoQg=="
+    },
+    {
+      "seq_global": 3,
+      "ts_ms": 2500,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 42,
+      "data_decoded": "\u001b[2J\u001b[H┌────────────────────┐\u000d\n│  Menu Principal    │\u000d\n└────────────────────┘",
+      "data_b64": "G1syShsBABsoMA0KABsoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQg=="
+    },
+    {
+      "seq_global": 4,
+      "ts_ms": 3000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 30,
+      "data_decoded": "\u001b[2J\u001b[HCadastro de Clientes  \u000d\n\u001b[7mNome:\u001b[0m            \u000d\n\u001b[7mEndereço:\u001b[0m        ",
+      "data_b64": "G1syShsBABsoMG9yZGVtCkNhZGFzdHJvIGRlIENsaWVudGVzICANChtbN21Ob21lOhsbWzBtICAgICAgICAgICAgDQobWzdtRW5kZXJl7286GxtbMG0gICAgICAgIA=="
+    },
+    {
+      "seq_global": 5,
+      "ts_ms": 3500,
+      "type": "bytes",
+      "direction": "in",
+      "n_bytes": 1,
+      "data_decoded": "A",
+      "data_b64": "QQ=="
+    },
+    {
+      "seq_global": 6,
+      "ts_ms": 4000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 3,
+      "data_decoded": "ABC\u000d\nDEF\u000d\nGHI",
+      "data_b64": "QUJDCg0KREVGCg0KR0hJCg=="
+    }
+  ],
+  "deterministic_events": [],
+  "timeline": [
+    {
+      "seq_global": 1,
+      "ts_ms": 1000,
+      "timestamp_ms": 1000,
+      "type": "session_start",
+      "data_decoded": "",
+      "summary": "session_start"
+    },
+    {
+      "seq_global": 2,
+      "ts_ms": 2000,
+      "timestamp_ms": 2000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 57,
+      "data_decoded": "\u001b[2J\u001b[H\u001b(0\u000d\n\u001b(B  Login do Sistema  \u001b(0\u000d\n\u001b(B",
+      "summary": "Login do Sistema"
+    },
+    {
+      "seq_global": 3,
+      "ts_ms": 2500,
+      "timestamp_ms": 2500,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 42,
+      "data_decoded": "\u001b[2J\u001b[H┌────────────────────┐\u000d\n│  Menu Principal    │\u000d\n└────────────────────┘",
+      "summary": "Menu Principal"
+    },
+    {
+      "seq_global": 4,
+      "ts_ms": 3000,
+      "timestamp_ms": 3000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 30,
+      "data_decoded": "\u001b[2J\u001b[HCadastro de Clientes  \u000d\n\u001b[7mNome:\u001b[0m            \u000d\n\u001b[7mEndere\u00e7o:\u001b[0m        ",
+      "summary": "Cadastro de Clientes Nome: Endereço:"
+    },
+    {
+      "seq_global": 5,
+      "ts_ms": 3500,
+      "timestamp_ms": 3500,
+      "type": "bytes",
+      "direction": "in",
+      "n_bytes": 1,
+      "data_decoded": "A",
+      "summary": "A"
+    },
+    {
+      "seq_global": 6,
+      "ts_ms": 4000,
+      "timestamp_ms": 4000,
+      "type": "bytes",
+      "direction": "out",
+      "n_bytes": 3,
+      "data_decoded": "ABC\u000d\nDEF\u000d\nGHI",
+      "summary": "ABC DEF GHI"
+    }
+  ],
+  "playback": {
+    "events": [
+      {
+        "seq": 2,
+        "seq_global": 2,
+        "direction": "out",
+        "bytes": 57,
+        "data_b64": "G1syShsBABsoMA0KABsoQiBMb2dpbiBkbyBTaXN0ZW1hIBsoMA0KABsoQg==",
+        "content": "\u001b[2J\u001b[H\u001b(0\u000d\n\u001b(B  Login do Sistema  \u001b(0\u000d\n\u001b(B",
+        "timestamp_ms": 2000
+      },
+      {
+        "seq": 3,
+        "seq_global": 3,
+        "direction": "out",
+        "bytes": 42,
+        "data_b64": "G1syShsBABsoMA0KABsoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQhtbMkoSG1tIGyUoMBtbKAobWyUoQg==",
+        "content": "\u001b[2J\u001b[H┌────────────────────┐\u000d\n│  Menu Principal    │\u000d\n└────────────────────┘",
+        "timestamp_ms": 2500
+      },
+      {
+        "seq": 4,
+        "seq_global": 4,
+        "direction": "out",
+        "bytes": 30,
+        "data_b64": "G1syShsBABsoMG9yZGVtCkNhZGFzdHJvIGRlIENsaWVudGVzICANChtbN21Ob21lOhsbWzBtICAgICAgICAgICAgDQobWzdtRW5kZXJl7286GxtbMG0gICAgICAgIA==",
+        "content": "\u001b[2J\u001b[HCadastro de Clientes  \u000d\n\u001b[7mNome:\u001b[0m            \u000d\n\u001b[7mEndere\u00e7o:\u001b[0m        ",
+        "timestamp_ms": 3000
+      },
+      {
+        "seq": 5,
+        "seq_global": 5,
+        "direction": "in",
+        "bytes": 1,
+        "data_b64": "QQ==",
+        "content": "A",
+        "timestamp_ms": 3500
+      },
+      {
+        "seq": 6,
+        "seq_global": 6,
+        "direction": "out",
+        "bytes": 3,
+        "data_b64": "QUJDCg0KREVGCg0KR0hJCg==",
+        "content": "ABC\u000d\nDEF\u000d\nGHI",
+        "timestamp_ms": 4000
+      }
+    ],
+    "total_bytes_in": 1,
+    "total_bytes_out": 132,
+    "event_count": 5,
+    "deterministic_event_count": 0,
+    "available_input_modes": ["raw", "deterministic"]
+  }
+}

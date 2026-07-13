@@ -88,7 +88,7 @@ export function renderEventsCards(events, targetId, countId) {
           <div>${typeBadge(e.type)} &middot; ${cardMetaLabel(e)} &middot; ${escapeHtml(displayTs)} &middot; ${escapeHtml(e.actor || "-")}</div>
           ${e.type === "deterministic_input" ? '<button type="button" class="r2ctl-btn-soft text-xs r2ctl-det-toggle" data-det-toggle="' + escapeHtml(String(e.seq_global || "")) + '">Detalhes</button>' : ""}
         </div>
-        <pre class="r2ctl-event-content">${escapeHtml(formatCardContent(e))}</pre>
+        <pre class="r2ctl-event-content${e.content_kind === "terminal_snapshot" ? " terminal-snapshot" : ""}">${escapeHtml(formatCardContent(e))}</pre>
         ${cardDetDetails(e)}
       </div>
     </div>`;

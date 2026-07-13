@@ -145,15 +145,16 @@ function vtHandleCsi(term, params, finalChar) {
     for (const p of parts) {
       if (p === 0) {
         term._fg = undefined; term._bg = undefined;
-        term._bold = false; term._underline = false;
-        term._reverse = false; term._hidden = false;
+        term._bold = false; term._dim = false;
+        term._underline = false; term._reverse = false; term._hidden = false;
       }
       if (p === 1) term._bold = true;
-      if (p === 2) term._bold = false;
+      if (p === 2) term._dim = true;   // dim/faint
       if (p === 4) term._underline = true;
       if (p === 5) {} // blink — no-op
       if (p === 7) term._reverse = true;
       if (p === 8) term._hidden = true;
+      if (p === 22) { term._bold = false; term._dim = false; } // normal intensity
       if (p === 24) term._underline = false;
       if (p === 27) term._reverse = false;
       if (p >= 30 && p <= 37) term._fg = p - 30;
@@ -174,6 +175,29 @@ function vtHandleCsi(term, params, finalChar) {
   if (finalChar === 'C') { vtSetCursor(term, term.cursorRow, term.cursorCol + (p1 || 1)); return; }
   if (finalChar === 'D') { vtSetCursor(term, term.cursorRow, term.cursorCol - (p1 || 1)); return; }
   // Unknown CSI — consumed silently
+}
+
+function vtInd(term) {
+  // IND — index: move down one line, scroll if needed, preserve column
+  term.cursorRow += 1;
+  if (term.cursorRow >= term.rows) { vtScroll(term); term.cursorRow = term.rows - 1; }
+}
+
+function vtNel(term) {
+  // NEL — next line: column 0, move down one line
+  term.cursorCol = 0;
+  term.cursorRow += 1;
+  if (term.cursorRow >= term.rows) vtScroll(term);
+}
+
+function vtRi(term) {
+  // RI — reverse index: move up one line, scroll down if at top
+  if (term.cursorRow <= 0) {
+    term.cells.pop();
+    term.cells.unshift(Array.from({ length: term.cols }, () => makeCell(' ')));
+  } else {
+    term.cursorRow -= 1;
+  }
 }
 
 /**
@@ -225,24 +249,37 @@ function feed(term, input) {
       if (next === '7') { term.savedRow = term.cursorRow; term.savedCol = term.cursorCol; i += 2; continue; }
       if (next === '8') { vtSetCursor(term, term.savedRow, term.savedCol); i += 2; continue; }
       if (next === '=' || next === '>') { i += 2; continue; }
-      if (next === 'M') { i += 2; continue; } // RI — reverse index
-      if (next === 'c') { i += 2; continue; } // RIS — reset (simplified: consume)
-      if (next === 'D') { i += 2; continue; } // IND — index
-      if (next === 'E') { i += 2; continue; } // NEL — next line
+      if (next === 'M') { vtRi(term); i += 2; continue; } // RI — reverse index
+      if (next === 'c') {
+        // RIS — full reset
+        for (let r = 0; r < term.rows; r++)
+          for (let c = 0; c < term.cols; c++)
+            term.cells[r][c] = makeCell(' ');
+        term.cursorRow = 0; term.cursorCol = 0;
+        term.graphicsMode = false; term.wrapPending = false;
+        term._fg = undefined; term._bg = undefined;
+        term._bold = false; term._underline = false;
+        term._reverse = false; term._hidden = false;
+        i += 2; continue;
+      }
+      if (next === 'D') { vtInd(term); i += 2; continue; } // IND — index
+      if (next === 'E') { vtNel(term); i += 2; continue; } // NEL — next line
       if (!next) { term.partialEscape = text.slice(i); return; } // isolated ESC at end
       // Unknown ESC + one char — consume both
       i += 2;
       continue;
     }
-    if (ch === '\t') { vtTab(term); i += 1; continue; }
+    if (ch === '\t') { term.wrapPending = false; vtTab(term); i += 1; continue; }
     if (ch === '\n') {
+      term.wrapPending = false;
+      term.cursorCol = 0;    // LF reseta coluna
       term.cursorRow += 1;
       if (term.cursorRow >= term.rows) vtScroll(term);
       i += 1;
       continue;
     }
-    if (ch === '\r') { term.cursorCol = 0; i += 1; continue; }
-    if (ch === '\b') { term.cursorCol = Math.max(0, term.cursorCol - 1); i += 1; continue; }
+    if (ch === '\r') { term.wrapPending = false; term.cursorCol = 0; i += 1; continue; }
+    if (ch === '\b') { term.wrapPending = false; term.cursorCol = Math.max(0, term.cursorCol - 1); i += 1; continue; }
     if (ch >= ' ') vtWriteChar(term, ch);
     i += 1;
   }
@@ -257,8 +294,8 @@ function renderPlainText(term) {
 }
 
 /**
- * HTML rendering with <span class="rv"> for reverse-video cells.
- * Uses CSS custom properties for foreground/background swap.
+ * HTML rendering with semantic span classes for cell attributes.
+ * Groups consecutive cells with identical effective attributes.
  */
 function renderHtml(term) {
   const lines = term.cells.map((row) => {
@@ -266,10 +303,23 @@ function renderHtml(term) {
     let inSpan = null;
     for (const cell of row) {
       const ch = escapeHtml(cell.ch);
-      const rev = cell.reverse;
-      const cls = rev ? 'rv' : '';
-      if (cls && inSpan !== cls) { out += '<span class="' + cls + '">'; inSpan = cls; }
-      if (!cls && inSpan) { out += '</span>'; inSpan = null; }
+      // Calcula cores efetivas
+      let effectiveFg = cell.reverse ? (cell.bg || 0) : (cell.fg || 0);
+      let effectiveBg = cell.reverse ? (cell.fg || 0) : (cell.bg || 0);
+      const classes = [];
+      if (effectiveFg) classes.push('fg-' + effectiveFg);
+      if (effectiveBg) classes.push('bg-' + effectiveBg);
+      if (cell.bold) classes.push('bold');
+      if (cell.dim) classes.push('dim');
+      if (cell.underline) classes.push('underline');
+      if (cell.reverse) classes.push('rv');
+      if (cell.hidden) classes.push('hidden');
+      const cls = classes.join(' ') || '';
+      if (cls !== inSpan) {
+        if (inSpan) out += '</span>';
+        if (cls) out += '<span class="' + cls + '">';
+        inSpan = cls || null;
+      }
       out += ch;
     }
     if (inSpan) out += '</span>';
@@ -417,8 +467,38 @@ function screenSig(term) {
   return (hash >>> 0).toString(16);
 }
 
+/**
+ * Generate a deterministic visual signature from cell attributes.
+ * Captures reverse, bold, underline, dim, hidden, fg, bg.
+ */
+function visualSig(term) {
+  var parts = [];
+  for (var r = 0; r < term.rows; r++) {
+    for (var c = 0; c < term.cols; c++) {
+      var cell = term.cells[r][c];
+      if (cell.ch === ' ' && !cell.reverse && !cell.bold && !cell.underline && !cell.dim && !cell.hidden && !cell.fg && !cell.bg) {
+        continue; // empty cell sem atributos: nao contribui
+      }
+      var flags = 0;
+      if (cell.reverse) flags |= 1;
+      if (cell.bold) flags |= 2;
+      if (cell.underline) flags |= 4;
+      if (cell.dim) flags |= 8;
+      if (cell.hidden) flags |= 16;
+      parts.push(r + ',' + c + ':' + cell.ch + ',' + flags + ',' + (cell.fg || 0) + ',' + (cell.bg || 0));
+    }
+  }
+  var str = parts.join(';');
+  var hash = 0;
+  for (var i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return (hash >>> 0).toString(16);
+}
+
 return {
   createVirtualTerminal, feed, feedBase64, renderPlainText, renderHtml, renderCompactText,
-  eventTimestamp, calcDelay, isBlank, screenSig,
+  eventTimestamp, calcDelay, isBlank, screenSig, visualSig,
 };
 }));

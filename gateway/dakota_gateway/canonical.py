@@ -36,6 +36,11 @@ _KEY_ORDER = [
     "screen_snapshot_age_ms",
     "source",
     "prev_hash",
+    "rows",
+    "cols",
+    "term",
+    "encoding",
+    "geometry_source",
 ]
 
 

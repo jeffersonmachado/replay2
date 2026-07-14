@@ -515,84 +515,40 @@ input[type="range"] {
   }
 
   function buildTimelineItems(events) {
+    // Delega para o módulo UMD compartilhado (capture_replay_timeline.cjs)
+    // O módulo é carregado via <script> no <head>
+    if (typeof DakTimeline !== 'undefined' && DakTimeline.buildTimelineItems) {
+      return DakTimeline.buildTimelineItems(events, {
+        feed, renderPlainText, renderCompactText, eventTimestamp,
+        makeTerm, formatEventContent: formatEventContentLocal,
+        screenSig, visualSig,
+      });
+    }
+    // Fallback inline apenas para cenário de carregamento sem módulo
     const items = [];
     let pendingGroup = null;
-    const sessionTerminal = makeTerm(); // persiste durante toda a sessão
-
+    const sessionTerminal = makeTerm();
     const flushGroup = () => {
       if (!pendingGroup) return;
-      // Snapshot canonico: preserva geometria completa 25x80
       const snap = renderPlainText ? renderPlainText(sessionTerminal) : renderCompactText(sessionTerminal);
-      // Tela vazia é um frame válido (seção 15)
       if (snap !== null && snap !== undefined) {
-        items.push({
-          type: 'bytes',
-          direction: 'out',
-          n_bytes: pendingGroup.totalBytes,
-          chunk_count: pendingGroup.events.length,
-          seq_global: pendingGroup.startSeq,
-          seq_global_end: pendingGroup.lastSeq,
-          timestamp_ms: pendingGroup.startTs,
-          end_timestamp_ms: pendingGroup.lastTs,
-          summary: snap,
-          data_decoded: snap,
-          content_kind: 'terminal_snapshot',
-          text_sig: screenSig ? screenSig(sessionTerminal) : null,
-          visual_sig: visualSig ? visualSig(sessionTerminal) : null,
-        });
+        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, content_kind:'terminal_snapshot', text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
       }
       pendingGroup = null;
     };
-
     for (const ev of events) {
       const isOut = ev?.type === 'bytes' && ev?.direction === 'out';
-      if (!isOut) {
-        flushGroup();
-        if (ev?.type === 'bytes' && ev?.direction === 'in') {
-          const content = ev?.data_decoded || '';
-          items.push({
-            ...ev,
-            summary: content === '\x1b' ? 'Esc' : content === '\r' ? 'Enter' : content,
-            data_decoded: content,
-          });
-        } else {
-          items.push({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' });
-        }
-        continue;
-      }
-
-      const rawText = ev?.data_decoded ?? ev?.summary ?? '';
-      const tsMs = eventTimestamp(ev);
-      const seq = Number(ev?.seq_global || 0);
-
-      // Agrupamento: compara com último timestamp do grupo (lastTs), não startTs
-      const belongsToGroup = pendingGroup &&
-        (tsMs - pendingGroup.lastTs) <= 700 &&
-        pendingGroup.events.length < 8;
-
-      if (!belongsToGroup) {
-        flushGroup();
-      }
-
-      if (!pendingGroup) {
-        pendingGroup = {
-          events: [],
-          startTs: tsMs,
-          lastTs: tsMs,
-          startSeq: seq,
-          lastSeq: seq,
-          totalBytes: 0,
-        };
-      } else {
-        pendingGroup.lastTs = tsMs;
-        pendingGroup.lastSeq = seq;
-      }
-
-      feed(sessionTerminal, rawText);
+      if (!isOut) { flushGroup(); items.push(ev?.type==='bytes'&&ev?.direction==='in'?{...ev,summary:ev?.data_decoded==='\x1b'?'Esc':ev?.data_decoded==='\r'?'Enter':ev?.data_decoded||'',data_decoded:ev?.data_decoded||''}:{...ev,summary:formatEventContentLocal(ev),data_decoded:ev?.data_decoded||''}); continue; }
+      const rawText = ev?.data_decoded??ev?.summary??'';
+      const tsMs=eventTimestamp(ev),seq=Number(ev?.seq_global||0);
+      const belongs=pendingGroup&&(tsMs-pendingGroup.lastTs)<=700&&pendingGroup.events.length<8;
+      if(!belongs)flushGroup();
+      if(!pendingGroup)pendingGroup={events:[],startTs:tsMs,lastTs:tsMs,startSeq:seq,lastSeq:seq,totalBytes:0};
+      else{pendingGroup.lastTs=tsMs;pendingGroup.lastSeq=seq;}
+      feed(sessionTerminal,rawText);
       pendingGroup.events.push(ev);
-      pendingGroup.totalBytes += Number(ev?.n_bytes ?? ev?.n ?? 0);
+      pendingGroup.totalBytes+=Number(ev?.n_bytes??ev?.n??0);
     }
-
     flushGroup();
     return items;
   }
@@ -1002,6 +958,7 @@ input[type="range"] {
 })();
 </script>
 <script src="/assets/js/virtual_terminal.cjs"></script>
+<script src="/assets/js/components/capture_replay_timeline.cjs"></script>
 <script>
   if (typeof DakVT !== 'undefined' && typeof window._initVT === 'function') {
     window._initVT(DakVT);

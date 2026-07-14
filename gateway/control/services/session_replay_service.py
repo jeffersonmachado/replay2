@@ -12,37 +12,24 @@ import re
 from pathlib import Path
 
 
+def _event_direction(ev: dict) -> str:
+    """Retorna a direcao do evento: 'in', 'out' ou '' (desconhecida)."""
+    return str(ev.get("direction") or ev.get("dir") or "").strip()
+
+
 def _detect_encoding(events: list[dict], session_start: dict | None = None) -> str:
-    """Detecta encoding a partir de metadados ou heuristica nos dados.
+    """Detecta encoding a partir de metadados.
 
     Prioridade:
     1. Metadados do session_start (campo 'encoding')
-    2. Heuristica: se houver bytes com charset DEC ou ISO-2022, usa latin1
-    3. Fallback: utf-8
+    2. Fallback: utf-8
+
+    Não infere encoding por ANSI, DEC graphics, posição de cursor ou conteúdo visual.
     """
-    # Prioridade 1: metadados
     if session_start:
         enc = str(session_start.get("encoding") or "").strip().lower()
-        if enc in ("utf-8", "utf8", "latin1", "iso-8859-1", "ascii", "cp1252"):
+        if enc in ("utf-8", "utf8", "latin1", "iso-8859-1", "ascii", "cp1252", "cp850", "cp437"):
             return "utf-8" if enc in ("utf-8", "utf8", "ascii") else enc
-
-    # Prioridade 2: heuristica — charset DEC ou ISO-2022
-    for ev in events:
-        data_b64 = str(ev.get("data_b64") or "").strip()
-        if not data_b64:
-            continue
-        try:
-            raw = base64.b64decode(data_b64)
-        except Exception:
-            continue
-        # DEC special graphics / ISO-2022 shift sequences
-        if b'\x0e' in raw or b'\x0f' in raw or b'\x1b(' in raw or b'\x1b)' in raw:
-            return "latin1"
-        # CSI sequences with 8-bit chars suggest non-UTF-8
-        if any(b > 0x7f and b < 0xa0 for b in raw):
-            return "latin1"
-
-    # Prioridade 3: fallback
     return "utf-8"
 
 
@@ -64,7 +51,7 @@ def _detect_geometry(events: list[dict], session_start: dict | None = None) -> d
     rows = None
     cols = None
     for ev in events:
-        if ev.get("direction") == "in":
+        if _event_direction(ev) == "in":
             continue  # resize de entrada é ignorado (seção 12)
         data = ev.get("data_b64") or ""
         if not data:

@@ -102,18 +102,18 @@ def test_encoding_from_metadata():
     assert result == "latin1"
 
 
-def test_encoding_heuristic_dec_graphics():
-    """Bytes com charset DEC graphics sugerem latin1."""
+def test_encoding_dec_graphics_does_not_affect_encoding():
+    """Bytes com charset DEC graphics NAO alteram encoding — continua utf-8."""
     events = [{"data_b64": base64.b64encode(b"\x1b(0\x0eABC\x0f").decode()}]
     result = _detect_encoding(events)
-    assert result == "latin1"
+    assert result == "utf-8", "DEC graphics nao deve mudar encoding para latin1"
 
 
-def test_encoding_heuristic_high_bytes():
-    """Bytes com chars 0x80-0x9F (nao UTF-8) sugerem latin1."""
+def test_encoding_high_bytes_without_metadata_remains_utf8():
+    """Bytes com chars 0x80-0x9F sem metadados continuam utf-8 (fallback)."""
     events = [{"data_b64": base64.b64encode(b"\x80\x90").decode()}]
     result = _detect_encoding(events)
-    assert result == "latin1"
+    assert result == "utf-8", "sem metadados, fallback e utf-8"
 
 
 # ── Timeline ───────────────────────────────────────────────────────────────

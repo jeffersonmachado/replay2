@@ -17,10 +17,10 @@
 # =============================================================================
 set -e
 
-HOST="10.5.8.24"
-PORT="8080"
-ADMIN_USER="admin"
-ADMIN_PASS="Dakota@2026!"
+HOST="${TARGET_HOST:-127.0.0.1}"
+PORT="${TARGET_PORT:-8080}"
+ADMIN_USER="${ADMIN_USER:-}"
+ADMIN_PASS="${ADMIN_PASS:-}"
 
 PASS=0
 FAIL=0

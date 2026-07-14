@@ -56,6 +56,13 @@ class AuditEvent:
     source_user: Optional[str] = None
     source_command: Optional[str] = None
 
+    # session terminal metadata (v0.3.14+)
+    rows: Optional[int] = None
+    cols: Optional[int] = None
+    term: Optional[str] = None
+    encoding: Optional[str] = None
+    geometry_source: Optional[str] = None
+
     # integrity
     prev_hash: str = ""
     hash: str = ""

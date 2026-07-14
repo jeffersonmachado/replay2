@@ -51,11 +51,15 @@ if [ -d "$ROOT_DIR/gateway" ]; then
   find "$STAGE_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
 fi
 if [ -d "$ROOT_DIR/tests" ]; then cp -R "$ROOT_DIR/tests" "$STAGE_DIR/"; fi
+# Remove tmp e caches de teste
+rm -rf "$STAGE_DIR/tests/tmp" 2>/dev/null || true
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
   mkdir -p "$STAGE_DIR/scripts"
   cp -f "$ROOT_DIR/scripts/"*.sh "$STAGE_DIR/scripts/"
+  # Remove scripts com credenciais ou hosts internos
+  rm -f "$STAGE_DIR/scripts/show-admin-credentials.sh" 2>/dev/null || true
 fi
 
 # Garante executáveis

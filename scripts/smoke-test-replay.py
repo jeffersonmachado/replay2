@@ -16,10 +16,10 @@ def check(ok: bool, label: str, detail: str = ""):
 def main():
     global PASS, FAIL
     p = argparse.ArgumentParser(description="Smoke test de replay")
-    p.add_argument("--host", default="10.5.8.24")
-    p.add_argument("--port", default="8080")
-    p.add_argument("--user", default="admin")
-    p.add_argument("--pass", dest="password", default="Dakota@2026!")
+    p.add_argument("--host", default=os.environ.get("TARGET_HOST", "127.0.0.1"))
+    p.add_argument("--port", default=os.environ.get("TARGET_PORT", "8080"))
+    p.add_argument("--user", default=os.environ.get("ADMIN_USER", ""))
+    p.add_argument("--pass", dest="password", default=os.environ.get("ADMIN_PASS", ""))
     args = p.parse_args()
 
     BASE = f"http://{args.host}:{args.port}"

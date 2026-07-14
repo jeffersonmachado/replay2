@@ -307,13 +307,13 @@ function renderHtml(term) {
       let effectiveFg = cell.reverse ? (cell.bg || 0) : (cell.fg || 0);
       let effectiveBg = cell.reverse ? (cell.fg || 0) : (cell.bg || 0);
       const classes = [];
-      if (effectiveFg) classes.push('fg-' + effectiveFg);
-      if (effectiveBg) classes.push('bg-' + effectiveBg);
-      if (cell.bold) classes.push('bold');
-      if (cell.dim) classes.push('dim');
-      if (cell.underline) classes.push('underline');
-      if (cell.reverse) classes.push('rv');
-      if (cell.hidden) classes.push('hidden');
+      if (effectiveFg) classes.push('vt-fg-' + effectiveFg);
+      if (effectiveBg) classes.push('vt-bg-' + effectiveBg);
+      if (cell.bold) classes.push('vt-bold');
+      if (cell.dim) classes.push('vt-dim');
+      if (cell.underline) classes.push('vt-underline');
+      if (cell.reverse) classes.push('vt-reverse');
+      if (cell.hidden) classes.push('vt-hidden');
       const cls = classes.join(' ') || '';
       if (cls !== inSpan) {
         if (inSpan) out += '</span>';

@@ -43,7 +43,10 @@ function createVirtualTerminal(rows = 25, cols = 80) {
     cursorCol: 0,
     savedRow: 0,
     savedCol: 0,
-    graphicsMode: false,
+    graphicsMode: false,  // legacy — current effective graphics charset
+    g0Charset: 'B',       // G0: 'B' = US ASCII, '0' = DEC Special Graphics
+    g1Charset: 'B',       // G1: same
+    shiftOut: false,      // true = using G1 (SO/^N), false = using G0 (SI/^O)
     partialEscape: '',
     wrapPending: false,
     cells,
@@ -75,7 +78,8 @@ function vtWriteChar(term, ch) {
     term.wrapPending = true;
     return;
   }
-  const rendered = term.graphicsMode && DEC_SPECIAL_GRAPHICS_MAP[ch] ? DEC_SPECIAL_GRAPHICS_MAP[ch] : ch;
+  const effectiveCharset = term.shiftOut ? term.g1Charset : term.g0Charset;
+  const rendered = (effectiveCharset === '0' && DEC_SPECIAL_GRAPHICS_MAP[ch]) ? DEC_SPECIAL_GRAPHICS_MAP[ch] : ch;
   const cell = term.cells[term.cursorRow][term.cursorCol];
   cell.ch = rendered;
   // Copy current SGR state into the cell
@@ -242,7 +246,10 @@ function feed(term, input) {
       }
       if (next === '(' || next === ')') {
         if (i + 2 < text.length) {
-          term.graphicsMode = text[i + 2] === '0';
+          const charset = text[i + 2];
+          if (next === '(') { term.g0Charset = charset; } // designate G0
+          else { term.g1Charset = charset; }              // designate G1
+          term.graphicsMode = (next === '(' ? charset : term.g0Charset) === '0'; // legacy compat
           i += 3;
           continue;
         }
@@ -260,6 +267,7 @@ function feed(term, input) {
             term.cells[r][c] = makeCell(' ');
         term.cursorRow = 0; term.cursorCol = 0;
         term.graphicsMode = false; term.wrapPending = false;
+        term.g0Charset = 'B'; term.g1Charset = 'B'; term.shiftOut = false;
         term._fg = undefined; term._bg = undefined;
         term._bold = false; term._underline = false;
         term._reverse = false; term._hidden = false;
@@ -283,6 +291,8 @@ function feed(term, input) {
     }
     if (ch === '\r') { term.wrapPending = false; term.cursorCol = 0; i += 1; continue; }
     if (ch === '\b') { term.wrapPending = false; term.cursorCol = Math.max(0, term.cursorCol - 1); i += 1; continue; }
+    if (ch === '\x0e') { term.shiftOut = true; i += 1; continue; }  // SO — use G1
+    if (ch === '\x0f') { term.shiftOut = false; i += 1; continue; } // SI — use G0
     if (ch >= ' ') vtWriteChar(term, ch);
     i += 1;
   }

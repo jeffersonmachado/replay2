@@ -1,4 +1,6 @@
-# Tipos de Teste — Replay2
+# Testes — Replay2
+
+> **Operação & Deploy:** veja `../remoto_dakota/docs/operacao.md`
 
 ## Visão Geral
 

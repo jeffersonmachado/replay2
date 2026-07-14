@@ -5,6 +5,7 @@ import { connectWs } from "./ws.js";
 const GATEWAY_TONE_CLASSES = ["r2ctl-status-neutral", "r2ctl-status-ok", "r2ctl-status-warn", "r2ctl-status-danger"];
 
 let _gwWs = null;
+let _gwPollInterval = null;
 
 export async function logout() {
   await fetch("/api/logout", { method: "POST", credentials: "include" });
@@ -109,8 +110,19 @@ function startGatewayStatusWs() {
       }
     },
     onClose: () => {
-      setGatewayTone("r2ctl-status-danger");
-      text("#global_gateway_text", "serviço indisponível");
+      _gwWs = null;
+      // Fallback: polling HTTP a cada 30s quando WebSocket indisponivel
+      if (!_gwPollInterval) {
+        fetchGatewayStatus();
+        _gwPollInterval = setInterval(fetchGatewayStatus, 30000);
+      }
+    },
+    onOpen: () => {
+      // WebSocket conectou — cancela polling HTTP
+      if (_gwPollInterval) {
+        clearInterval(_gwPollInterval);
+        _gwPollInterval = null;
+      }
     },
   });
 }

@@ -32,6 +32,12 @@ class ReplayConfig:
     gateway_user: str = ""
     gateway_port: int = 0
 
+    # Session terminal geometry
+    rows: int = 25
+    cols: int = 80
+    term: str = "xterm"
+    encoding: str = "utf-8"
+
     checkpoint_quiet_ms: int = 250
     checkpoint_timeout_ms: int = 5000
     max_screen_bytes: int = 65535
@@ -49,7 +55,7 @@ class _TargetSession:
         self.session_id = session_id
         self.target_user_override = target_user_override
         self.master_fd, self.slave_fd = pty.openpty()
-        self._configure_pty(rows=25, cols=80)
+        self._configure_pty(rows=cfg.rows, cols=cfg.cols)
         self.proc = subprocess.Popen(
             self._ssh_argv(),
             stdin=self.slave_fd,
@@ -57,7 +63,7 @@ class _TargetSession:
             stderr=self.slave_fd,
             preexec_fn=os.setsid,
             close_fds=True,
-            env=dict(os.environ, TERM="xterm"),
+            env=dict(os.environ, TERM=cfg.term),
         )
         os.close(self.slave_fd)
         self.screen_buf = b""

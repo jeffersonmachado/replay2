@@ -275,7 +275,7 @@ input[type="range"] {
   const playbackPrefsKey = 'dakota_capture_replay_playback_prefs_v1';
 
   // Terminal functions imported via module — available as window.__vt
-  let createVirtualTerminal, feed, renderPlainText, renderHtml, renderCompactText;
+  let createVirtualTerminal, feed, feedBase64, renderPlainText, renderHtml, renderCompactText;
   let eventTimestamp, calcDelay, isBlank, screenSig, visualSig;
   // Timeline core — imported dynamically
   let _formatEventContent;
@@ -286,6 +286,7 @@ input[type="range"] {
   function initVT(mod) {
     createVirtualTerminal = mod.createVirtualTerminal;
     feed = mod.feed;
+    feedBase64 = mod.feedBase64;
     renderPlainText = mod.renderPlainText;
     renderHtml = mod.renderHtml;
     renderCompactText = mod.renderCompactText;
@@ -408,7 +409,9 @@ input[type="range"] {
     if (filter !== 'all') {
       events = events.filter((ev) => {
         if (filter === 'det') return ev.type === 'deterministic_input';
-        return ev.direction === filter || ev.content_kind === 'terminal_snapshot';
+        if (filter === 'in') return ev.direction === 'in';
+        if (filter === 'out') return ev.direction === 'out' || ev.content_kind === 'terminal_snapshot';
+        return false;
       });
     }
     const container = document.getElementById('events-list');
@@ -624,21 +627,27 @@ input[type="range"] {
     persistPlaybackPrefs({ speed: playbackState.speed });
   });
 
+  // ── feedReplayEvent: usa data_b64 (canonico) quando disponivel ────────
+  function feedReplayEvent(term, event) {
+    if (event.data_b64 && typeof feedBase64 === 'function') {
+      feedBase64(term, event.data_b64);
+    } else if (event.content && typeof feed === 'function') {
+      feed(term, event.content);
+    }
+  }
+
   // Navegação por seq_global
   function seekToEvent(index) {
     if (!replayData) return;
     const events = replayData.playback?.events || [];
     if (index < 0 || index >= events.length) return;
     playbackState.isPaused = true;
-    // displayedEventIndex: frame atualmente visivel
-    // nextEventIndex: proximo evento a processar (evita replay duplo)
     playbackState.displayedEventIndex = index;
     playbackState.nextEventIndex = index + 1;
     playbackState.terminal = makeTerm();
-    // Replay all events up to current index
     for (let i = 0; i <= index; i++) {
       if (events[i].direction === 'out') {
-        feed(playbackState.terminal, events[i].content);
+        feedReplayEvent(playbackState.terminal, events[i]);
       }
     }
     const outputEl = document.getElementById('playback-output');
@@ -915,7 +924,7 @@ input[type="range"] {
     const counter = document.getElementById('playback-event-counter');
 
     if (event.direction === 'out') {
-      feed(playbackState.terminal, event.content);
+      feedReplayEvent(playbackState.terminal, event);
       outputEl.innerHTML = renderHtml(playbackState.terminal);
     }
 

@@ -104,8 +104,8 @@ pytest_args() {
 
 # ── Parse arguments ─────────────────────────────────────────────────────────
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --all)         FLAG_ALL=1 ;;
     --unit)        FLAG_UNIT=1 ;;
     --js)          FLAG_JS=1 ;;
@@ -121,19 +121,35 @@ for arg in "$@"; do
     --fail-fast)   FAIL_FAST="-x" ;;
     --remote)      REMOTE=1 ;;
     --host)
+      if [[ -z "${2:-}" || "${2:0:2}" == "--" ]]; then
+        echo "Erro: --host requer um valor"
+        exit 1
+      fi
+      REMOTE_HOST="$2"
       shift
-      REMOTE_HOST="$1"
       ;;
     --port)
+      if [[ -z "${2:-}" || "${2:0:2}" == "--" ]]; then
+        echo "Erro: --port requer um valor"
+        exit 1
+      fi
+      REMOTE_PORT="$2"
       shift
-      REMOTE_PORT="$1"
+      ;;
+    --help|-h)
+      echo "Uso: $0 [OPÇÕES]"
+      echo "  --all, --unit, --js, --python, --tcl, --smoke, --capture, --replay"
+      echo "  --integration, --quick, --ci, --verbose, --fail-fast, --remote"
+      echo "  --host HOST, --port PORT"
+      exit 0
       ;;
     *)
-      echo "Opção desconhecida: $arg"
-      echo "Use: $0 [--all|--unit|--js|--python|--tcl|--smoke|--capture|--replay|--integration|--quick|--ci] [--verbose] [--fail-fast] [--remote] [--host HOST] [--port PORT]"
+      echo "Opção desconhecida: $1"
+      echo "Use --help para opções"
       exit 1
       ;;
   esac
+  shift
 done
 
 # ── Resolve combos ──────────────────────────────────────────────────────────

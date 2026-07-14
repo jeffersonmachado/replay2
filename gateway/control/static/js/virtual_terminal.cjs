@@ -29,7 +29,7 @@ const DEC_SPECIAL_GRAPHICS_MAP = {
 };
 
 function makeCell(ch) {
-  return { ch: ch || ' ', fg: 0, bg: 0, bold: false, underline: false, reverse: false, hidden: false };
+  return { ch: ch || ' ', fg: null, bg: null, bold: false, dim: false, underline: false, blink: false, reverse: false, hidden: false };
 }
 
 function createVirtualTerminal(rows = 25, cols = 80) {
@@ -81,7 +81,9 @@ function vtWriteChar(term, ch) {
   // Copy current SGR state into the cell
   cell.reverse = term._reverse || false;
   cell.bold = term._bold || false;
+  cell.dim = term._dim || false;
   cell.underline = term._underline || false;
+  cell.blink = term._blink || false;
   cell.hidden = term._hidden || false;
   if (term._fg !== undefined) cell.fg = term._fg;
   if (term._bg !== undefined) cell.bg = term._bg;
@@ -145,17 +147,18 @@ function vtHandleCsi(term, params, finalChar) {
     for (const p of parts) {
       if (p === 0) {
         term._fg = undefined; term._bg = undefined;
-        term._bold = false; term._dim = false;
+        term._bold = false; term._dim = false; term._blink = false;
         term._underline = false; term._reverse = false; term._hidden = false;
       }
       if (p === 1) term._bold = true;
       if (p === 2) term._dim = true;   // dim/faint
       if (p === 4) term._underline = true;
-      if (p === 5) {} // blink — no-op
+      if (p === 5) term._blink = true;   // blink
       if (p === 7) term._reverse = true;
       if (p === 8) term._hidden = true;
       if (p === 22) { term._bold = false; term._dim = false; } // normal intensity
       if (p === 24) term._underline = false;
+      if (p === 25) term._blink = false;
       if (p === 27) term._reverse = false;
       if (p >= 30 && p <= 37) term._fg = p - 30;
       if (p === 39) term._fg = undefined;
@@ -303,15 +306,16 @@ function renderHtml(term) {
     let inSpan = null;
     for (const cell of row) {
       const ch = escapeHtml(cell.ch);
-      // Calcula cores efetivas
-      let effectiveFg = cell.reverse ? (cell.bg || 0) : (cell.fg || 0);
-      let effectiveBg = cell.reverse ? (cell.fg || 0) : (cell.bg || 0);
+      // Calcula cores efetivas (null = default)
+      let effectiveFg = cell.reverse ? cell.bg : cell.fg;
+      let effectiveBg = cell.reverse ? cell.fg : cell.bg;
       const classes = [];
-      if (effectiveFg) classes.push('vt-fg-' + effectiveFg);
-      if (effectiveBg) classes.push('vt-bg-' + effectiveBg);
+      if (effectiveFg !== null && effectiveFg !== undefined) classes.push('vt-fg-' + effectiveFg);
+      if (effectiveBg !== null && effectiveBg !== undefined) classes.push('vt-bg-' + effectiveBg);
       if (cell.bold) classes.push('vt-bold');
       if (cell.dim) classes.push('vt-dim');
       if (cell.underline) classes.push('vt-underline');
+      if (cell.blink) classes.push('vt-blink');
       if (cell.reverse) classes.push('vt-reverse');
       if (cell.hidden) classes.push('vt-hidden');
       const cls = classes.join(' ') || '';
@@ -451,48 +455,52 @@ function feedBase64(term, dataB64) {
 
 /**
  * Generate a deterministic text signature from the canonical matrix.
+ * Includes geometry (rows, cols) and all cells including spaces.
  */
 function screenSig(term) {
-  var lines = term.cells.map(function(row) {
-    return row.map(function(c) { return c.ch; }).join('').replace(/[ \t]+$/g, '');
-  });
-  // Simple hash
-  var str = lines.join('\n');
-  var hash = 0;
-  for (var i = 0; i < str.length; i++) {
-    var ch = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + ch;
-    hash |= 0;
+  var parts = ['v1', String(term.rows), String(term.cols)];
+  for (var r = 0; r < term.rows; r++) {
+    var row = '';
+    for (var c = 0; c < term.cols; c++) {
+      row += term.cells[r][c].ch;
+    }
+    parts.push(row);
   }
-  return (hash >>> 0).toString(16);
+  return simpleHash(parts.join('\n'));
 }
 
 /**
  * Generate a deterministic visual signature from cell attributes.
- * Captures reverse, bold, underline, dim, hidden, fg, bg.
+ * Includes geometry and all cell attributes.
  */
 function visualSig(term) {
-  var parts = [];
+  var parts = ['v1', String(term.rows), String(term.cols)];
   for (var r = 0; r < term.rows; r++) {
+    var rowParts = [];
     for (var c = 0; c < term.cols; c++) {
       var cell = term.cells[r][c];
-      if (cell.ch === ' ' && !cell.reverse && !cell.bold && !cell.underline && !cell.dim && !cell.hidden && !cell.fg && !cell.bg) {
-        continue; // empty cell sem atributos: nao contribui
-      }
       var flags = 0;
       if (cell.reverse) flags |= 1;
       if (cell.bold) flags |= 2;
       if (cell.underline) flags |= 4;
       if (cell.dim) flags |= 8;
       if (cell.hidden) flags |= 16;
-      parts.push(r + ',' + c + ':' + cell.ch + ',' + flags + ',' + (cell.fg || 0) + ',' + (cell.bg || 0));
+      if (cell.blink) flags |= 32;
+      var fg = cell.fg !== null ? cell.fg : -1;
+      var bg = cell.bg !== null ? cell.bg : -1;
+      rowParts.push(cell.ch + ':' + flags + ':' + fg + ':' + bg);
     }
+    parts.push(rowParts.join(','));
   }
-  var str = parts.join(';');
-  var hash = 0;
+  return simpleHash(parts.join('\n'));
+}
+
+function simpleHash(str) {
+  // djb2 hash para compatibilidade (determinístico, cross-platform)
+  var hash = 5381;
   for (var i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit integer
   }
   return (hash >>> 0).toString(16);
 }

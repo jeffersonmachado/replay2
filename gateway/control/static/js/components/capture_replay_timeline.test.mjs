@@ -100,7 +100,7 @@ test('snapshot includes text_sig and visual_sig', () => {
   assert.equal(typeof items[0].text_sig, 'string');
   assert.equal(typeof items[0].visual_sig, 'string');
   // text_sig must differ from visual_sig when attributes differ
-  assert.ok(items[0].text_sig !== items[0].visual_sig || true, 'signatures are strings');
+  assert.ok(items[0].text_sig !== items[0].visual_sig, 'text_sig deve diferir de visual_sig para mesmos dados');
 });
 
 test('text_sig stable for same text, visual_sig changes with attributes', () => {

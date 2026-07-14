@@ -164,6 +164,7 @@ function vtHandleCsi(term, params, finalChar) {
       if (p === 24) term._underline = false;
       if (p === 25) term._blink = false;
       if (p === 27) term._reverse = false;
+      if (p === 28) term._hidden = false;
       if (p >= 30 && p <= 37) term._fg = p - 30;
       if (p === 39) term._fg = undefined;
       if (p >= 40 && p <= 47) term._bg = p - 40;
@@ -437,29 +438,164 @@ function createUtf8Decoder() {
 }
 
 /**
- * Feed base64-encoded bytes into the terminal using an incremental UTF-8 decoder.
+ * Feed base64-encoded bytes into the terminal using an incremental decoder.
  * Solves the split-UTF-8 problem: C3 in one event + A1 in next = á.
+ *
+ * @param {Object} term - virtual terminal
+ * @param {string} dataB64 - base64-encoded bytes
+ * @param {string} [encoding='utf-8'] - character encoding (utf-8, cp850, cp437, iso-8859-1, windows-1252)
  */
-function feedBase64(term, dataB64) {
+function feedBase64(term, dataB64, encoding) {
   if (!dataB64) return;
-  if (!term._utf8decoder) term._utf8decoder = createUtf8Decoder();
-  var decoder = term._utf8decoder;
+  var enc = encoding || 'utf-8';
+
+  // Para UTF-8, usar decoder incremental que resolve bytes divididos
+  if (enc === 'utf-8' || enc === 'utf8') {
+    if (!term._utf8decoder) term._utf8decoder = createUtf8Decoder();
+    var decoder = term._utf8decoder;
+    try {
+      var raw = atob(dataB64);
+      for (var i = 0; i < raw.length; i++) {
+        var ch = raw.charCodeAt(i);
+        if (ch < 0x20 || ch === 0x7F) {
+          decoder.reset();
+          feed(term, String.fromCharCode(ch));
+        } else {
+          var decoded = decoder.feed(ch);
+          if (decoded) feed(term, decoded);
+        }
+      }
+    } catch (e) {
+      // Invalid base64 — ignore
+    }
+    return;
+  }
+
+  // Para encodings single-byte (cp850, cp437, iso-8859-1, windows-1252),
+  // cada byte é um caractere completo — não há divisão multi-byte
   try {
     var raw = atob(dataB64);
-    for (var i = 0; i < raw.length; i++) {
-      var ch = raw.charCodeAt(i);
-      // Control characters pass through directly
-      if (ch < 0x20 || ch === 0x7F) {
-        // Flush decoder before control char
-        decoder.reset();
-        feed(term, String.fromCharCode(ch));
-      } else {
-        var decoded = decoder.feed(ch);
-        if (decoded) feed(term, decoded);
-      }
-    }
+    var text = decodeSingleByte(raw, enc);
+    feed(term, text);
   } catch (e) {
     // Invalid base64 — ignore
+  }
+}
+
+/**
+ * Decodifica string binaria usando encoding single-byte.
+ * Suporta: cp850, cp437, iso-8859-1, windows-1252.
+ */
+function decodeSingleByte(binaryStr, encoding) {
+  if (!binaryStr) return '';
+  try {
+    // Tenta usar TextDecoder quando disponivel
+    var decoder = new TextDecoder(encoding, { fatal: false });
+    var bytes = new Uint8Array(binaryStr.length);
+    for (var i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i) & 0xFF;
+    }
+    return decoder.decode(bytes);
+  } catch (e) {
+    // Fallback: tabela manual para CP850 (Latin-1 extendido)
+    return fallbackDecode(binaryStr, encoding);
+  }
+}
+
+/**
+ * Fallback manual para encodings single-byte.
+ * CP850 e CP437 mapeiam bytes 0x80-0xFF para caracteres especificos.
+ */
+var CP850_TABLE = null;
+var CP437_TABLE = null;
+
+function buildCp850Table() {
+  // CP850: mapeamento dos bytes 0x80-0xFF
+  var t = {};
+  var chars = '\u00C7\u00FC\u00E9\u00E2\u00E4\u00E0\u00E5\u00E7\u00EA\u00EB\u00E8\u00EF\u00EE\u00EC\u00C4\u00C5' +
+    '\u00C9\u00E6\u00C6\u00F4\u00F6\u00F2\u00FB\u00F9\u00FF\u00D6\u00DC\u00F8\u00A3\u00D8\u00D7\u0192' +
+    '\u00E1\u00ED\u00F3\u00FA\u00F1\u00D1\u00AA\u00BA\u00BF\u00AE\u00AC\u00BD\u00BC\u00A1\u00AB\u00BB' +
+    '\u2591\u2592\u2593\u2502\u2524\u00C1\u00C2\u00C0\u00A9\u2563\u2551\u2557\u255D\u00A2\u00A5\u2510' +
+    '\u2514\u2534\u252C\u251C\u2500\u253C\u00E3\u00C3\u255A\u2554\u2569\u2566\u2560\u2550\u256C\u00A4' +
+    '\u00F0\u00D0\u00CA\u00CB\u00C8\u0131\u00CD\u00CE\u00CF\u2518\u250C\u2588\u2584\u00A6\u00CC\u2580' +
+    '\u00D3\u00DF\u00D4\u00D2\u00F5\u00D5\u00B5\u00FE\u00DE\u00DA\u00DB\u00D9\u00FD\u00DD\u00AF\u00B4' +
+    '\u00AD\u00B1\u2017\u00BE\u00B6\u00A7\u00F7\u00B8\u00B0\u00A8\u00B7\u00B9\u00B3\u00B2\u25A0\u00A0';
+  for (var i = 0; i < 128; i++) {
+    t[0x80 + i] = chars.charAt(i);
+  }
+  return t;
+}
+
+function buildCp437Table() {
+  var t = {};
+  var chars = '\u00C7\u00FC\u00E9\u00E2\u00E4\u00E0\u00E5\u00E7\u00EA\u00EB\u00E8\u00EF\u00EE\u00EC\u00C4\u00C5' +
+    '\u00C9\u00E6\u00C6\u00F4\u00F6\u00F2\u00FB\u00F9\u00FF\u00D6\u00DC\u00A2\u00A3\u00A5\u20A7\u0192' +
+    '\u00E1\u00ED\u00F3\u00FA\u00F1\u00D1\u00AA\u00BA\u00BF\u2310\u00AC\u00BD\u00BC\u00A1\u00AB\u00BB' +
+    '\u2591\u2592\u2593\u2502\u2524\u2561\u2562\u2556\u2555\u2563\u2551\u2557\u255D\u255C\u255B\u2510' +
+    '\u2514\u2534\u252C\u251C\u2500\u253C\u255E\u255F\u255A\u2554\u2569\u2566\u2560\u2550\u256C\u2567' +
+    '\u2568\u2564\u2565\u2559\u2558\u2552\u2553\u256B\u256A\u2518\u250C\u2588\u2584\u258C\u2590\u2580' +
+    '\u03B1\u00DF\u0393\u03C0\u03A3\u03C3\u00B5\u03C4\u03A6\u0398\u03A9\u03B4\u221E\u03C6\u03B5\u2229' +
+    '\u2261\u00B1\u2265\u2264\u2320\u2321\u00F7\u2248\u00B0\u2219\u00B7\u221A\u207F\u00B2\u25A0\u00A0';
+  for (var i = 0; i < 128; i++) {
+    t[0x80 + i] = chars.charAt(i);
+  }
+  return t;
+}
+
+function fallbackDecode(binaryStr, encoding) {
+  var table;
+  if (encoding === 'cp850' || encoding === 'ibm850') {
+    if (!CP850_TABLE) CP850_TABLE = buildCp850Table();
+    table = CP850_TABLE;
+  } else if (encoding === 'cp437' || encoding === 'ibm437') {
+    if (!CP437_TABLE) CP437_TABLE = buildCp437Table();
+    table = CP437_TABLE;
+  }
+  // iso-8859-1 e windows-1252: bytes 0x80-0x9F são caracteres de controle
+  // mas muitos sistemas usam como parte de windows-1252
+
+  var result = '';
+  for (var i = 0; i < binaryStr.length; i++) {
+    var byte = binaryStr.charCodeAt(i) & 0xFF;
+    if (byte < 0x80) {
+      result += String.fromCharCode(byte);
+    } else if (table && table[byte]) {
+      result += table[byte];
+    } else if (encoding === 'iso-8859-1' || encoding === 'latin1') {
+      // ISO-8859-1: byte direto para Unicode
+      result += String.fromCharCode(byte);
+    } else {
+      // windows-1252: bytes 0x80-0x9F têm mapeamento especial
+      result += decodeWindows1252Byte(byte);
+    }
+  }
+  return result;
+}
+
+var WIN1252_TABLE = null;
+function buildWin1252Table() {
+  var t = {};
+  var chars = '\u20AC\u0081\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u008D\u017D\u008F' +
+    '\u0090\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u009D\u017E\u0178';
+  for (var i = 0; i < 32; i++) {
+    t[0x80 + i] = chars.charAt(i);
+  }
+  return t;
+}
+
+function decodeWindows1252Byte(byte) {
+  if (byte < 0x80) return String.fromCharCode(byte);
+  if (byte >= 0xA0) return String.fromCharCode(byte);
+  if (!WIN1252_TABLE) WIN1252_TABLE = buildWin1252Table();
+  return WIN1252_TABLE[byte] || String.fromCharCode(byte);
+}
+
+/**
+ * Reseta o decoder do terminal — usado ao reiniciar playback ou mudar de sessao.
+ */
+function resetDecoder(term) {
+  if (term._utf8decoder) {
+    term._utf8decoder.reset();
   }
 }
 
@@ -505,6 +641,79 @@ function visualSig(term) {
   return simpleHash(parts.join('\n'));
 }
 
+/**
+ * Render canonical snapshot with full cell attributes.
+ * Returns a serializable object (not HTML), suitable for:
+ * - deterministic signatures
+ * - cloning
+ * - serialization to JSON
+ * - rendering to HTML on demand
+ */
+function renderSnapshot(term) {
+  var cells = [];
+  for (var r = 0; r < term.rows; r++) {
+    for (var c = 0; c < term.cols; c++) {
+      var cell = term.cells[r][c];
+      cells.push({
+        ch: cell.ch,
+        fg: cell.fg !== null && cell.fg !== undefined ? cell.fg : 'default',
+        bg: cell.bg !== null && cell.bg !== undefined ? cell.bg : 'default',
+        bold: !!cell.bold,
+        dim: !!cell.dim,
+        underline: !!cell.underline,
+        blink: !!cell.blink,
+        reverse: !!cell.reverse,
+        hidden: !!cell.hidden,
+      });
+    }
+  }
+  return {
+    version: 1,
+    rows: term.rows,
+    cols: term.cols,
+    cells: cells,
+  };
+}
+
+/**
+ * Render HTML from a canonical snapshot (produced by renderSnapshot).
+ * Groups consecutive cells with identical effective attributes.
+ */
+function renderSnapshotHtml(snapshot) {
+  if (!snapshot || !snapshot.cells) return '';
+  var lines = [];
+  var idx = 0;
+  for (var r = 0; r < snapshot.rows; r++) {
+    var lineOut = '';
+    var inSpan = null;
+    for (var c = 0; c < snapshot.cols; c++) {
+      var cell = snapshot.cells[idx++];
+      var ch = escapeHtml(cell.ch);
+      var effectiveFg = cell.reverse ? cell.bg : cell.fg;
+      var effectiveBg = cell.reverse ? cell.fg : cell.bg;
+      var classes = [];
+      if (effectiveFg !== 'default' && effectiveFg !== null && effectiveFg !== undefined) classes.push('vt-fg-' + effectiveFg);
+      if (effectiveBg !== 'default' && effectiveBg !== null && effectiveBg !== undefined) classes.push('vt-bg-' + effectiveBg);
+      if (cell.bold) classes.push('vt-bold');
+      if (cell.dim) classes.push('vt-dim');
+      if (cell.underline) classes.push('vt-underline');
+      if (cell.blink) classes.push('vt-blink');
+      if (cell.reverse) classes.push('vt-reverse');
+      if (cell.hidden) classes.push('vt-hidden');
+      var cls = classes.join(' ') || '';
+      if (cls !== inSpan) {
+        if (inSpan) lineOut += '</span>';
+        if (cls) lineOut += '<span class="' + cls + '">';
+        inSpan = cls || null;
+      }
+      lineOut += ch;
+    }
+    if (inSpan) lineOut += '</span>';
+    lines.push(lineOut);
+  }
+  return lines.join('\n');
+}
+
 function simpleHash(str) {
   // djb2 hash para compatibilidade (determinístico, cross-platform)
   var hash = 5381;
@@ -517,6 +726,7 @@ function simpleHash(str) {
 
 return {
   createVirtualTerminal, feed, feedBase64, renderPlainText, renderHtml, renderCompactText,
+  renderSnapshot, renderSnapshotHtml, resetDecoder,
   eventTimestamp, calcDelay, isBlank, screenSig, visualSig,
 };
 }));

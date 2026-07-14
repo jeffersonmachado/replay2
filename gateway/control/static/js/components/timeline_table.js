@@ -39,7 +39,11 @@ function dirCardLabel(ev) {
 }
 
 function formatCardContent(ev) {
-  if (ev.content_kind === "terminal_snapshot") return ev.summary || "";
+  // terminal_snapshot: usar HTML com atributos quando disponivel
+  if (ev.content_kind === "terminal_snapshot") {
+    if (ev.snapshot_html) return ev.snapshot_html;
+    return ev.summary || "";
+  }
   if (ev.type === "deterministic_input") return ev.summary || ev.key_text || ev.key_kind || "-";
   if (ev.type === "bytes" && ev.data_b64) {
     const data = decodeBase64(ev.data_b64);
@@ -81,6 +85,12 @@ export function renderEventsCards(events, targetId, countId) {
   const cards = events.map((e) => {
     const ts = e.timestamp_ms || e.ts_ms;
     const displayTs = ts ? new Date(ts).toLocaleTimeString("pt-BR") : "";
+    const isSnapshot = e.content_kind === "terminal_snapshot";
+    // Para terminal_snapshot com snapshot_html, renderiza HTML diretamente
+    // (o snapshot_html ja tem caracteres escapados via escapeHtml)
+    const contentHtml = isSnapshot && e.snapshot_html
+      ? e.snapshot_html
+      : escapeHtml(formatCardContent(e));
     return `<div class="r2ctl-event-card">
       <div class="${dirCardClass(e)} r2ctl-event-dir">${dirCardLabel(e)}</div>
       <div>
@@ -88,7 +98,7 @@ export function renderEventsCards(events, targetId, countId) {
           <div>${typeBadge(e.type)} &middot; ${cardMetaLabel(e)} &middot; ${escapeHtml(displayTs)} &middot; ${escapeHtml(e.actor || "-")}</div>
           ${e.type === "deterministic_input" ? '<button type="button" class="r2ctl-btn-soft text-xs r2ctl-det-toggle" data-det-toggle="' + escapeHtml(String(e.seq_global || "")) + '">Detalhes</button>' : ""}
         </div>
-        <pre class="r2ctl-event-content${e.content_kind === "terminal_snapshot" ? " terminal-snapshot" : ""}">${escapeHtml(formatCardContent(e))}</pre>
+        <pre class="r2ctl-event-content${isSnapshot ? " terminal-snapshot" : ""}">${contentHtml}</pre>
         ${cardDetDetails(e)}
       </div>
     </div>`;

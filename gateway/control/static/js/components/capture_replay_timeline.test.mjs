@@ -11,18 +11,22 @@ const vt = require('../virtual_terminal.cjs');
 const tl = require('./capture_replay_timeline.cjs');
 
 const { buildTimelineItems } = tl;
-const { createVirtualTerminal, feed, renderPlainText, renderCompactText, eventTimestamp, screenSig, visualSig } = vt;
+const { createVirtualTerminal, feed, feedBase64, renderPlainText, renderCompactText, renderSnapshot, renderSnapshotHtml, eventTimestamp, screenSig, visualSig } = vt;
 
 function makeDeps() {
   return {
+    feedBase64: (term, dataB64, encoding) => feedBase64(term, dataB64, encoding),
     feed: (term, text) => feed(term, text),
     renderPlainText: (term) => renderPlainText(term),
     renderCompactText: (term) => renderCompactText(term),
+    renderSnapshot: (term) => renderSnapshot(term),
+    renderSnapshotHtml: (snap) => renderSnapshotHtml ? renderSnapshotHtml(snap) : null,
     eventTimestamp: (ev) => eventTimestamp(ev),
     makeTerm: () => createVirtualTerminal(25, 80),
     formatEventContent: (ev) => ev?.summary || ev?.data_decoded || '',
     screenSig: (term) => screenSig(term),
     visualSig: (term) => visualSig(term),
+    encoding: 'utf-8',
   };
 }
 
@@ -117,4 +121,55 @@ test('text_sig stable for same text, visual_sig changes with attributes', () => 
   assert.equal(items1[0].text_sig, items2[0].text_sig, 'text_sig identical for same chars');
   // Different attributes (reverse vs none) → different visual_sig
   assert.notEqual(items1[0].visual_sig, items2[0].visual_sig, 'visual_sig differs');
+});
+
+// ── Novos testes (P0 corrections) ──────────────────────────────────────────
+
+test('snapshot includes canonical cell data (snapshot field)', () => {
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: '\x1b[7mABC\x1b[0m', n_bytes: 10 },
+  ];
+  const items = buildTimelineItems(events, makeDeps());
+  assert.equal(items.length, 1);
+  assert.ok(items[0].snapshot, 'snapshot field present');
+  assert.equal(items[0].snapshot.version, 1);
+  assert.equal(items[0].snapshot.rows, 25);
+  assert.equal(items[0].snapshot.cols, 80);
+  // First 3 cells: A, B, C with reverse=true
+  assert.equal(items[0].snapshot.cells[0].ch, 'A');
+  assert.equal(items[0].snapshot.cells[0].reverse, true, 'cell 0 has reverse');
+});
+
+test('snapshot_html is present for terminal_snapshot', () => {
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: '\x1b[7mABC\x1b[0m', n_bytes: 10 },
+  ];
+  const items = buildTimelineItems(events, makeDeps());
+  assert.ok(items[0].snapshot_html, 'snapshot_html present');
+  assert.ok(items[0].snapshot_html.includes('vt-reverse'), 'includes reverse class');
+});
+
+test('uses feedBase64 when data_b64 is available', () => {
+  // "á" = C3 A1 in UTF-8
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'ww==', n_bytes: 1 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'oQ==', n_bytes: 1 },
+  ];
+  const deps = makeDeps();
+  const items = buildTimelineItems(events, deps);
+  assert.equal(items.length, 1, 'both events in one group');
+  const snap = items[0].snapshot;
+  assert.equal(snap.cells[0].ch, 'á', 'UTF-8 split via data_b64 produces á');
+});
+
+test('encoding CP850 via feedBase64 produces correct char', () => {
+  const deps = makeDeps();
+  deps.encoding = 'cp850';
+  // 0x82 = é em CP850
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'gg==', n_bytes: 1 },
+  ];
+  const items = buildTimelineItems(events, deps);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].snapshot.cells[0].ch, 'é', 'CP850: 0x82 = é');
 });

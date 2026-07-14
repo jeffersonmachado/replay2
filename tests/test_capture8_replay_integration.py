@@ -73,15 +73,15 @@ def test_geometry_not_inferred_from_cursor():
 
 
 def test_geometry_resize_detected():
-    """CSI 8;rows;cols t should be detected within limits."""
-    fake = [{"data_b64": base64.b64encode(b"\x1b[8;30;100t").decode()}]
+    """CSI 8;rows;cols t should be detected within limits — only from OUT events."""
+    fake = [{"data_b64": base64.b64encode(b"\x1b[8;30;100t").decode(), "direction": "out"}]
     result = _detect_geometry(fake)
     assert result["rows"] == 30
     assert result["cols"] == 100
     assert result["geometry_source"] == "pty_resize"
 
     # Out of bounds
-    fake_huge = [{"data_b64": base64.b64encode(b"\x1b[8;999;999t").decode()}]
+    fake_huge = [{"data_b64": base64.b64encode(b"\x1b[8;999;999t").decode(), "direction": "out"}]
     result2 = _detect_geometry(fake_huge)
     assert result2["rows"] == 25, "oversized resize rejected"
     assert result2["cols"] == 80

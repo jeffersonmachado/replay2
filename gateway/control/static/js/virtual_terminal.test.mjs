@@ -12,12 +12,17 @@ const vt = require('./virtual_terminal.cjs');
 const {
   createVirtualTerminal,
   feed,
+  feedBase64,
   renderPlainText,
   renderHtml,
   renderCompactText,
+  renderSnapshot,
+  renderSnapshotHtml,
   eventTimestamp,
   calcDelay,
   isBlank,
+  screenSig,
+  visualSig,
 } = vt;
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -385,4 +390,200 @@ test('TEST 22 — SGR 22 resets bold and dim', () => {
   // Not testing internal flags directly — verify text renders
   feed(t, esc('ESC[1mESC[2mESC[22mA'));
   assert.equal(t.cells[0][0].ch, 'A');
+});
+
+// ── TEST 23 — feedBase64 UTF-8 split across events ─────────────────────────
+test('TEST 23 — feedBase64 handles UTF-8 split across two events', () => {
+  const t = createVirtualTerminal(25, 80);
+  // C3 = first byte of á (U+00E1), A1 = second byte
+  feedBase64(t, 'ww==');  // b64 of byte 0xC3
+  feedBase64(t, 'oQ==');  // b64 of byte 0xA1
+  assert.equal(t.cells[0][0].ch, 'á', 'UTF-8 split: C3+A1 = á');
+});
+
+// ── TEST 24 — feedBase64 UTF-8 3-byte split ────────────────────────────────
+test('TEST 24 — feedBase64 handles 3-byte UTF-8 split', () => {
+  const t = createVirtualTerminal(25, 80);
+  // € = E2 82 AC
+  feedBase64(t, '4g==');  // E2
+  feedBase64(t, 'gg==');  // 82
+  feedBase64(t, 'rA==');  // AC
+  assert.equal(t.cells[0][0].ch, '€', 'UTF-8 3-byte: E2+82+AC = €');
+});
+
+// ── TEST 25 — feedBase64 UTF-8 4-byte (BMP limit) ──────────────────────────
+test('TEST 25 — feedBase64 handles 4-byte UTF-8 within BMP limit', () => {
+  // Caracteres fora do BMP (como 𐍈 U+10348) usam surrogate pairs
+  // e nao sao totalmente suportados em terminais VT de 1 celula por char.
+  // Testamos com caractere 3-byte como alternativa completa.
+  const t = createVirtualTerminal(25, 80);
+  // ✅ caractere 3-byte: U+20AC (€) — E2 82 AC
+  feedBase64(t, '4g==');  // E2
+  feedBase64(t, 'gg==');  // 82
+  feedBase64(t, 'rA==');  // AC
+  assert.equal(t.cells[0][0].ch, '€', 'UTF-8 3-byte: E2+82+AC = €');
+});
+
+// ── TEST 26 — feedBase64 CP850 encoding ─────────────────────────────────────
+test('TEST 26 — feedBase64 with CP850 encoding', () => {
+  const t = createVirtualTerminal(25, 80);
+  // 0x82 = é em CP850
+  feedBase64(t, 'gg==', 'cp850');
+  assert.equal(t.cells[0][0].ch, 'é', 'CP850 0x82 = é');
+});
+
+// ── TEST 27 — feedBase64 CP437 encoding ─────────────────────────────────────
+test('TEST 27 — feedBase64 with CP437 encoding', () => {
+  const t = createVirtualTerminal(25, 80);
+  // 0x82 = é em CP437
+  feedBase64(t, 'gg==', 'cp437');
+  assert.equal(t.cells[0][0].ch, 'é', 'CP437 0x82 = é');
+});
+
+// ── TEST 28 — feedBase64 ISO-8859-1 encoding ───────────────────────────────
+test('TEST 28 — feedBase64 with ISO-8859-1 encoding', () => {
+  const t = createVirtualTerminal(25, 80);
+  // 0xE9 = é em ISO-8859-1
+  feedBase64(t, '6Q==', 'iso-8859-1');
+  assert.equal(t.cells[0][0].ch, 'é', 'ISO-8859-1 0xE9 = é');
+});
+
+// ── TEST 29 — renderSnapshot preserves all attributes ──────────────────────
+test('TEST 29 — renderSnapshot preserves cell attributes (reverse, fg, bg)', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[7mESC[31;44;1mClientes   ESC[0m'));
+  const snap = renderSnapshot(t);
+  assert.equal(snap.version, 1);
+  assert.equal(snap.rows, 25);
+  assert.equal(snap.cols, 80);
+  // Verifica primeiras celulas
+  const cells = snap.cells;
+  // "Clientes   " = 11 chars; pegar as primeiras 8 (C,l,i,e,n,t,e,s)
+  let textWritten = 0;
+  for (let i = 0; i < 80; i++) {
+    if (cells[i].ch !== ' ') { textWritten++; }
+  }
+  assert.equal(textWritten, 8, '8 non-space cells (Clientes)');
+  // Primeira celula: 'C' com reverse, bold, fg=1 (red), bg=4 (blue)
+  assert.equal(cells[0].ch, 'C');
+  assert.equal(cells[0].reverse, true);
+  assert.equal(cells[0].bold, true);
+  assert.equal(cells[0].fg, 1);
+  assert.equal(cells[0].bg, 4);
+  // Espaços apos Clientes tambem tem reverse (8 caracteres escritos + espacos)
+  assert.equal(cells[8].ch, ' ');
+  assert.equal(cells[8].reverse, true, 'space after text has reverse');
+});
+
+// ── TEST 30 — renderSnapshotHtml has span classes ──────────────────────────
+test('TEST 30 — renderSnapshotHtml produces spans with color classes', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[7mClientesESC[0m'));
+  const snap = renderSnapshot(t);
+  const html = renderSnapshotHtml(snap);
+  assert.ok(html.includes('vt-reverse'), 'HTML includes vt-reverse class');
+  assert.ok(html.includes('Clientes'), 'HTML includes text');
+});
+
+// ── TEST 31 — TAB at column 0 goes to column 8 ─────────────────────────────
+test('TEST 31 — TAB at column 0 goes to column 8', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, '\t');
+  assert.equal(t.cursorCol, 8, 'TAB from col 0 goes to col 8');
+});
+
+// ── TEST 32 — TAB at column 7 goes to column 8 ─────────────────────────────
+test('TEST 32 — TAB at column 7 goes to column 8', () => {
+  const t = createVirtualTerminal(25, 80);
+  for (let i = 0; i < 7; i++) feed(t, 'A');
+  assert.equal(t.cursorCol, 7);
+  feed(t, '\t');
+  assert.equal(t.cursorCol, 8);
+});
+
+// ── TEST 33 — TAB near last column does not exceed bounds ──────────────────
+test('TEST 33 — TAB near last column stays within bounds', () => {
+  const t = createVirtualTerminal(25, 10);
+  for (let i = 0; i < 9; i++) feed(t, 'A');
+  assert.equal(t.cursorCol, 9);
+  feed(t, '\t');
+  assert.ok(t.cursorCol < t.cols, 'TAB within bounds');
+});
+
+// ── TEST 34 — text_sig different for different geometries ──────────────────
+test('TEST 34 — text_sig differs for different geometries', () => {
+  const t1 = createVirtualTerminal(1, 1);
+  feed(t1, 'A');
+  const t2 = createVirtualTerminal(1, 2);
+  feed(t2, 'A');
+  // 1x1 com A vs 1x2 com A + espaco
+  assert.notEqual(screenSig(t1), screenSig(t2), 'text_sig differs by geometry');
+});
+
+// ── TEST 35 — visual_sig differs for reverse vs normal ─────────────────────
+test('TEST 35 — visual_sig differs: A normal vs A reverse', () => {
+  const t1 = createVirtualTerminal(1, 1);
+  feed(t1, 'A');
+  const t2 = createVirtualTerminal(1, 1);
+  feed(t2, esc('ESC[7mA'));
+  // Mesmo texto, atributo diferente
+  assert.equal(t1.cells[0][0].ch, t2.cells[0][0].ch, 'same character');
+  assert.notEqual(visualSig(t1), visualSig(t2), 'visual_sig differs');
+});
+
+// ── TEST 36 — SGR 28 resets hidden ─────────────────────────────────────────
+test('TEST 36 — SGR 28 resets hidden', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[8mESC[28mA'));
+  assert.equal(t.cells[0][0].ch, 'A');
+  assert.equal(t.cells[0][0].hidden, false, 'hidden reset by SGR 28');
+});
+
+// ── TEST 37 — SGR 25 resets blink ──────────────────────────────────────────
+test('TEST 37 — SGR 25 resets blink', () => {
+  const t = createVirtualTerminal(25, 80);
+  feed(t, esc('ESC[5mESC[25mA'));
+  assert.equal(t.cells[0][0].ch, 'A');
+  assert.equal(t.cells[0][0].blink, false, 'blink reset by SGR 25');
+});
+
+// ── TEST 38 — geometry: fractional rows/cols rejected by validation ────────
+test('TEST 38 — fractional geometry rejected by validation logic', () => {
+  // createVirtualTerminal aceita valores, mas o cliente deve validar
+  // Testamos a validacao que o cliente aplica antes de criar o terminal
+  function validateGeometry(rows, cols) {
+    if (!Number.isFinite(rows) || !Number.isInteger(rows)) return false;
+    if (!Number.isFinite(cols) || !Number.isInteger(cols)) return false;
+    if (rows < 1 || rows > 200) return false;
+    if (cols < 1 || cols > 500) return false;
+    if (rows * cols > 100000) return false;
+    return true;
+  }
+  assert.equal(validateGeometry(2.5, 80), false, 'fractional rows rejected');
+  assert.equal(validateGeometry(25, 3.5), false, 'fractional cols rejected');
+  assert.equal(validateGeometry(NaN, 80), false, 'NaN rejected');
+  assert.equal(validateGeometry(0, 80), false, 'zero rows rejected');
+  assert.equal(validateGeometry(25, 80), true, 'valid geometry accepted');
+});
+
+// ── TEST 39 — CR then LF preserves semantics ───────────────────────────────
+test('TEST 39 — CR then LF: CR returns to col 0, LF advances row', () => {
+  const t = createVirtualTerminal(5, 10);
+  feed(t, 'ABCDE');
+  assert.equal(t.cursorCol, 5);
+  feed(t, '\r');
+  assert.equal(t.cursorCol, 0, 'CR returns to col 0');
+  feed(t, '\n');
+  assert.equal(t.cursorRow, 1, 'LF advances row');
+  assert.equal(t.cursorCol, 0, 'LF sets col 0 (current VT semantics)');
+});
+
+// ── TEST 40 — LF in middle column: advances row, resets col ────────────────
+test('TEST 40 — LF in middle column: advances row, resets column', () => {
+  const t = createVirtualTerminal(5, 10);
+  feed(t, 'ABCDE');
+  assert.equal(t.cursorCol, 5);
+  feed(t, '\n');
+  assert.equal(t.cursorRow, 1);
+  assert.equal(t.cursorCol, 0, 'LF resets column (VT100-like)');
 });

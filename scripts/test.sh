@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # =============================================================================
 # test.sh — Script principal de testes do Replay2
 #
@@ -65,6 +65,7 @@ FAIL_FAST=""
 REMOTE=0
 REMOTE_HOST="10.5.8.24"
 REMOTE_PORT="8080"
+HAS_ARGS=0  # rastreia se o usuario passou argumentos explicitos
 
 # ── Cores ───────────────────────────────────────────────────────────────────
 ESC_GREEN='\033[0;32m'
@@ -106,20 +107,20 @@ pytest_args() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --all)         FLAG_ALL=1 ;;
-    --unit)        FLAG_UNIT=1 ;;
-    --js)          FLAG_JS=1 ;;
-    --python)      FLAG_PYTHON=1 ;;
-    --tcl)         FLAG_TCL=1 ;;
-    --smoke)       FLAG_SMOKE=1 ;;
-    --capture)     FLAG_CAPTURE=1 ;;
-    --replay)      FLAG_REPLAY=1 ;;
-    --integration) FLAG_INTEGRATION=1 ;;
-    --quick)       FLAG_QUICK=1 ;;
-    --ci)          FLAG_CI=1 ;;
-    --verbose)     VERBOSE="-v" ;;
-    --fail-fast)   FAIL_FAST="-x" ;;
-    --remote)      REMOTE=1 ;;
+    --all)         FLAG_ALL=1; HAS_ARGS=1 ;;
+    --unit)        FLAG_UNIT=1; HAS_ARGS=1 ;;
+    --js)          FLAG_JS=1; HAS_ARGS=1 ;;
+    --python)      FLAG_PYTHON=1; HAS_ARGS=1 ;;
+    --tcl)         FLAG_TCL=1; HAS_ARGS=1 ;;
+    --smoke)       FLAG_SMOKE=1; HAS_ARGS=1 ;;
+    --capture)     FLAG_CAPTURE=1; HAS_ARGS=1 ;;
+    --replay)      FLAG_REPLAY=1; HAS_ARGS=1 ;;
+    --integration) FLAG_INTEGRATION=1; HAS_ARGS=1 ;;
+    --quick)       FLAG_QUICK=1; HAS_ARGS=1 ;;
+    --ci)          FLAG_CI=1; HAS_ARGS=1 ;;
+    --verbose)     VERBOSE="-v"; HAS_ARGS=1 ;;
+    --fail-fast)   FAIL_FAST="-x"; HAS_ARGS=1 ;;
+    --remote)      REMOTE=1; HAS_ARGS=1 ;;
     --host)
       if [[ -z "${2:-}" || "${2:0:2}" == "--" ]]; then
         echo "Erro: --host requer um valor"
@@ -181,7 +182,7 @@ if [ "$FLAG_CAPTURE" = "1" ] || [ "$FLAG_REPLAY" = "1" ] || [ "$FLAG_INTEGRATION
 fi
 
 # --all = tudo, ou default se nada foi passado
-if [ "$FLAG_ALL" = "1" ] || [ $# -eq 0 ]; then
+if [ "$FLAG_ALL" = "1" ] || [ "$HAS_ARGS" = "0" ]; then
   FLAG_JS=1
   FLAG_PYTHON=1
   FLAG_TCL=1

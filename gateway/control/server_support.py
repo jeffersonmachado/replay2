@@ -159,6 +159,12 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
         except PermissionError:
             pass
         capture_active = capture_installed and len(capture_configs) > 0
+        capture_error = None
+        if not capture_installed:
+            capture_error = "wrapper nao instalado"
+        elif len(capture_configs) == 0:
+            capture_error = "Match User/Group nao configurado no sshd"
+
         return {
             "platform": "linux",
             "service": service or "unavailable",
@@ -170,10 +176,8 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
             "capture_installed": capture_installed,
             "capture_configs": capture_configs,
             "capture_active": capture_active,
-            "error": None if capture_active else (
-                "wrapper nao instalado" if not capture_installed else
-                "Match User/Group nao configurado no sshd"
-            ),
+            "capture_error": capture_error,
+            "error": None,  # servico SSH esta disponivel; capture_error separado
         }
 
     return {"platform": system or "unknown", "service": "unknown", "running": False, "available": False, "error": "sistema não suportado"}

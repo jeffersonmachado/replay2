@@ -254,6 +254,22 @@ input[type="range"] {
   border-color: rgba(59, 130, 246, 0.4) !important;
   color: #60a5fa !important;
 }
+
+/* Virtual terminal attribute classes — usadas em snapshot_html e renderHtml */
+.vt-fg-0 { color: #000000; } .vt-fg-1 { color: #cc0000; } .vt-fg-2 { color: #4e9a06; }
+.vt-fg-3 { color: #c4a000; } .vt-fg-4 { color: #3465a4; } .vt-fg-5 { color: #75507b; }
+.vt-fg-6 { color: #06989a; } .vt-fg-7 { color: #d3d7cf; }
+.vt-bg-0 { background-color: #000000; } .vt-bg-1 { background-color: #cc0000; }
+.vt-bg-2 { background-color: #4e9a06; } .vt-bg-3 { background-color: #c4a000; }
+.vt-bg-4 { background-color: #3465a4; } .vt-bg-5 { background-color: #75507b; }
+.vt-bg-6 { background-color: #06989a; } .vt-bg-7 { background-color: #d3d7cf; }
+.vt-bold { font-weight: bold; }
+.vt-dim { opacity: 0.6; }
+.vt-underline { text-decoration: underline; }
+.vt-blink { animation: vt-blink-anim 1s step-end infinite; }
+@keyframes vt-blink-anim { 50% { opacity: 0; } }
+.vt-reverse { }
+.vt-hidden { visibility: hidden; }
 </style>
 
 <script>
@@ -276,10 +292,12 @@ input[type="range"] {
 
   // Terminal functions imported via module — available as window.__vt
   let createVirtualTerminal, feed, feedBase64, renderPlainText, renderHtml, renderCompactText;
+  let renderSnapshot, renderSnapshotHtml, resetDecoder;
   let eventTimestamp, calcDelay, isBlank, screenSig, visualSig;
   // Timeline core — imported dynamically
   let _formatEventContent;
   let _renderEventsCards;
+  let sessionEncoding = 'utf-8';
 
   function makeTerm() { return createVirtualTerminal(termGeometry.rows, termGeometry.cols); }
 
@@ -290,6 +308,9 @@ input[type="range"] {
     renderPlainText = mod.renderPlainText;
     renderHtml = mod.renderHtml;
     renderCompactText = mod.renderCompactText;
+    renderSnapshot = mod.renderSnapshot;
+    renderSnapshotHtml = mod.renderSnapshotHtml;
+    resetDecoder = mod.resetDecoder;
     eventTimestamp = mod.eventTimestamp;
     calcDelay = mod.calcDelay;
     isBlank = mod.isBlank;
@@ -324,8 +345,8 @@ input[type="range"] {
         const MIN_ROWS = 1, MAX_ROWS = 200;
         const MIN_COLS = 1, MAX_COLS = 500;
         const MAX_CELLS = MAX_ROWS * MAX_COLS;
-        const rows = (Number.isFinite(rawRows) && rawRows >= MIN_ROWS && rawRows <= MAX_ROWS) ? rawRows : 25;
-        const cols = (Number.isFinite(rawCols) && rawCols >= MIN_COLS && rawCols <= MAX_COLS) ? rawCols : 80;
+        const rows = (Number.isFinite(rawRows) && Number.isInteger(rawRows) && rawRows >= MIN_ROWS && rawRows <= MAX_ROWS) ? rawRows : 25;
+        const cols = (Number.isFinite(rawCols) && Number.isInteger(rawCols) && rawCols >= MIN_COLS && rawCols <= MAX_COLS) ? rawCols : 80;
         if (rows * cols > MAX_CELLS) {
           console.warn('Geometria excede limite máximo de células, usando fallback 25x80');
           termGeometry = { rows: 25, cols: 80, source: 'client_fallback_too_large' };
@@ -338,6 +359,13 @@ input[type="range"] {
             cols,
             source: replayData.geometry.geometry_source || 'legacy_fallback',
           };
+        }
+        // encoding da sessao
+        sessionEncoding = replayData.geometry.encoding || 'utf-8';
+        // Atualiza info de geometria
+        const geomInfo = document.getElementById('playback-geometry-info');
+        if (geomInfo) {
+          geomInfo.textContent = `Geometria: ${termGeometry.rows}x${termGeometry.cols} | TERM: ${replayData.geometry.term || 'xterm'} | Encoding: ${sessionEncoding} | Fonte: ${termGeometry.source}`;
         }
       }
       // Aguarda módulos de timeline antes de renderizar
@@ -519,36 +547,42 @@ input[type="range"] {
 
   function buildTimelineItems(events) {
     // Delega para o módulo UMD compartilhado (capture_replay_timeline.cjs)
-    // O módulo é carregado via <script> no <head>
     if (typeof DakTimeline !== 'undefined' && DakTimeline.buildTimelineItems) {
       return DakTimeline.buildTimelineItems(events, {
-        feed, renderPlainText, renderCompactText, eventTimestamp,
-        makeTerm, formatEventContent: formatEventContentLocal,
-        screenSig, visualSig,
+        feedBase64, feed, renderPlainText, renderSnapshot, renderSnapshotHtml,
+        eventTimestamp, makeTerm, formatEventContent: formatEventContentLocal,
+        screenSig, visualSig, encoding: sessionEncoding,
       });
     }
-    // Fallback inline apenas para cenário de carregamento sem módulo
+    // Fallback inline
     const items = [];
     let pendingGroup = null;
     const sessionTerminal = makeTerm();
     const flushGroup = () => {
       if (!pendingGroup) return;
-      const snap = renderPlainText ? renderPlainText(sessionTerminal) : renderCompactText(sessionTerminal);
+      const snap = renderPlainText ? renderPlainText(sessionTerminal) : '';
+      const snapshotObj = renderSnapshot ? renderSnapshot(sessionTerminal) : null;
+      const snapHtml = renderSnapshotHtml && snapshotObj ? renderSnapshotHtml(snapshotObj) : null;
       if (snap !== null && snap !== undefined) {
-        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, content_kind:'terminal_snapshot', text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
+        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, content_kind:'terminal_snapshot', snapshot:snapshotObj, snapshot_html:snapHtml, text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
       }
       pendingGroup = null;
     };
     for (const ev of events) {
       const isOut = ev?.type === 'bytes' && ev?.direction === 'out';
       if (!isOut) { flushGroup(); items.push(ev?.type==='bytes'&&ev?.direction==='in'?{...ev,summary:ev?.data_decoded==='\x1b'?'Esc':ev?.data_decoded==='\r'?'Enter':ev?.data_decoded||'',data_decoded:ev?.data_decoded||''}:{...ev,summary:formatEventContentLocal(ev),data_decoded:ev?.data_decoded||''}); continue; }
+      const dataB64 = ev?.data_b64 || '';
       const rawText = ev?.data_decoded??ev?.summary??'';
       const tsMs=eventTimestamp(ev),seq=Number(ev?.seq_global||0);
       const belongs=pendingGroup&&(tsMs-pendingGroup.lastTs)<=700&&pendingGroup.events.length<8;
       if(!belongs)flushGroup();
       if(!pendingGroup)pendingGroup={events:[],startTs:tsMs,lastTs:tsMs,startSeq:seq,lastSeq:seq,totalBytes:0};
       else{pendingGroup.lastTs=tsMs;pendingGroup.lastSeq=seq;}
-      feed(sessionTerminal,rawText);
+      if (dataB64 && typeof feedBase64 === 'function') {
+        feedBase64(sessionTerminal, dataB64, sessionEncoding);
+      } else if (rawText && typeof feed === 'function') {
+        feed(sessionTerminal, rawText);
+      }
       pendingGroup.events.push(ev);
       pendingGroup.totalBytes+=Number(ev?.n_bytes??ev?.n??0);
     }
@@ -627,10 +661,10 @@ input[type="range"] {
     persistPlaybackPrefs({ speed: playbackState.speed });
   });
 
-  // ── feedReplayEvent: usa data_b64 (canonico) quando disponivel ────────
+  // ── feedReplayEvent: usa data_b64 (canonico) com encoding da sessao ──
   function feedReplayEvent(term, event) {
     if (event.data_b64 && typeof feedBase64 === 'function') {
-      feedBase64(term, event.data_b64);
+      feedBase64(term, event.data_b64, sessionEncoding);
     } else if (event.content && typeof feed === 'function') {
       feed(term, event.content);
     }

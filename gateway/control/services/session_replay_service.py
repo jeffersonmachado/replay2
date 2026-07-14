@@ -47,6 +47,13 @@ def _detect_geometry(events: list[dict], session_start: dict | None = None) -> d
                 "geometry_source": "session_metadata",
             }
 
+    # Encoding: metadados ou fallback utf-8
+    encoding = "utf-8"
+    if session_start:
+        enc = str(session_start.get("encoding") or "").strip().lower()
+        if enc in ("utf-8", "utf8", "latin1", "iso-8859-1", "ascii", "cp1252", "cp850", "cp437"):
+            encoding = "utf-8" if enc in ("utf-8", "utf8", "ascii") else enc
+
     # Prioridade 2: resize via CSI 8;rows;cols t (apenas eventos OUT)
     rows = None
     cols = None
@@ -67,8 +74,8 @@ def _detect_geometry(events: list[dict], session_start: dict | None = None) -> d
                 rows = r
                 cols = c
     if rows and cols:
-        return {"rows": rows, "cols": cols, "encoding": "utf-8", "geometry_source": "pty_resize"}
-    return {"rows": 25, "cols": 80, "encoding": "utf-8", "geometry_source": "legacy_fallback"}
+        return {"rows": rows, "cols": cols, "encoding": encoding, "geometry_source": "pty_resize"}
+    return {"rows": 25, "cols": 80, "encoding": encoding, "geometry_source": "legacy_fallback"}
 
 
 def prepare_session_replay_data(

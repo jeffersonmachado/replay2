@@ -113,8 +113,8 @@ function startGatewayStatusWs() {
       _gwWs = null;
       // Fallback: polling HTTP a cada 30s quando WebSocket indisponivel
       if (!_gwPollInterval) {
-        fetchGatewayStatus();
-        _gwPollInterval = setInterval(fetchGatewayStatus, 30000);
+        loadGatewayStatusChrome();
+        _gwPollInterval = setInterval(loadGatewayStatusChrome, 30000);
       }
     },
     onOpen: () => {

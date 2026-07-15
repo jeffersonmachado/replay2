@@ -20,16 +20,96 @@ from dakota_gateway.terminal_config import is_supported_encoding, normalize_enco
 from dakota_terminal import (
     TerminalEngine,
     snapshot_from_engine,
-    encode_snapshot_compact,
+    encode_render_snapshot,
     create_diff,
     apply_diff,
     validate_diff,
+    compare_signatures,
 )
+
+
+def build_reference_payload(
+    *,
+    initial_snapshot: dict,
+    events: list[dict],
+    checkpoints: list[dict],
+    final_snapshot: dict,
+) -> dict:
+    """Build a replay payload with exactly one full event collection.
+
+    Timeline and playback carry stable references only. This keeps each full
+    diff/checkpoint serialized once while preserving the legacy consumers'
+    ability to resolve by id.
+    """
+    event_refs = [str(ev.get("event_id") or ev.get("id") or ev.get("seq_global") or ev.get("seq") or idx) for idx, ev in enumerate(events)]
+    checkpoint_refs = [
+        str(cp.get("checkpoint_id") or cp.get("id") or cp.get("seq_global") or idx)
+        for idx, cp in enumerate(checkpoints)
+    ]
+    return {
+        "initial_snapshot": initial_snapshot,
+        "events": events,
+        "checkpoints": checkpoints,
+        "timeline": {"event_refs": event_refs, "checkpoint_refs": checkpoint_refs},
+        "playback": {"event_refs": event_refs, "checkpoint_refs": checkpoint_refs},
+        "final_snapshot": final_snapshot,
+    }
+
+
+def _render_snapshot_payload(snapshot: dict) -> dict:
+    return encode_render_snapshot(snapshot)
+
+
+def _attach_render_snapshot(target: dict, snapshot: dict) -> None:
+    payload = _render_snapshot_payload(snapshot)
+    target["render_snapshot"] = payload
+    target["snapshot_compact"] = payload
+
+
+class ReferenceView(dict):
+    """Dict JSON contract with in-process legacy list access.
+
+    Flask/json serialization sees only the dict keys. Existing Python callers
+    that still index/iterate the timeline during migration see resolved items.
+    """
+
+    def __init__(self, *, event_refs: list[str], checkpoint_refs: list[str], items: list[dict]):
+        super().__init__(event_refs=event_refs, checkpoint_refs=checkpoint_refs)
+        self._items = items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._items[key]
+        if isinstance(key, slice):
+            return self._items[key]
+        return super().__getitem__(key)
+
+
+class PlaybackReferenceView(ReferenceView):
+    def __init__(self, *, event_refs: list[str], checkpoint_refs: list[str], items: list[dict], meta: dict):
+        super().__init__(event_refs=event_refs, checkpoint_refs=checkpoint_refs, items=items)
+        for key, value in meta.items():
+            self[key] = value
+
+    def get(self, key, default=None):
+        if key == "events":
+            return self._items
+        return super().get(key, default)
 
 
 def _event_direction(ev: dict) -> str:
     """Retorna a direcao do evento: 'in', 'out' ou '' (desconhecida)."""
     return str(ev.get("direction") or ev.get("dir") or "").strip()
+
+
+def _empty_reference_view() -> ReferenceView:
+    return ReferenceView(event_refs=[], checkpoint_refs=[], items=[])
 
 
 def _detect_encoding(events: list[dict], session_start: dict | None = None) -> str:
@@ -174,7 +254,8 @@ def prepare_session_replay_data(
     if not clean_dir or not clean_sid:
         return {
             "error": {"code": "invalid_params", "message": "log_dir e session_id sao obrigatorios"},
-            "replay_events": [],
+            "events": [],
+            "timeline": _empty_reference_view(),
             "playback": None,
         }
 
@@ -182,7 +263,8 @@ def prepare_session_replay_data(
     if not log_path.exists():
         return {
             "error": {"code": "log_dir_not_found", "message": f"diretorio de log nao encontrado: {clean_dir}"},
-            "replay_events": [],
+            "events": [],
+            "timeline": _empty_reference_view(),
             "playback": None,
         }
 
@@ -191,7 +273,8 @@ def prepare_session_replay_data(
     if not files:
         return {
             "error": {"code": "no_audit_files", "message": f"nenhum arquivo audit-*.jsonl encontrado em: {clean_dir}"},
-            "replay_events": [],
+            "events": [],
+            "timeline": _empty_reference_view(),
             "playback": None,
         }
     events: list[dict] = []
@@ -200,7 +283,7 @@ def prepare_session_replay_data(
         try:
             lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError as exc:
-            return {"error": f"erro ao ler arquivo: {exc}", "replay_events": [], "playback": None}
+            return {"error": f"erro ao ler arquivo: {exc}", "events": [], "timeline": _empty_reference_view(), "playback": None}
 
         for line in lines:
             line = line.strip()
@@ -222,7 +305,8 @@ def prepare_session_replay_data(
     if not events:
         return {
             "error": {"code": "session_not_found", "message": f"session_id nao encontrado: {clean_sid}"},
-            "replay_events": [],
+            "events": [],
+            "timeline": _empty_reference_view(),
             "playback": None,
         }
 
@@ -245,9 +329,10 @@ def prepare_session_replay_data(
         cols=geometry["cols"],
         term=geometry.get("term", "xterm"),
         encoding=detected_encoding,
+        session_id=clean_sid,
     )
 
-    replay_events = []
+    event_items = []
     deterministic_events = []
     timeline = []
     decoders: dict[str, codecs.IncrementalDecoder] = {}
@@ -258,28 +343,72 @@ def prepare_session_replay_data(
     current_snapshot = initial_snapshot
     last_out_snapshot = initial_snapshot
     last_snapshot = initial_snapshot
+    last_out_seq_global = 0  # seq_global do ultimo evento OUT
     out_event_count = 0
-    CHECKPOINT_INTERVAL = 250   # snapshot completo a cada N eventos OUT
+    last_checkpoint_time_ms = 0
+    CHECKPOINT_EVENT_INTERVAL = 250   # snapshot completo a cada N eventos OUT
+    CHECKPOINT_TIME_INTERVAL_MS = 3000  # ou a cada 3 segundos
 
     # Adiciona checkpoint inicial
-    checkpoints.append({
+    initial_checkpoint = {
+        "session_id": clean_sid,
         "seq_global": 0,
-        "snapshot": encode_snapshot_compact(initial_snapshot),
-    })
+        "timestamp_ms": 0,
+        "text_sig": initial_snapshot.get("text_sig", ""),
+        "visual_sig": initial_snapshot.get("visual_sig", ""),
+        "semantic_sig": initial_snapshot.get("semantic_sig", ""),
+        "rows": geometry["rows"],
+        "cols": geometry["cols"],
+        "term": geometry.get("term", "xterm"),
+        "encoding": detected_encoding,
+        "engine_version": engine.engine_version,
+        "reason": "session_start",
+    }
+    _attach_render_snapshot(initial_checkpoint, initial_snapshot)
+    checkpoints.append(initial_checkpoint)
 
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
 
         if ev_type == "session_start":
             session_start = ev
+            # Gera checkpoint apos session_start
+            checkpoint = {
+                "session_id": clean_sid,
+                "seq_global": int(ev.get("seq_global") or 0),
+                "timestamp_ms": int(ev.get("ts_ms") or 0),
+                "text_sig": current_snapshot.get("text_sig", ""),
+                "visual_sig": current_snapshot.get("visual_sig", ""),
+                "semantic_sig": current_snapshot.get("semantic_sig", ""),
+                "rows": engine.rows,
+                "cols": engine.cols,
+                "term": engine.term,
+                "encoding": engine.encoding,
+                "engine_version": engine.engine_version,
+                "reason": "session_start",
+            }
+            _attach_render_snapshot(checkpoint, current_snapshot)
+            checkpoints.append(checkpoint)
         elif ev_type == "session_end":
             session_end = ev
-            engine.finish()
+            engine.finish(seq_global=last_out_seq_global, direction="out", session_id=clean_sid)
             final_snapshot = snapshot_from_engine(engine)
-            checkpoints.append({
+            checkpoint = {
+                "session_id": clean_sid,
                 "seq_global": int(ev.get("seq_global") or 0),
-                "snapshot": encode_snapshot_compact(final_snapshot),
-            })
+                "timestamp_ms": int(ev.get("ts_ms") or 0),
+                "text_sig": final_snapshot.get("text_sig", ""),
+                "visual_sig": final_snapshot.get("visual_sig", ""),
+                "semantic_sig": final_snapshot.get("semantic_sig", ""),
+                "rows": engine.rows,
+                "cols": engine.cols,
+                "term": engine.term,
+                "encoding": engine.encoding,
+                "engine_version": engine.engine_version,
+                "reason": "session_end",
+            }
+            _attach_render_snapshot(checkpoint, final_snapshot)
+            checkpoints.append(checkpoint)
         elif ev_type == "bytes":
             data_b64 = str(ev.get("data_b64") or "").strip()
             direction = str(ev.get("dir") or "").strip()
@@ -290,22 +419,69 @@ def prepare_session_replay_data(
             data_raw, integrity_warning = _decode_event_bytes(data_b64, declared_n)
             actual_n = len(data_raw)
 
+            generate_checkpoint = False
+
             # Alimenta TerminalEngine com bytes OUT
             if direction == "out" and data_raw:
-                engine.feed_bytes(data_raw)
+                engine.feed_bytes(data_raw, seq_global=seq_global, direction=direction, session_id=clean_sid)
                 out_event_count += 1
                 current_snapshot = snapshot_from_engine(engine)
 
-                # Gera checkpoint a cada N eventos OUT
-                if out_event_count % CHECKPOINT_INTERVAL == 0:
-                    checkpoints.append({
-                        "seq_global": seq_global,
-                        "snapshot": encode_snapshot_compact(current_snapshot),
-                    })
+                # Detecta RIS e clear-screen para gerar checkpoint
+                has_ris = b'\x1bc' in data_raw
+                has_clear = b'\x1b[2J' in data_raw
 
-                # Gera diff entre ultimo snapshot OUT e atual
-                diff = create_diff(last_out_snapshot, current_snapshot)
+                # Detecta resize que ocorreu (engine ja processou internamente)
+                has_resize = (current_snapshot["rows"] != last_snapshot["rows"] or
+                              current_snapshot["cols"] != last_snapshot["cols"])
+
+                # Gera checkpoint conforme politica
+                time_since_checkpoint = ts_ms - last_checkpoint_time_ms
+                generate_checkpoint = (
+                    out_event_count == 1  # primeiro evento sempre gera checkpoint
+                    or out_event_count % CHECKPOINT_EVENT_INTERVAL == 0
+                    or time_since_checkpoint >= CHECKPOINT_TIME_INTERVAL_MS
+                    or has_ris
+                    or has_resize
+                    or has_clear
+                )
+
+                if generate_checkpoint:
+                    last_checkpoint_time_ms = ts_ms
+                    reason = (
+                        "ris" if has_ris else
+                        "resize" if has_resize else
+                        "clear_screen" if has_clear else
+                        "session_start" if out_event_count == 1 else
+                        "interval_events" if out_event_count % CHECKPOINT_EVENT_INTERVAL == 0 else
+                        "interval_time"
+                    )
+                    checkpoint = {
+                        "session_id": clean_sid,
+                        "seq_global": seq_global,
+                        "timestamp_ms": ts_ms,
+                        "text_sig": current_snapshot.get("text_sig", ""),
+                        "visual_sig": current_snapshot.get("visual_sig", ""),
+                        "semantic_sig": current_snapshot.get("semantic_sig", ""),
+                        "rows": engine.rows,
+                        "cols": engine.cols,
+                        "term": engine.term,
+                        "encoding": engine.encoding,
+                        "engine_version": engine.engine_version,
+                        "reason": reason,
+                    }
+                    _attach_render_snapshot(checkpoint, current_snapshot)
+                    checkpoints.append(checkpoint)
+
+                # Gera diff entre ultimo snapshot OUT e atual (com identidade sequencial)
+                diff = create_diff(
+                    last_out_snapshot, current_snapshot,
+                    base_seq=last_out_seq_global,
+                    seq=seq_global,
+                    ts_ms=ts_ms,
+                )
                 last_out_snapshot = current_snapshot
+                last_out_seq_global = seq_global
                 last_snapshot = current_snapshot
             else:
                 if data_raw:
@@ -328,17 +504,29 @@ def prepare_session_replay_data(
                 except Exception:
                     data_str = data_raw.hex()
 
-            replay_item = {
+            event_item = {
+                "event_id": f"ev-{seq_global}",
                 "seq_global": seq_global, "ts_ms": ts_ms, "type": "bytes",
                 "direction": direction, "n_bytes": actual_n,
                 "declared_bytes": declared_n, "actual_bytes": actual_n,
                 "data_decoded": data_str, "data_b64": data_b64,
             }
             if integrity_warning:
-                replay_item["integrity_warning"] = integrity_warning
-            replay_events.append(replay_item)
+                event_item["integrity_warning"] = integrity_warning
+            # Eficiencia: apenas diff em eventos OUT normais
+            if direction == "out":
+                if diff:
+                    event_item["diff"] = diff
+                    event_item["text_sig"] = current_snapshot.get("text_sig", "")
+                    event_item["visual_sig"] = current_snapshot.get("visual_sig", "")
+                # Snapshot completo apenas em checkpoints
+                if generate_checkpoint:
+                    _attach_render_snapshot(event_item, current_snapshot)
+                    event_item["is_checkpoint"] = True
+            event_items.append(event_item)
 
             timeline_item = {
+                "event_id": event_item["event_id"],
                 "seq_global": seq_global, "ts_ms": ts_ms, "timestamp_ms": ts_ms,
                 "type": "bytes", "direction": direction, "n_bytes": actual_n,
                 "declared_bytes": declared_n, "actual_bytes": actual_n,
@@ -346,12 +534,13 @@ def prepare_session_replay_data(
                 "summary": data_str[:400],
             }
             if direction == "out" and diff:
-                timeline_item["snapshot"] = current_snapshot
-                timeline_item["snapshot_compact"] = encode_snapshot_compact(current_snapshot)
-                timeline_item["diff"] = diff
                 timeline_item["text_sig"] = current_snapshot.get("text_sig", "")
                 timeline_item["visual_sig"] = current_snapshot.get("visual_sig", "")
                 timeline_item["engine_version"] = engine.engine_version
+                # snapshot_compact apenas em checkpoint (evita duplicacao)
+                if generate_checkpoint:
+                    _attach_render_snapshot(timeline_item, current_snapshot)
+                    timeline_item["checkpoint_seq"] = True
             if integrity_warning:
                 timeline_item["integrity_warning"] = integrity_warning
             timeline.append(timeline_item)
@@ -359,6 +548,7 @@ def prepare_session_replay_data(
             seq_global = int(ev.get("seq_global") or 0)
             ts_ms = int(ev.get("ts_ms") or 0)
             deterministic_item = {
+                "event_id": f"det-{seq_global}",
                 "seq_global": seq_global, "ts_ms": ts_ms,
                 "type": "deterministic_input",
                 "screen_sig": str(ev.get("screen_sig") or ""),
@@ -380,9 +570,25 @@ def prepare_session_replay_data(
                 "source": str(ev.get("source") or ""),
                 "expected_text_sig": current_snapshot.get("text_sig", "") if current_snapshot else "",
                 "expected_visual_sig": current_snapshot.get("visual_sig", "") if current_snapshot else "",
+                "expected_semantic_sig": current_snapshot.get("semantic_sig", "") if current_snapshot else "",
             }
+            if current_snapshot:
+                expected_snapshot = {
+                    "text_sig": str(ev.get("expected_text_sig") or ev.get("text_sig") or ""),
+                    "visual_sig": str(ev.get("expected_visual_sig") or ev.get("visual_sig") or ""),
+                    "semantic_sig": str(ev.get("expected_semantic_sig") or ev.get("semantic_sig") or ""),
+                    "screen_sig": str(ev.get("screen_sig") or ""),
+                }
+                deterministic_item["_comparison"] = compare_signatures(
+                    expected_snapshot,
+                    current_snapshot,
+                    mode="hybrid",
+                    legacy_expected_screen_sig=str(ev.get("screen_sig") or ""),
+                    legacy_observed_screen_sig=str(current_snapshot.get("screen_sig") or ""),
+                )
             deterministic_events.append(deterministic_item)
             timeline.append({
+                "event_id": deterministic_item["event_id"],
                 "seq_global": seq_global, "ts_ms": ts_ms, "timestamp_ms": ts_ms,
                 "type": "deterministic_input",
                 "screen_sig": deterministic_item["screen_sig"],
@@ -404,18 +610,67 @@ def prepare_session_replay_data(
                 ),
             })
 
-    # ── Playback script ─────────────────────────────────────────────────
-    playback_script = []
-    for ev in replay_events:
-        playback_script.append({
+    # Finaliza decoder e gera snapshot final
+    if session_end is None:
+        engine.finish(seq_global=last_out_seq_global, direction="out", session_id=clean_sid)
+    final_snapshot = snapshot_from_engine(engine)
+
+    # Adiciona decoder warnings ao resultado
+    decoder_warnings = []
+    for w in engine.decoder.warnings:
+        decoder_warnings.append(w)
+
+    sorted_timeline = sorted(timeline, key=lambda item: (int(item.get("seq_global") or 0), int(item.get("ts_ms") or 0)))
+    reference_payload = build_reference_payload(
+        initial_snapshot=_render_snapshot_payload(initial_snapshot),
+        events=event_items,
+        checkpoints=checkpoints,
+        final_snapshot=_render_snapshot_payload(final_snapshot),
+    )
+    playback_meta = {
+        "total_bytes_in": sum(e["n_bytes"] for e in event_items if e["direction"] == "in"),
+        "total_bytes_out": sum(e["n_bytes"] for e in event_items if e["direction"] == "out"),
+        "event_count": len(event_items),
+        "deterministic_event_count": len(deterministic_events),
+        "available_input_modes": ["raw", "deterministic"],
+        "comparison_modes": ["visual", "text", "semantic", "hybrid"],
+        "default_comparison_mode": "visual",
+        "legacy_comparison_mode": "hybrid",
+        "engine_version": engine.engine_version,
+    }
+    playback_items = []
+    for ev in event_items:
+        item = {
+            "event_id": ev.get("event_id"),
             "seq": ev["seq_global"],
             "seq_global": ev["seq_global"],
             "direction": ev["direction"],
             "bytes": ev["n_bytes"],
-            "data_b64": ev.get("data_b64", ""),
-            "content": ev["data_decoded"],
             "timestamp_ms": ev["ts_ms"],
-        })
+        }
+        if ev["direction"] == "out":
+            if ev.get("diff"):
+                item["diff"] = ev["diff"]
+            if ev.get("text_sig"):
+                item["text_sig"] = ev["text_sig"]
+            if ev.get("visual_sig"):
+                item["visual_sig"] = ev["visual_sig"]
+            if ev.get("is_checkpoint") and ev.get("snapshot_compact"):
+                item["snapshot_compact"] = ev["snapshot_compact"]
+                item["render_snapshot"] = ev.get("render_snapshot", ev["snapshot_compact"])
+                item["checkpoint"] = True
+        playback_items.append(item)
+    timeline_view = ReferenceView(
+        event_refs=reference_payload["timeline"]["event_refs"],
+        checkpoint_refs=reference_payload["timeline"]["checkpoint_refs"],
+        items=sorted_timeline,
+    )
+    playback_view = PlaybackReferenceView(
+        event_refs=reference_payload["playback"]["event_refs"],
+        checkpoint_refs=reference_payload["playback"]["checkpoint_refs"],
+        items=playback_items,
+        meta=playback_meta,
+    )
 
     return {
         "error": None,
@@ -424,19 +679,20 @@ def prepare_session_replay_data(
         "session_end": session_end,
         "geometry": geometry,
         "engine_version": engine.engine_version,
-        "initial_snapshot": encode_snapshot_compact(initial_snapshot),
-        "final_snapshot": encode_snapshot_compact(snapshot_from_engine(engine)),
-        "checkpoints": checkpoints,
-        "replay_events": replay_events,
+        "initial_snapshot": reference_payload["initial_snapshot"],
+        "final_snapshot": reference_payload["final_snapshot"],
+        "decoder_warnings": decoder_warnings,
+        "checkpoints": reference_payload["checkpoints"],
+        "events": reference_payload["events"],
         "deterministic_events": deterministic_events,
-        "timeline": sorted(timeline, key=lambda item: (int(item.get("seq_global") or 0), int(item.get("ts_ms") or 0))),
-        "playback": {
-            "events": playback_script,
-            "total_bytes_in": sum(e["n_bytes"] for e in replay_events if e["direction"] == "in"),
-            "total_bytes_out": sum(e["n_bytes"] for e in replay_events if e["direction"] == "out"),
-            "event_count": len(replay_events),
-            "deterministic_event_count": len(deterministic_events),
-            "available_input_modes": ["raw", "deterministic"],
-            "comparison_modes": ["visual", "text", "semantic", "hybrid"],
+        "timeline": timeline_view,
+        "timeline_items": sorted_timeline,
+        "playback": playback_view,
+        # Assinaturas canônicas persistidas para o gateway
+        "canonical_signatures": {
+            "text_sig": final_snapshot.get("text_sig", ""),
+            "visual_sig": final_snapshot.get("visual_sig", ""),
+            "semantic_sig": final_snapshot.get("semantic_sig", ""),
+            "engine_version": engine.engine_version,
         },
     }

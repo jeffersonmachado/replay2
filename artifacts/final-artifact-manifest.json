@@ -1,0 +1,11 @@
+{
+  "completed_at": "2026-07-16T13:17:08-03:00",
+  "artifact": "dist/dakota-replay2-0.5.1-20260715-183000.tar.gz",
+  "sha256": "23f56590d2d26a91d23f812125dfd17bb82ba09b75d12f1880523374a11e9d36",
+  "bytes": 1695458,
+  "source_tree_sha256": "fa34a3c7b00b8ad0da815748e6ead6d0de70a41482514d094b4be47a78419240",
+  "validated_original_gate_log": "artifacts/acceptance-logs/final/run-phase-08-full.log",
+  "validated_extracted_gate_log": "artifacts/acceptance-logs/extracted/run-phase-08-full-final-artifact.log",
+  "validated_extracted_gate_exit_code": 0,
+  "note": "This external manifest is intentionally written after validating the final tarball, avoiding a self-referential rebuild cycle."
+}

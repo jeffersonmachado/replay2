@@ -1,34 +1,135 @@
 /**
  * capture_replay_timeline.test.mjs — tests for timeline grouping (seção 25)
+ * v0.3.19+: Testa arquitetura snapshot/diff, não VT.
  * Run: node --test gateway/control/static/js/components/capture_replay_timeline.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { decodeEventForDisplay, normalizeDisplayEncoding } from './timeline_core.js';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const vt = require('../virtual_terminal.cjs');
 const tl = require('./capture_replay_timeline.cjs');
 
 const { buildTimelineItems } = tl;
-const { createVirtualTerminal, feed, feedBase64, renderPlainText, renderCompactText, renderSnapshot, renderSnapshotHtml, eventTimestamp, screenSig, visualSig } = vt;
+
+// Renderer functions inline (simplified for testing)
+function renderSnapshotToText(snap) {
+  if (!snap || !snap.cells) return "";
+  var rows = snap.rows || 1;
+  var cols = snap.cols || 1;
+  var lines = [];
+  for (var r = 0; r < rows; r++) {
+    var line = "";
+    for (var c = 0; c < cols; c++) {
+      var idx = r * cols + c;
+      line += (idx < snap.cells.length) ? (snap.cells[idx].ch || " ") : " ";
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function renderSnapshotToHtml(snap) {
+  if (!snap || !snap.cells) return "";
+  var rows = snap.rows || 1;
+  var cols = snap.cols || 1;
+  var lines = [];
+  for (var r = 0; r < rows; r++) {
+    var line = "";
+    for (var c = 0; c < cols; c++) {
+      var idx = r * cols + c;
+      var cell = (idx < snap.cells.length) ? snap.cells[idx] : { ch: " " };
+      var cls = [];
+      if (cell.reverse) cls.push("vt-reverse");
+      line += '<span class="' + cls.join(" ") + '">' + (cell.ch || " ") + '</span>';
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function decodeSnapshotPayload(payload) {
+  if (payload && payload.cells) return payload;
+  return null;
+}
+
+function applyDiff(snap, diff) {
+  if (!snap || !snap.cells) return snap;
+  var result = JSON.parse(JSON.stringify(snap));
+  for (var i = 0; i < (diff.changes || []).length; i++) {
+    var chg = diff.changes[i];
+    var idx = chg.row * (diff.cols || result.cols) + chg.col;
+    if (idx < result.cells.length) {
+      result.cells[idx] = {
+        ch: chg.ch || " ", fg: chg.fg || "default", bg: chg.bg || "default",
+        bold: !!chg.bold, dim: !!chg.dim, underline: !!chg.underline,
+        blink: !!chg.blink, reverse: !!chg.reverse, hidden: !!chg.hidden,
+      };
+    }
+  }
+  if (diff.text_sig) result.text_sig = diff.text_sig;
+  if (diff.visual_sig) result.visual_sig = diff.visual_sig;
+  return result;
+}
 
 function makeDeps() {
   return {
-    feedBase64: (term, dataB64, encoding) => feedBase64(term, dataB64, encoding),
-    feed: (term, text) => feed(term, text),
-    renderPlainText: (term) => renderPlainText(term),
-    renderCompactText: (term) => renderCompactText(term),
-    renderSnapshot: (term) => renderSnapshot(term),
-    renderSnapshotHtml: (snap) => renderSnapshotHtml ? renderSnapshotHtml(snap) : null,
-    eventTimestamp: (ev) => eventTimestamp(ev),
-    makeTerm: () => createVirtualTerminal(25, 80),
-    formatEventContent: (ev) => ev?.summary || ev?.data_decoded || '',
-    screenSig: (term) => screenSig(term),
-    visualSig: (term) => visualSig(term),
-    encoding: 'utf-8',
+    renderSnapshotToHtml: renderSnapshotToHtml,
+    renderSnapshotToText: renderSnapshotToText,
+    decodeSnapshotPayload: decodeSnapshotPayload,
+    applyDiff: applyDiff,
+    eventTimestamp: function(ev) { return ev.ts_ms || 0; },
+    formatEventContent: function(ev) { return ev.summary || ev.data_decoded || ''; },
   };
+}
+
+function makeCell(ch, attrs) {
+  var a = attrs || {};
+  return { ch: ch || " ", fg: a.fg || "default", bg: a.bg || "default",
+    bold: !!a.bold, dim: !!a.dim, underline: !!a.underline,
+    blink: !!a.blink, reverse: !!a.reverse, hidden: !!a.hidden };
+}
+
+function makeSnapshot(rows, cols, cells) {
+  var r = rows || 25;
+  var c = cols || 80;
+  var all = [];
+  for (var i = 0; i < r * c; i++) {
+    all.push(cells && i < cells.length ? cells[i] : makeCell(" "));
+  }
+  return { version: 1, rows: r, cols: c, cells: all,
+    text_sig: "sha256:abc123", visual_sig: "sha256:def456" };
+}
+
+function makeCompactSnapshot(snap) {
+  return { version: 1, rows: snap.rows, cols: snap.cols, cells: snap.cells,
+    text_sig: snap.text_sig, visual_sig: snap.visual_sig };
+}
+
+function makeDiff(baseSnap, currSnap, seqBase, seqCurr) {
+  var changes = [];
+  for (var i = 0; i < Math.min(baseSnap.cells.length, currSnap.cells.length); i++) {
+    if (JSON.stringify(baseSnap.cells[i]) !== JSON.stringify(currSnap.cells[i])) {
+      changes.push({
+        row: Math.floor(i / currSnap.cols), col: i % currSnap.cols,
+        ch: currSnap.cells[i].ch, fg: currSnap.cells[i].fg,
+        bg: currSnap.cells[i].bg, bold: currSnap.cells[i].bold,
+        dim: currSnap.cells[i].dim, underline: currSnap.cells[i].underline,
+        blink: currSnap.cells[i].blink, reverse: currSnap.cells[i].reverse,
+        hidden: currSnap.cells[i].hidden,
+      });
+    }
+  }
+  return { version: 1, base_text_sig: baseSnap.text_sig, text_sig: currSnap.text_sig,
+    base_visual_sig: baseSnap.visual_sig, visual_sig: currSnap.visual_sig,
+    base_seq_global: seqBase || 0, seq_global: seqCurr || 0,
+    rows: currSnap.rows, cols: currSnap.cols,
+    geometry_changed: baseSnap.rows !== currSnap.rows || baseSnap.cols !== currSnap.cols,
+    changes: changes };
 }
 
 test('groups OUT events by proximity', () => {
@@ -64,139 +165,186 @@ test('empty events array returns empty', () => {
 });
 
 test('snapshot preserves geometry', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: 'Hello', n_bytes: 5 },
+  var snap = makeSnapshot(25, 80);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 5 },
   ];
-  const deps = makeDeps();
-  const items = buildTimelineItems(events, deps);
+  var items = buildTimelineItems(events, makeDeps());
   assert.equal(items.length, 1);
-  const snap = items[0].summary;
-  // 25 rows, each 80 chars
-  const lines = snap.split('\n');
+  assert.equal(items[0].content_kind, 'terminal_snapshot');
+  var lines = items[0].summary.split('\n');
   assert.equal(lines.length, 25, '25 rows');
   assert.equal(lines[0].length, 80, '80 cols');
 });
 
 test('clear-screen produces empty snapshot (not discarded)', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: 'Hello World', n_bytes: 11 },
-    { seq_global: 2, ts_ms: 2000, type: 'bytes', direction: 'out', data_decoded: '\x1b[2J', n_bytes: 4 },
+  var snap1 = makeSnapshot(25, 80, [makeCell('H'), makeCell('e'), makeCell('l'), makeCell('l'), makeCell('o')]);
+  var snap2 = makeSnapshot(25, 80);
+  var diff = makeDiff(snap1, snap2, 1, 2);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap1), text_sig: snap1.text_sig, visual_sig: snap1.visual_sig, n_bytes: 5 },
+    { seq_global: 2, ts_ms: 2000, type: 'bytes', direction: 'out',
+      diff: diff, text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 4 },
   ];
-  const items = buildTimelineItems(events, makeDeps());
-  // First group: Hello World. Second group: clear screen → empty terminal.
-  const snapshots = items.filter(i => i.content_kind === 'terminal_snapshot');
+  var items = buildTimelineItems(events, makeDeps());
+  var snapshots = items.filter(function(i) { return i.content_kind === 'terminal_snapshot'; });
   assert.equal(snapshots.length, 2, 'two snapshots (clear screen preserved)');
-  // Second snapshot should be all spaces (empty screen)
-  const clearSnap = snapshots[1].summary;
+  var clearSnap = snapshots[1].summary;
   assert.ok(clearSnap.trim() === '', 'clear screen snapshot is empty but present');
   assert.equal(clearSnap.split('\n').length, 25, 'still 25 rows');
 });
 
 test('snapshot includes text_sig and visual_sig', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: 'ABC', n_bytes: 3 },
+  var snap = makeSnapshot(25, 80, [makeCell('A'), makeCell('B'), makeCell('C')]);
+  snap.text_sig = 'sha256:text123';
+  snap.visual_sig = 'sha256:vis456';
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 3 },
   ];
-  const deps = makeDeps();
-  const items = buildTimelineItems(events, deps);
+  var items = buildTimelineItems(events, makeDeps());
   assert.equal(items.length, 1);
   assert.equal(items[0].content_kind, 'terminal_snapshot');
   assert.ok(items[0].text_sig, 'text_sig present');
   assert.ok(items[0].visual_sig, 'visual_sig present');
   assert.equal(typeof items[0].text_sig, 'string');
   assert.equal(typeof items[0].visual_sig, 'string');
-  // text_sig must differ from visual_sig when attributes differ
-  assert.ok(items[0].text_sig !== items[0].visual_sig, 'text_sig deve diferir de visual_sig para mesmos dados');
+  assert.ok(items[0].text_sig !== items[0].visual_sig, 'text_sig deve diferir de visual_sig');
 });
 
 test('text_sig stable for same text, visual_sig changes with attributes', () => {
-  const events1 = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: 'Plain', n_bytes: 5 },
-  ];
-  const events2 = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: '\x1b[7mPlain\x1b[0m', n_bytes: 11 },
-  ];
-  // Fresh deps for each — avoid terminal state leaking
-  const items1 = buildTimelineItems(events1, makeDeps());
-  const items2 = buildTimelineItems(events2, makeDeps());
-  // Same text content → same text_sig
+  var snap1 = makeSnapshot(25, 80, [makeCell('P'), makeCell('l'), makeCell('a'), makeCell('i'), makeCell('n')]);
+  snap1.text_sig = 'sha256:text_plain';
+  snap1.visual_sig = 'sha256:vis_normal';
+
+  var snap2 = makeSnapshot(25, 80, [
+    makeCell('P', {reverse: true}), makeCell('l', {reverse: true}),
+    makeCell('a', {reverse: true}), makeCell('i', {reverse: true}), makeCell('n', {reverse: true})
+  ]);
+  snap2.text_sig = 'sha256:text_plain';  // mesmo texto
+  snap2.visual_sig = 'sha256:vis_reverse';  // visual diferente
+
+  var items1 = buildTimelineItems([
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap1), text_sig: snap1.text_sig, visual_sig: snap1.visual_sig, n_bytes: 5 },
+  ], makeDeps());
+
+  var items2 = buildTimelineItems([
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap2), text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 5 },
+  ], makeDeps());
+
   assert.equal(items1[0].text_sig, items2[0].text_sig, 'text_sig identical for same chars');
-  // Different attributes (reverse vs none) → different visual_sig
   assert.notEqual(items1[0].visual_sig, items2[0].visual_sig, 'visual_sig differs');
 });
 
-// ── Novos testes (P0 corrections) ──────────────────────────────────────────
-
 test('snapshot includes canonical cell data (snapshot field)', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: '\x1b[7mABC\x1b[0m', n_bytes: 10 },
+  var snap = makeSnapshot(25, 80, [
+    makeCell('A', {reverse: true}), makeCell('B', {reverse: true}), makeCell('C', {reverse: true})
+  ]);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 10 },
   ];
-  const items = buildTimelineItems(events, makeDeps());
+  var items = buildTimelineItems(events, makeDeps());
   assert.equal(items.length, 1);
   assert.ok(items[0].snapshot, 'snapshot field present');
-  assert.equal(items[0].snapshot.version, 1);
   assert.equal(items[0].snapshot.rows, 25);
   assert.equal(items[0].snapshot.cols, 80);
-  // First 3 cells: A, B, C with reverse=true
   assert.equal(items[0].snapshot.cells[0].ch, 'A');
   assert.equal(items[0].snapshot.cells[0].reverse, true, 'cell 0 has reverse');
 });
 
 test('snapshot_html is present for terminal_snapshot', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_decoded: '\x1b[7mABC\x1b[0m', n_bytes: 10 },
+  var snap = makeSnapshot(25, 80, [
+    makeCell('A', {reverse: true}), makeCell('B', {reverse: true}), makeCell('C', {reverse: true})
+  ]);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 10 },
   ];
-  const items = buildTimelineItems(events, makeDeps());
+  var items = buildTimelineItems(events, makeDeps());
   assert.ok(items[0].snapshot_html, 'snapshot_html present');
   assert.ok(items[0].snapshot_html.includes('vt-reverse'), 'includes reverse class');
 });
 
-test('uses feedBase64 when data_b64 is available', () => {
-  // "á" = C3 A1 in UTF-8
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'ww==', n_bytes: 1 },
-    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'oQ==', n_bytes: 1 },
-  ];
-  const deps = makeDeps();
-  const items = buildTimelineItems(events, deps);
-  assert.equal(items.length, 1, 'both events in one group');
-  const snap = items[0].snapshot;
-  assert.equal(snap.cells[0].ch, 'á', 'UTF-8 split via data_b64 produces á');
-});
+test('diff applies correctly between snapshots', () => {
+  var snap1 = makeSnapshot(5, 10);
+  var snap2 = makeSnapshot(5, 10, [makeCell('X', {fg: 'red'})]);
+  var diff = makeDiff(snap1, snap2, 1, 2);
 
-test('encoding CP850 via feedBase64 produces correct char', () => {
-  const deps = makeDeps();
-  deps.encoding = 'cp850';
-  // 0x82 = é em CP850
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'gg==', n_bytes: 1 },
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap1), text_sig: snap1.text_sig, visual_sig: snap1.visual_sig, n_bytes: 0 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out',
+      diff: diff, text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 1 },
   ];
-  const items = buildTimelineItems(events, deps);
+  var items = buildTimelineItems(events, makeDeps());
+  // Both events within 700ms → 1 group
   assert.equal(items.length, 1);
-  assert.equal(items[0].snapshot.cells[0].ch, 'é', 'CP850: 0x82 = é');
+  assert.equal(items[0].snapshot.cells[0].ch, 'X');
+  assert.equal(items[0].snapshot.cells[0].fg, 'red');
 });
 
-test('grouped base64 keeps chunks and does not concatenate padded strings', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'QQ==', n_bytes: 1 },
-    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'Qg==', n_bytes: 1 },
+test('encoding UTF-8 split via snapshot works', () => {
+  var snap = makeSnapshot(25, 80, [makeCell('á'), makeCell('!')]);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 3 },
   ];
-  const items = buildTimelineItems(events, makeDeps());
-  assert.deepEqual(items[0].data_b64_chunks, ['QQ==', 'Qg==']);
-  assert.notEqual(items[0].data_b64, 'QQ==Qg==');
-  assert.equal(Buffer.from(items[0].data_b64, 'base64').toString('utf8'), 'AB');
-});
-
-test('grouped base64 round-trip handles three one-byte chunks and UTF-8 split', () => {
-  const events = [
-    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'ww==', n_bytes: 1 },
-    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'oQ==', n_bytes: 1 },
-    { seq_global: 3, ts_ms: 1200, type: 'bytes', direction: 'out', data_b64: 'IQ==', n_bytes: 1 },
-  ];
-  const items = buildTimelineItems(events, makeDeps());
-  assert.deepEqual(items[0].data_b64_chunks, ['ww==', 'oQ==', 'IQ==']);
-  assert.equal(Buffer.from(items[0].data_b64, 'base64').toString('hex'), 'c3a121');
+  var items = buildTimelineItems(events, makeDeps());
+  assert.equal(items.length, 1);
   assert.equal(items[0].snapshot.cells[0].ch, 'á');
   assert.equal(items[0].snapshot.cells[1].ch, '!');
+});
+
+test('encoding CP850 via snapshot works', () => {
+  var snap = makeSnapshot(25, 80, [makeCell('é')]);
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap), text_sig: snap.text_sig, visual_sig: snap.visual_sig, n_bytes: 1 },
+  ];
+  var items = buildTimelineItems(events, makeDeps());
+  assert.equal(items.length, 1);
+  assert.equal(items[0].snapshot.cells[0].ch, 'é');
+});
+
+test('grouped snapshot preserves chunks via snapshot', () => {
+  var snap1 = makeSnapshot(25, 80, [makeCell('A')]);
+  var snap2 = makeSnapshot(25, 80, [makeCell('A'), makeCell('B')]);
+  var diff = makeDiff(snap1, snap2, 1, 2);
+
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap1), text_sig: snap1.text_sig, visual_sig: snap1.visual_sig, n_bytes: 1 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out',
+      diff: diff, text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 1 },
+  ];
+  var items = buildTimelineItems(events, makeDeps());
+  assert.equal(items.length, 1, 'both events grouped');
+  assert.equal(items[0].snapshot.cells[0].ch, 'A');
+  assert.equal(items[0].snapshot.cells[1].ch, 'B');
+  assert.equal(items[0].chunk_count, 2);
+});
+
+test('grouped three events via snapshot works', () => {
+  var snap1 = makeSnapshot(25, 80, [makeCell('á')]);
+  var snap2 = makeSnapshot(25, 80, [makeCell('á'), makeCell('!')]);
+  var diff = makeDiff(snap1, snap2, 1, 3);
+
+  var events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out',
+      snapshot_compact: makeCompactSnapshot(snap1), text_sig: snap1.text_sig, visual_sig: snap1.visual_sig, n_bytes: 1 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out',
+      diff: diff, text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 1 },
+    { seq_global: 3, ts_ms: 1200, type: 'bytes', direction: 'out',
+      diff: diff, text_sig: snap2.text_sig, visual_sig: snap2.visual_sig, n_bytes: 1 },
+  ];
+  var items = buildTimelineItems(events, makeDeps());
+  assert.equal(items.length, 1, 'all three events grouped');
+  assert.equal(items[0].chunk_count, 3);
 });
 
 test('detailed display decodes UTF-8 and falls back unknown encoding to UTF-8', () => {

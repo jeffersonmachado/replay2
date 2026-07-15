@@ -58,9 +58,24 @@ cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAG
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
   mkdir -p "$STAGE_DIR/scripts"
-  cp -f "$ROOT_DIR/scripts/"*.sh "$STAGE_DIR/scripts/"
+  cp -R "$ROOT_DIR/scripts/." "$STAGE_DIR/scripts/"
   # Remove scripts com credenciais ou hosts internos
   rm -f "$STAGE_DIR/scripts/show-admin-credentials.sh" 2>/dev/null || true
+fi
+if [ -d "$ROOT_DIR/artifacts" ]; then
+  mkdir -p "$STAGE_DIR/artifacts"
+  for artifact in \
+    acceptance-matrix.json \
+    acceptance-test-baseline.sha256 \
+    final-acceptance-report.md \
+    final-acceptance-results.json \
+    manual-validation.json \
+    acceptance-log-summary.json
+  do
+    if [ -f "$ROOT_DIR/artifacts/$artifact" ]; then
+      cp -f "$ROOT_DIR/artifacts/$artifact" "$STAGE_DIR/artifacts/"
+    fi
+  done
 fi
 
 # Garante executáveis
@@ -115,7 +130,7 @@ rm -rf \
   "$STAGE_DIR/log" \
   "$STAGE_DIR/logs" 2>/dev/null || true
 
-TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+TIMESTAMP="${DAKOTA_TARBALL_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
 OUT="$DIST_DIR/${APP_NAME}-${VERSION}-${TIMESTAMP}.tar.gz"
 info "Gerando: $OUT"
 

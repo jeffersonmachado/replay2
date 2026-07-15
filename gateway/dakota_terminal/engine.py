@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .attributes import Attributes
-from .decoder import IncrementalDecoder, normalize_encoding
+from .decoder import TerminalDecoder, normalize_encoding
 from .geometry import validate_geometry
 from .model import Cell, blank_cell
 from .parser import DEC_SPECIAL_GRAPHICS_MAP, parse_csi_params
@@ -11,19 +11,27 @@ from .snapshot import snapshot_from_engine
 class TerminalEngine:
     engine_version = "1.0"
 
-    def __init__(self, *, rows: int = 25, cols: int = 80, term: str = "xterm", encoding: str = "utf-8"):
+    def __init__(self, *, rows: int = 25, cols: int = 80, term: str = "xterm", encoding: str = "utf-8", session_id: str = ""):
         geom = validate_geometry(rows, cols)
         self.rows = geom.rows
         self.cols = geom.cols
         self.term = str(term or "xterm")
         self.encoding = normalize_encoding(encoding)
-        self.decoder = IncrementalDecoder(self.encoding)
+        self.decoder = TerminalDecoder(self.encoding, session_id=session_id)
         self.bytes_seen = 0
+        self.seq_global = 0
+        self._decode_seq_global = 0
+        self._decode_direction = "out"
+        # Estado do scanner byte-a-byte
+        self._escape_state: str = "normal"  # normal, esc, csi, osc, esc_seq
+        self._csi_params: str = ""
+        self._osc_params: str = ""
+        self._text_buffer: bytearray = bytearray()
         self.reset(reset_decoder=False)
 
     def reset(self, *, reset_decoder: bool = True) -> None:
         if reset_decoder:
-            self.decoder.reset()
+            self.decoder.reset(seq_global=self._decode_seq_global, direction=self._decode_direction)
         self.cells = [[blank_cell() for _ in range(self.cols)] for _ in range(self.rows)]
         self.cursor_row = 0
         self.cursor_col = 0
@@ -40,16 +48,111 @@ class TerminalEngine:
         self.wrap_pending = False
         self.partial_escape = ""
         self.tab_stops = set(range(8, self.cols, 8))
+        # Reset scanner state
+        self._escape_state = "normal"
+        self._csi_params = ""
+        self._osc_params = ""
+        self._text_buffer = bytearray()
 
-    def feed_bytes(self, data: bytes) -> None:
+    def _flush_text_buffer(self) -> None:
+        """Decodifica buffer de texto acumulado e alimenta feed_text."""
+        if self._text_buffer:
+            text = self.decoder.feed(
+                bytes(self._text_buffer),
+                seq_global=self._decode_seq_global,
+                direction=self._decode_direction,
+            )
+            self._text_buffer = bytearray()
+            if text:
+                self.feed_text(text)
+
+    def feed_bytes(self, data: bytes, *, seq_global: int = 0, direction: str = "out", session_id: str | None = None) -> None:
+        """Scanner byte-a-byte: separa texto de sequencias de controle.
+
+        Bytes normais sao acumulados em buffer de texto e decodificados
+        incrementalmente. Sequencias de controle (ESC, CSI, OSC) sao
+        processadas como texto (via feed_text) para que o parser existente
+        as interprete corretamente. RIS (ESC c) reseta o estado.
+        """
         raw = bytes(data or b"")
+        self._decode_seq_global = int(seq_global or 0)
+        if self._decode_seq_global > 0:
+            self.seq_global = self._decode_seq_global
+        self._decode_direction = str(direction or "out")
+        if session_id is not None:
+            self.decoder.session_id = str(session_id or "")
         self.bytes_seen += len(raw)
-        self.feed_text(self.decoder.feed(raw))
 
-    def finish(self) -> None:
-        tail = self.decoder.finalize()
+        for b in raw:
+            byte_int = b  # 0-255
+
+            if self._escape_state == "normal":
+                if byte_int == 0x1b:  # ESC
+                    self._flush_text_buffer()
+                    self._escape_state = "esc"
+                elif byte_int < 0x20 and byte_int not in (0x09, 0x0a, 0x0d):  # C0 controls (exceto TAB, LF, CR)
+                    self._flush_text_buffer()
+                    self.feed_text(chr(byte_int))
+                else:
+                    self._text_buffer.append(byte_int)
+
+            elif self._escape_state == "esc":
+                if byte_int == 0x5b:  # '['
+                    self._escape_state = "csi"
+                    self._csi_params = ""
+                elif byte_int == 0x5d:  # ']'
+                    self._escape_state = "osc"
+                    self._osc_params = ""
+                elif byte_int == 0x63:  # 'c' → RIS
+                    self.reset(reset_decoder=True)
+                    self._escape_state = "normal"
+                else:
+                    # Outra sequencia ESC: manda como texto para o parser
+                    self.feed_text("\x1b" + chr(byte_int))
+                    self._escape_state = "normal"
+
+            elif self._escape_state == "csi":
+                self._csi_params += chr(byte_int)
+                if 0x40 <= byte_int <= 0x7e:  # final byte
+                    self.feed_text("\x1b[" + self._csi_params)
+                    self._escape_state = "normal"
+                    self._csi_params = ""
+
+            elif self._escape_state == "osc":
+                self._osc_params += chr(byte_int)
+                if byte_int == 0x07:  # BEL terminator
+                    self.feed_text("\x1b]" + self._osc_params)
+                    self._escape_state = "normal"
+                    self._osc_params = ""
+                elif byte_int == 0x1b:  # Possible ST terminator (ESC \)
+                    self._escape_state = "osc_st"
+
+            elif self._escape_state == "osc_st":
+                if byte_int == 0x5c:  # '\' → ST terminator
+                    self._osc_params += "\x1b\\"
+                    self.feed_text("\x1b]" + self._osc_params)
+                    self._escape_state = "normal"
+                    self._osc_params = ""
+                else:
+                    # Not a ST, voltar para OSC
+                    self._osc_params += "\x1b" + chr(byte_int)
+                    self._escape_state = "osc"
+
+        # Flush remaining text at end of chunk
+        self._flush_text_buffer()
+
+    def finish(self, *, seq_global: int = 0, direction: str = "out", session_id: str | None = None) -> None:
+        final_seq = int(seq_global or 0)
+        if final_seq > 0:
+            self.seq_global = final_seq
+        if session_id is not None:
+            self.decoder.session_id = str(session_id or "")
+        tail = self.decoder.finalize(seq_global=final_seq, direction=str(direction or "out"))
         if tail:
             self.feed_text(tail)
+
+    def finalize(self) -> None:
+        self.finish()
 
     def feed_text(self, raw_text: str) -> None:
         text = self.partial_escape + str(raw_text or "")
@@ -168,6 +271,14 @@ class TerminalEngine:
             if top < bottom:
                 self.scroll_top, self.scroll_bottom = top, bottom
                 self._set_cursor(0, 0)
+        elif final == "t" and p1 == 8 and p2 > 0:
+            # CSI 8;rows;cols t — resize terminal
+            if len(parts) >= 3:
+                resize_cols = parts[2]
+                try:
+                    self.resize(p2, resize_cols)
+                except (ValueError, TypeError):
+                    pass
 
     def _set_cursor(self, row: int, col: int) -> None:
         self.cursor_row = max(0, min(self.rows - 1, row))
@@ -244,4 +355,3 @@ class TerminalEngine:
 
     def snapshot(self) -> dict:
         return snapshot_from_engine(self)
-

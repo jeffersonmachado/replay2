@@ -204,8 +204,8 @@ def build_screen_snapshot(raw_text: str) -> ScreenSnapshot:
 class TerminalScreenState:
     """Compatibility facade over dakota_terminal.engine.TerminalEngine."""
 
-    def __init__(self, *, rows: int = 25, cols: int = 80, encoding: str = "utf-8"):
-        self.engine = TerminalEngine(rows=rows, cols=cols, encoding=encoding)
+    def __init__(self, *, rows: int = 25, cols: int = 80, encoding: str = "utf-8", session_id: str = ""):
+        self.engine = TerminalEngine(rows=rows, cols=cols, encoding=encoding, session_id=session_id)
 
     def reset(self) -> None:
         self.engine.reset()
@@ -219,8 +219,8 @@ class TerminalScreenState:
     def set_cursor(self, rr: int, cc: int) -> None:
         self.engine._set_cursor(rr, cc)
 
-    def feed_bytes(self, data: bytes) -> None:
-        self.engine.feed_bytes(data)
+    def feed_bytes(self, data: bytes, *, seq_global: int = 0, direction: str = "out") -> None:
+        self.engine.feed_bytes(data, seq_global=seq_global, direction=direction)
 
     def feed_text(self, raw_text: str) -> None:
         self.engine.feed_text(raw_text)
@@ -234,6 +234,8 @@ class TerminalScreenState:
         snap.canonical_snapshot = canonical
         snap.text_sig = canonical["text_sig"]
         snap.visual_sig = canonical["visual_sig"]
+        # Sobrescreve semantic_sig legado com o canonico do TerminalEngine
+        snap.semantic_sig = canonical.get("semantic_sig", "")
         return snap
 
     @property

@@ -7,12 +7,16 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const oraclePath = path.resolve(__dirname, '../../../../tests/oracles/virtual_terminal.cjs');
 const require = createRequire(import.meta.url);
-const vt = require('./virtual_terminal.cjs');
+const vt = require(oraclePath);
 
 function loadBrowserSandboxVt() {
-  const source = readFileSync(new URL('./virtual_terminal.cjs', import.meta.url), 'utf8');
+  const source = readFileSync(oraclePath, 'utf8');
   const sandbox = {
     self: {},
     TextEncoder,

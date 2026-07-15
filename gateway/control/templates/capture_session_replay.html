@@ -114,6 +114,8 @@
     </div>
 
     <p id="playback-geometry-info" class="text-xs text-stone-500 mt-2"></p>
+    <p id="playback-cmp-info" class="text-xs text-stone-500 mt-1"></p>
+    <p id="playback-sig-info" class="text-xs text-stone-500 mt-1 font-mono"></p>
     <p class="text-xs text-stone-400 mt-1">Dica: Use a barra de velocidade para acelerar/desacelerar a reprodução, ou use os botões de pausa/parar.</p>
   </section>
 
@@ -370,6 +372,13 @@ input[type="range"] {
         if (geomInfo) {
           geomInfo.textContent = `Geometria: ${termGeometry.rows}x${termGeometry.cols} | TERM: ${replayData.geometry.term || 'xterm'} | Encoding: ${sessionEncoding} | Fonte: ${termGeometry.source}`;
         }
+        // Exibe modos de comparacao disponiveis
+        const cmpInfo = document.getElementById('playback-cmp-info');
+        if (cmpInfo && replayData.playback) {
+          const modes = (replayData.playback.comparison_modes || []).join(', ');
+          const defaultMode = replayData.playback.default_comparison_mode || 'visual';
+          cmpInfo.textContent = `Comparação: [${modes}] | default: ${defaultMode} | engine: ${replayData.engine_version || '-'}`;
+        }
       }
       // Aguarda módulos de timeline antes de renderizar
       await _timelineReady;
@@ -428,10 +437,37 @@ input[type="range"] {
     return ev.direction || 'out';
   }
 
+  function replayEventMap() {
+    const map = new Map();
+    (replayData?.events || []).forEach((ev, idx) => {
+      const key = String(ev?.event_id || ev?.id || ev?.seq_global || ev?.seq || idx);
+      map.set(key, ev);
+    });
+    return map;
+  }
+
+  function resolveEventRefs(refContainer, fallbackItems) {
+    if (Array.isArray(refContainer)) return refContainer;
+    const refs = refContainer?.event_refs || [];
+    const map = replayEventMap();
+    return refs.map((ref) => map.get(String(ref))).filter(Boolean).map((ev) => {
+      const timelineItem = (replayData?.timeline_items || []).find((item) => String(item.event_id || item.seq_global) === String(ev.event_id || ev.seq_global));
+      return timelineItem ? { ...ev, ...timelineItem } : ev;
+    });
+  }
+
+  function timelineEvents() {
+    return resolveEventRefs(replayData?.timeline, replayData?.timeline_items || []);
+  }
+
+  function playbackEvents() {
+    return resolveEventRefs(replayData?.playback, replayData?.events || []);
+  }
+
   function renderEventsList(filter = 'all') {
     eventsFilterMode = filter;
     persistTimelinePrefs();
-    const allEvents = replayData.timeline || [];
+    const allEvents = timelineEvents();
     // Constrói timeline items a partir de TODOS os eventos (IN são fronteiras de grupo)
     let events = eventsViewMode === 'detailed'
       ? allEvents.map((ev) => ({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' }))
@@ -567,7 +603,8 @@ input[type="range"] {
       var tm = typeof eventTimestamp === 'function' ? eventTimestamp(ev2) : (ev2.ts_ms||0);
       var sq = Number(ev2.seq_global||0);
       var sn = null;
-      if (ev2.snapshot_compact && typeof decodeSnapshotPayload === 'function') sn = decodeSnapshotPayload(ev2.snapshot_compact);
+      var ev2SnapshotPayload = ev2.render_snapshot || ev2.snapshot_compact;
+      if (ev2SnapshotPayload && typeof decodeSnapshotPayload === 'function') sn = decodeSnapshotPayload(ev2SnapshotPayload);
       else if (ev2.snapshot && ev2.snapshot.cells) sn = ev2.snapshot;
       if (ev2.diff && csnap && typeof applyDiff === 'function') csnap = applyDiff(csnap, ev2.diff);
       else if (sn) csnap = sn;
@@ -597,7 +634,6 @@ input[type="range"] {
         .slice(0, 8).join('\n').trim();
     }
     return text.substring(0, 200);
-  }
   }
 
   // Controles de playback
@@ -657,62 +693,125 @@ input[type="range"] {
     persistPlaybackPrefs({ speed: playbackState.speed });
   });
 
-  // ── feedReplayEvent: snapshot/diff backend, fallback data_b64 ──
-  function feedReplayEvent(term, event) {
-    // Prefere snapshot do backend (TerminalEngine Python)
-    if (event.snapshot && event.snapshot.cells && typeof renderSnapshotToHtml === 'function') {
-      term._snapshot = event.snapshot;
+  // ── feedReplayEvent: somente snapshot/diff (TerminalEngine Python) ──
+  // NÃO usa mais DakVT, virtual_terminal, parser ANSI JS.
+  function feedReplayEvent(state, event) {
+    // 1. render_snapshot → decodifica e substitui
+    var renderPayload = event.render_snapshot || event.snapshot_compact;
+    if (renderPayload && typeof decodeSnapshotPayload === 'function') {
+      var snap = decodeSnapshotPayload(renderPayload);
+      if (snap && snap.cells) {
+        if (typeof validateSnapshotPayload === 'function' && !validateSnapshotPayload(snap)) {
+          console.error('feedReplayEvent: render_snapshot inválido, seq=' + event.seq);
+          return;
+        }
+        state._snapshot = snap;
+        state._currentSeqGlobal = event.seq_global || event.seq || 0;
+        if (event.text_sig) state._snapshot.text_sig = event.text_sig;
+        if (event.visual_sig) state._snapshot.visual_sig = event.visual_sig;
+        return;
+      }
+    }
+
+    // 2. snapshot completo → valida e substitui
+    if (event.snapshot && event.snapshot.cells) {
+      if (typeof validateSnapshotPayload === 'function' && !validateSnapshotPayload(event.snapshot)) {
+        console.error('feedReplayEvent: snapshot inválido, seq=' + event.seq);
+        return;
+      }
+      state._snapshot = typeof cloneSnapshot === 'function' ? cloneSnapshot(event.snapshot) : event.snapshot;
+      state._currentSeqGlobal = event.seq_global || event.seq || 0;
       return;
     }
-    // Fallback: data_b64 com terminal JS (legado, para compatibilidade)
-    if (event.data_b64 && typeof window.DakVT !== 'undefined' && window.DakVT.feedBase64) {
-      if (!term._vt) term._vt = window.DakVT.createVirtualTerminal(termGeometry.rows, termGeometry.cols);
-      window.DakVT.feedBase64(term._vt, event.data_b64, sessionEncoding);
+
+    // 3. diff → valida e aplica
+    if (event.diff && state._snapshot && state._snapshot.cells && typeof applyDiff === 'function') {
+      if (typeof validateDiffPayload === 'function' && !validateDiffPayload(event.diff)) {
+        console.error('feedReplayEvent: diff inválido, seq=' + event.seq);
+        return;
+      }
+      // Valida base_seq_global se disponivel
+      if (event.diff.base_seq_global != null && state._currentSeqGlobal != null && event.diff.base_seq_global !== state._currentSeqGlobal) {
+        console.error('feedReplayEvent: diff base_seq_global mismatch, esperado=' + state._currentSeqGlobal + ', recebido=' + event.diff.base_seq_global);
+        return;
+      }
+      state._snapshot = applyDiff(state._snapshot, event.diff);
+      state._currentSeqGlobal = event.seq_global || event.seq || 0;
       return;
     }
-    if (event.content && typeof window.DakVT !== 'undefined' && window.DakVT.feed) {
-      if (!term._vt) term._vt = window.DakVT.createVirtualTerminal(termGeometry.rows, termGeometry.cols);
-      window.DakVT.feed(term._vt, event.content);
-    }
+
+    // 4. Sem snapshot nem diff: erro de payload
+    console.error('feedReplayEvent: evento OUT sem snapshot/diff, seq=' + (event.seq || '?') + '. NÃO usando fallback DakVT.');
   }
 
-  // Navegação por seq_global
+  // ── seekToEvent: usa checkpoint + diffs ──
   function seekToEvent(index) {
     if (!replayData) return;
-    const events = replayData.playback?.events || [];
+    var events = playbackEvents();
     if (index < 0 || index >= events.length) return;
     playbackState.isPaused = true;
     playbackState.displayedEventIndex = index;
     playbackState.nextEventIndex = index + 1;
 
-    // Usa checkpoint + diffs para seek rápido
-    var snap = null;
-    if (replayData.initial_snapshot && typeof decodeSnapshotPayload === 'function') {
-      snap = decodeSnapshotPayload(replayData.initial_snapshot);
-    }
-    // Aplica diffs ate o evento alvo
-    for (let i = 0; i <= index; i++) {
-      if (events[i].direction === 'out') {
-        feedReplayEvent(playbackState, events[i]);
-        if (events[i].snapshot) snap = events[i].snapshot;
+    var targetSeqGlobal = events[index].seq_global || events[index].seq || 0;
+
+    // 1. Localiza melhor checkpoint (maior seq_global <= targetSeqGlobal)
+    var bestCp = null;
+    var checkpoints = replayData.checkpoints || [];
+    for (var ci = 0; ci < checkpoints.length; ci++) {
+      var cp = checkpoints[ci];
+      var cpSeq = cp.seq_global || 0;
+      if (cpSeq <= targetSeqGlobal && (!bestCp || cpSeq > (bestCp.seq_global || 0))) {
+        bestCp = cp;
       }
     }
-    playbackState._snapshot = snap;
 
-    const outputEl = document.getElementById('playback-output');
+    // 2. Se nao tem checkpoint, usa initial_snapshot
+    var snap = null;
+    var startSeq = 0;
+    var checkpointPayload = bestCp ? (bestCp.render_snapshot || bestCp.snapshot_compact) : null;
+    if (checkpointPayload && typeof decodeSnapshotPayload === 'function') {
+      snap = decodeSnapshotPayload(checkpointPayload);
+      startSeq = bestCp.seq_global || 0;
+    } else if (replayData.initial_snapshot && typeof decodeSnapshotPayload === 'function') {
+      snap = decodeSnapshotPayload(replayData.initial_snapshot);
+      startSeq = 0;
+    }
+
+    playbackState._snapshot = snap;
+    playbackState._currentSeqGlobal = startSeq;
+
+    // 3. Aplica diffs do checkpoint ate o evento alvo
+    for (var i = 0; i <= index; i++) {
+      var ev = events[i];
+      var evSeq = ev.seq_global || ev.seq || 0;
+      if (evSeq <= startSeq) continue;  // pula eventos ja cobertos pelo checkpoint
+      if (ev.direction === 'out') {
+        feedReplayEvent(playbackState, ev);
+      }
+    }
+
+    // 4. Renderiza
+    var outputEl = document.getElementById('playback-output');
+    snap = playbackState._snapshot;
     if (snap && snap.cells && typeof renderSnapshotToHtml === 'function') {
       outputEl.innerHTML = renderSnapshotToHtml(snap);
-    } else if (playbackState.terminal && typeof window.DakVT !== 'undefined') {
-      outputEl.innerHTML = window.DakVT.renderHtml(playbackState.terminal);
     } else {
-      outputEl.textContent = '';
+      outputEl.textContent = '(sem snapshot disponivel)';
     }
-    const counter = document.getElementById('playback-event-counter');
+
+    var counter = document.getElementById('playback-event-counter');
     counter.textContent = (index + 1) + ' / ' + events.length;
-    const progressBar = document.getElementById('playback-progress-bar');
+    var progressBar = document.getElementById('playback-progress-bar');
     progressBar.style.width = ((index + 1) / events.length * 100) + '%';
-    const currentEv = events[index];
+    var currentEv = events[index];
+
+    // Exibe info de assinaturas
     document.getElementById('playback-seq-current').textContent = 'seq: ' + (currentEv?.seq ?? '-');
+    var sigInfo = document.getElementById('playback-sig-info');
+    if (sigInfo && snap) {
+      sigInfo.textContent = 'text_sig: ' + ((snap.text_sig || '').substring(0, 20) || '-') + ' | visual_sig: ' + ((snap.visual_sig || '').substring(0, 20) || '-');
+    }
   }
 
   document.getElementById('playback-first-btn')?.addEventListener('click', () => {
@@ -724,18 +823,18 @@ input[type="range"] {
     seekToEvent(idx);
   });
   document.getElementById('playback-next-btn')?.addEventListener('click', () => {
-    const events = replayData?.playback?.events || [];
+    const events = playbackEvents();
     const idx = Math.min(events.length - 1, (playbackState.displayedEventIndex ?? 0) + 1);
     seekToEvent(idx);
   });
   document.getElementById('playback-last-btn')?.addEventListener('click', () => {
-    const events = replayData?.playback?.events || [];
+    const events = playbackEvents();
     seekToEvent(events.length - 1);
   });
   document.getElementById('playback-seq-go-btn')?.addEventListener('click', () => {
     const seqVal = parseInt(document.getElementById('playback-seq-goto')?.value);
     if (isNaN(seqVal)) return;
-    const events = replayData?.playback?.events || [];
+    const events = playbackEvents();
     // Busca exata por seq_global (não >=)
     const idx = events.findIndex(e => e.seq === seqVal);
     if (idx < 0) {
@@ -953,9 +1052,15 @@ input[type="range"] {
   }
 
   function startPlayback() {
-    const events = replayData.playback?.events || [];
-    playbackState.terminal = {};  // objeto simples para compatibilidade
+    var events = playbackEvents();
+
+    // Inicializa snapshot a partir do initial_snapshot
     playbackState._snapshot = null;
+    playbackState._currentSeqGlobal = 0;
+    if (replayData.initial_snapshot && typeof decodeSnapshotPayload === 'function') {
+      playbackState._snapshot = decodeSnapshotPayload(replayData.initial_snapshot);
+    }
+
     playbackState.displayedEventIndex = -1;
     playbackState.nextEventIndex = 0;
     document.getElementById('playback-output').innerHTML = '';
@@ -967,25 +1072,19 @@ input[type="range"] {
   function playNextEvent() {
     if (!playbackState.isRunning || playbackState.isPaused) return;
 
-    const events = replayData.playback?.events || [];
-    const idx = playbackState.nextEventIndex ?? 0;
+    var events = playbackEvents();
+    var idx = playbackState.nextEventIndex ?? 0;
     if (idx >= events.length) {
       finalizePlaybackUi();
       return;
     }
 
-    const event = events[idx];
-    if (event.direction === 'out') {
-      feedReplayEvent(playbackState, event);
-      if (playbackState._snapshot && playbackState._snapshot.cells && typeof renderSnapshotToHtml === 'function') {
-        document.getElementById('playback-output').innerHTML = renderSnapshotToHtml(playbackState._snapshot);
-      }
-    }
-    const outputEl = document.getElementById('playback-output');
-    const progressBar = document.getElementById('playback-progress-bar');
-    const counter = document.getElementById('playback-event-counter');
+    var event = events[idx];
+    var outputEl = document.getElementById('playback-output');
+    var progressBar = document.getElementById('playback-progress-bar');
+    var counter = document.getElementById('playback-event-counter');
 
-    // Atualiza display com snapshot
+    // Aplica EXATAMENTE UMA VEZ
     if (event.direction === 'out') {
       feedReplayEvent(playbackState, event);
       var snap = playbackState._snapshot;
@@ -994,21 +1093,27 @@ input[type="range"] {
       }
     }
 
-    const terminal = document.getElementById('playback-terminal');
-    terminal.scrollTop = terminal.scrollHeight;
+    var terminal = document.getElementById('playback-terminal');
+    if (terminal) terminal.scrollTop = terminal.scrollHeight;
 
-    const progress = ((idx + 1) / events.length) * 100;
+    var progress = ((idx + 1) / events.length) * 100;
     progressBar.style.width = progress + '%';
-    counter.textContent = `${idx + 1} / ${events.length}`;
+    counter.textContent = (idx + 1) + ' / ' + events.length;
     document.getElementById('playback-seq-current').textContent = 'seq: ' + (event?.seq ?? '-');
     document.getElementById('playback-geometry-info').textContent =
       'geom: ' + termGeometry.rows + '\u00D7' + termGeometry.cols + ' (' + termGeometry.source + ')';
 
+    // Atualiza assinaturas no display
+    var sigInfo = document.getElementById('playback-sig-info');
+    if (sigInfo && playbackState._snapshot) {
+      sigInfo.textContent = 'text_sig: ' + ((playbackState._snapshot.text_sig || '').substring(0, 20) || '-') + ' | visual_sig: ' + ((playbackState._snapshot.visual_sig || '').substring(0, 20) || '-');
+    }
+
     playbackState.displayedEventIndex = idx;
     playbackState.nextEventIndex = idx + 1;
 
-    const nextIdx = playbackState.nextEventIndex;
-    let delay = 50;
+    var nextIdx = playbackState.nextEventIndex;
+    var delay = 50;
     if (nextIdx < events.length) {
       delay = calcDelay(event, events[nextIdx], playbackState.speed);
     }

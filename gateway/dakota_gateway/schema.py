@@ -13,6 +13,7 @@ class AuditEvent:
     actor: str
     session_id: str
     seq_session: int
+    timestamp_ms: Optional[int] = None
     capture_id: Optional[int] = None
     capture_session_uuid: Optional[str] = None
 
@@ -30,7 +31,7 @@ class AuditEvent:
     sig: Optional[str] = None
     norm_sha256: Optional[str] = None
     norm_len: Optional[int] = None
-    screen_sig: Optional[str] = None
+    screen_sig: Optional[str] = None  # legado → semantic_sig
     screen_sample: Optional[str] = None
     key_b64: Optional[str] = None
     key_text: Optional[str] = None
@@ -46,6 +47,24 @@ class AuditEvent:
     screen_snapshot_ts_ms: Optional[int] = None
     screen_snapshot_age_ms: Optional[int] = None
     source: Optional[str] = None
+
+    # assinaturas canonicas (v0.3.19+) — TerminalEngine Python
+    text_sig: Optional[str] = None
+    visual_sig: Optional[str] = None
+    semantic_sig: Optional[str] = None
+    snapshot_version: Optional[str] = None
+    signature_version: Optional[str] = None
+    engine_version: Optional[str] = None
+    snapshot_compact: Optional[str] = None  # JSON serializado
+    diff: Optional[str] = None  # JSON serializado
+    base_seq_global: Optional[int] = None
+    checkpoint_seq_global: Optional[int] = None
+    comparison_mode: Optional[str] = None  # visual|text|semantic|hybrid
+
+    # assinaturas esperadas em eventos deterministicos
+    expected_text_sig: Optional[str] = None
+    expected_visual_sig: Optional[str] = None
+    expected_semantic_sig: Optional[str] = None
 
     # capture compliance evidence
     entry_mode: Optional[str] = None
@@ -67,3 +86,7 @@ class AuditEvent:
     prev_hash: str = ""
     hash: str = ""
     hmac: str = ""
+
+    def __post_init__(self) -> None:
+        if self.timestamp_ms is None:
+            self.timestamp_ms = int(self.ts_ms or 0)

@@ -3,7 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const vt = require('../../gateway/control/static/js/virtual_terminal.cjs');
+const vt = require('../oracles/virtual_terminal.cjs');
 
 function normalizeSnapshot(snapshot) {
   return {

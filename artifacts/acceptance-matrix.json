@@ -1,0 +1,112 @@
+[
+  {
+    "id": "phase-01-comparison",
+    "description": "Canonical visual/text/semantic/hybrid comparison without silent visual fallback",
+    "test": "tests/acceptance/test_comparison_operational.py",
+    "gate": "scripts/acceptance/run-phase-01-comparison.sh",
+    "production_files": ["gateway/dakota_terminal/comparison.py", "gateway/dakota_gateway/replay.py"],
+    "initial_state": "visual could silently fall back to hybrid in replay",
+    "final_state": "visual/text/semantic compare only requested signatures; hybrid selects one common level",
+    "evidence": "phase 01 gate passed"
+  },
+  {
+    "id": "phase-02-diffs",
+    "description": "Diff protocol validation and safe application with sequential identity",
+    "test": "tests/acceptance/test_diff_protocol_adversarial.py",
+    "gate": "scripts/acceptance/run-phase-02-diffs.sh",
+    "production_files": ["gateway/dakota_terminal/diffs.py"],
+    "initial_state": "validate_diff accepted false final signatures",
+    "final_state": "validate_diff rejects invalid base, sequence, geometry, coordinates and final signatures before apply",
+    "evidence": "phase 02 gate passed"
+  },
+  {
+    "id": "phase-03-sessions",
+    "description": "Strict-global session state isolation",
+    "test": "tests/acceptance/test_strict_global_session_isolation.py",
+    "gate": "scripts/acceptance/run-phase-03-sessions.sh",
+    "production_files": ["gateway/dakota_gateway/replay.py"],
+    "initial_state": "session metadata could depend on shared ReplayConfig",
+    "final_state": "session_start derives independent per-session ReplayConfig and SessionReplayState contract exists",
+    "evidence": "phase 03 gate passed"
+  },
+  {
+    "id": "phase-04-snapshots-gateway",
+    "description": "Distinct canonical/render snapshots and persisted OUT event fields",
+    "test": "tests/acceptance/test_snapshot_contracts.py; tests/acceptance/test_gateway_persisted_out_event.py; tests/acceptance/test_public_api_and_engine_decoder_contract.py",
+    "gate": "scripts/acceptance/run-phase-04-snapshots-gateway.sh",
+    "production_files": ["gateway/dakota_terminal/snapshot.py", "gateway/dakota_gateway/schema.py"],
+    "initial_state": "snapshot contracts were generic dict helpers",
+    "final_state": "CanonicalSnapshot and RenderSnapshot are distinct dataclasses with separate encoders/decoders; TerminalEngine uses TerminalDecoder through the public engine path",
+    "evidence": "phase 04 gate passed"
+  },
+  {
+    "id": "phase-05-payload-frontend",
+    "description": "Single payload event collection and hostile frontend payload rejection",
+    "test": "tests/acceptance/test_payload_no_duplication.py; tests/js/acceptance/terminal_payload_adversarial.test.mjs; tests/js/acceptance/playback_event_references.test.mjs",
+    "gate": "scripts/acceptance/run-phase-05-payload-frontend.sh",
+    "production_files": ["gateway/control/services/session_replay_service.py", "gateway/control/static/js/components/terminal_snapshot_renderer.js"],
+    "initial_state": "frontend validation was permissive and payload refs helper was absent",
+    "final_state": "reference payload helper and strict canonical JS validation added",
+    "evidence": "phase 05 gate passed"
+  },
+  {
+    "id": "phase-06-decoder-fixture",
+    "description": "Structured decoder warnings and raw fixture byte length contract",
+    "test": "tests/acceptance/test_decoder_warning_contract.py; tests/acceptance/test_raw_capture8_pipeline.py",
+    "gate": "scripts/acceptance/run-phase-06-decoder-fixture.sh",
+    "production_files": ["gateway/dakota_terminal/decoder.py"],
+    "initial_state": "decoder warnings lacked full structured TerminalDecoder contract",
+    "final_state": "TerminalDecoder records session, sequence, direction, encoding and bytes in hex/base64",
+    "evidence": "phase 06 gate passed"
+  },
+  {
+    "id": "phase-07-runner",
+    "description": "Finite acceptance runner and real Chromium renderer validation without skips",
+    "test": "tests/acceptance/test_runner_contract.py; tests/test_terminal_snapshot_css_contract.py",
+    "gate": "scripts/acceptance/run-phase-07-visual-runner.sh",
+    "production_files": ["scripts/acceptance/_gate_lib.sh", "scripts/test.sh", "gateway/control/static/js/components/replay_snapshot_state.test.mjs"],
+    "initial_state": "acceptance runner was absent, two renderer state tests were skipped and extracted package gates depended on caller PYTHONPATH",
+    "final_state": "runner records duration/exit/timeout, exports gateway PYTHONPATH, renderer state tests execute real assertions and Chromium pixel test is mandatory",
+    "evidence": "phase 07 gate passed"
+  },
+  {
+    "id": "phase-08-full-final-gate",
+    "description": "Full final gate executes all phase gates, hash check, acceptance tests, test-all, packaging and tarball inspection",
+    "test": "tests/acceptance/test_runner_contract.py; tests/test_packaging_contract.py",
+    "gate": "scripts/acceptance/run-phase-08-full.sh",
+    "production_files": ["scripts/acceptance/run-phase-08-full.sh", "scripts/build-tarball.sh"],
+    "initial_state": "final gate did not directly package and inspect the tarball",
+    "final_state": "final gate builds the official tarball, lists it, verifies acceptance artifacts and rejects forbidden entries",
+    "evidence": "phase 08 final gate passed with packaging and tarball-inspection steps"
+  },
+  {
+    "id": "manual-validation",
+    "description": "Synthetic manual replay validation with resize, reverse, background spaces, split UTF-8, split emoji, split RIS, seek and adversarial diff checks",
+    "test": "tests/test_manual_validation.py",
+    "gate": "scripts/acceptance/run-phase-08-full.sh",
+    "production_files": ["gateway/control/services/session_replay_service.py", "gateway/dakota_terminal/diffs.py", "gateway/dakota_terminal/engine.py"],
+    "initial_state": "manual validation contract was not summarized with objective measurements",
+    "final_state": "manual validation reports geometry, signatures, diff counts, payload bytes and rejection checks",
+    "evidence": "tests/test_manual_validation.py passed 15 tests"
+  },
+  {
+    "id": "packaging-cleanliness",
+    "description": "Official package excludes local state, credentials, caches, raw logs and nested tarballs while including acceptance tests and summarized final reports",
+    "test": "tests/test_packaging_contract.py",
+    "gate": "scripts/acceptance/run-phase-08-full.sh",
+    "production_files": ["scripts/build-tarball.sh"],
+    "initial_state": "rebuilt package lacked scripts/acceptance and packaging was not inspected inside the final gate",
+    "final_state": "package contains acceptance scripts/tests/baseline, final report JSON/Markdown, manual validation JSON and log summary JSON; tarball inspection rejects forbidden entries",
+    "evidence": "tarball-inspection passed; forbidden-entry scan found 0 matches"
+  },
+  {
+    "id": "final-report",
+    "description": "Final report and machine-readable results contain phase results, durations, hashes, manual validation, package metadata, process audit and extracted-package validation logs",
+    "test": "python -m json.tool artifacts/final-acceptance-results.json; python -m json.tool artifacts/acceptance-matrix.json",
+    "gate": "scripts/acceptance/run-phase-08-full.sh",
+    "production_files": ["artifacts/final-acceptance-report.md", "artifacts/final-acceptance-results.json", "artifacts/acceptance-matrix.json"],
+    "initial_state": "final report omitted some required evidence fields and used a separate external-only section",
+    "final_state": "final report records all final-gate evidence and summarized logs; final report artifacts are packaged",
+    "evidence": "JSON artifacts validate; exact final tarball path and hash are recorded in final-acceptance-report.md and final-acceptance-results.json"
+  }
+]

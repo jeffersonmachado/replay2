@@ -1,0 +1,6 @@
+[acceptance] START name=phase02-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_diff_protocol_adversarial.py tests/test_diff_validation.py
+....................................                                     [100%]
+36 passed in 0.50s
+[acceptance] END name=phase02-pytest duration=1s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+exit_code=0

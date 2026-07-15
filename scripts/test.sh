@@ -42,6 +42,11 @@ cd "$ROOT_DIR"
 # ── Constantes ──────────────────────────────────────────────────────────────
 JS_VT_TEST="gateway/control/static/js/virtual_terminal.test.mjs"
 JS_TIMELINE_TEST="gateway/control/static/js/components/capture_replay_timeline.test.mjs"
+JS_RENDERER_TEST="gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs"
+JS_REPLAY_STATE_TEST="gateway/control/static/js/components/replay_snapshot_state.test.mjs"
+JS_CHECKPOINT_SEEK_TEST="gateway/control/static/js/components/checkpoint_seek.test.mjs"
+JS_TEMPLATE_SYNTAX_TEST="gateway/control/static/js/components/template_syntax.test.mjs"
+JS_PRODUCTION_CHECK_TEST="gateway/control/static/js/components/production_no_terminal_parser.test.mjs"
 PYTEST_DIR="tests/"
 GW_PYTEST_DIR="gateway/tests/"
 TCL_TEST="tests/all.tcl"
@@ -68,6 +73,7 @@ REMOTE_PORT="8080"
 HAS_ARGS=0  # rastreia se o usuario passou argumentos explicitos
 HAS_SUITE_ARGS=0  # rastreia se o usuario selecionou suites explicitamente
 DRY_RUN="${DAKOTA_TEST_SH_DRY_RUN:-0}"
+BLOCK_TIMEOUT="${DAKOTA_TEST_SH_TIMEOUT:-300}"
 
 # ── Cores ───────────────────────────────────────────────────────────────────
 ESC_GREEN='\033[0;32m'
@@ -85,6 +91,51 @@ banner() {
   printf "${ESC_BOLD}=== %s ===${ESC_RESET}\n" "$1"
 }
 
+run_with_timeout_pg() {
+  local timeout_s="$1"
+  shift
+  setsid "$@" &
+  local pid=$!
+  local pgid start deadline descendants child
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  [ -n "$pgid" ] || pgid="$pid"
+  start=$(date +%s)
+  deadline=$((start + timeout_s))
+  printf "  pid=%s pgid=%s timeout=%ss\n" "$pid" "$pgid" "$timeout_s"
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      descendants="$(collect_descendants "$pid" || true)"
+      kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      for child in $descendants; do
+        kill -TERM "$child" 2>/dev/null || true
+      done
+      sleep 2
+      descendants="$descendants $(collect_descendants "$pid" || true)"
+      kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+      for child in $descendants; do
+        kill -KILL "$child" 2>/dev/null || true
+      done
+      wait "$pid" 2>/dev/null || true
+      for child in $descendants; do
+        wait "$child" 2>/dev/null || true
+      done
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
+collect_descendants() {
+  local root="$1"
+  local direct child
+  direct="$(pgrep -P "$root" 2>/dev/null || true)"
+  for child in $direct; do
+    printf '%s\n' "$child"
+    collect_descendants "$child"
+  done
+}
+
 run_block() {
   local label="$1"
   shift
@@ -99,15 +150,43 @@ run_block() {
     PASS_COUNT=$((PASS_COUNT + 1))
     return 0
   fi
-  if "$@"; then
+  set +e
+  run_with_timeout_pg "$BLOCK_TIMEOUT" "$@"
+  local rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
     printf "  ${ESC_GREEN}[PASS]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
     PASS_COUNT=$((PASS_COUNT + 1))
     return 0
   else
-    printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss, timeout=%ss)\n" "$label" "$(( $(date +%s) - start_ts ))" "$BLOCK_TIMEOUT"
+    else
+      printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
+    fi
     FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi
+}
+
+require_mandatory_file() {
+  local path="$1"
+  if [ -f "$path" ]; then
+    return 0
+  fi
+  printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (arquivo obrigatório não encontrado)\n" "$path"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  return 1
+}
+
+require_mandatory_dir() {
+  local path="$1"
+  if [ -d "$path" ]; then
+    return 0
+  fi
+  printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (diretório obrigatório não encontrado)\n" "$path"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  return 1
 }
 
 pytest_args() {
@@ -213,20 +292,43 @@ printf "Modo: %s\n" "$([ "$FLAG_CI" = "1" ] && echo 'CI' || echo 'completo')"
 printf "Host remoto: %s:%s\n" "$REMOTE_HOST" "$REMOTE_PORT"
 echo ""
 
+if [ -n "${DAKOTA_TEST_SH_SELFTEST_CMD:-}" ]; then
+  FLAG_JS=0
+  FLAG_PYTHON=0
+  FLAG_TCL=0
+  FLAG_CAPTURE=0
+  FLAG_REPLAY=0
+  FLAG_INTEGRATION=0
+  FLAG_SMOKE=0
+  banner "Runner selftest"
+  run_block "Runner: selftest" bash -c "$DAKOTA_TEST_SH_SELFTEST_CMD" || true
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Bloco 1: JavaScript
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$FLAG_JS" = "1" ]; then
   banner "1. JavaScript"
-  if [ -f "$JS_VT_TEST" ]; then
+  if require_mandatory_file "$JS_VT_TEST"; then
     run_block "JS: virtual_terminal" node --test "$JS_VT_TEST" || true
-  else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} %s (arquivo não encontrado)\n" "$JS_VT_TEST"
   fi
-  if [ -f "$JS_TIMELINE_TEST" ]; then
+  if require_mandatory_file "$JS_TIMELINE_TEST"; then
     run_block "JS: capture_replay_timeline" node --test "$JS_TIMELINE_TEST" || true
-  else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} %s (arquivo não encontrado)\n" "$JS_TIMELINE_TEST"
+  fi
+  if require_mandatory_file "$JS_RENDERER_TEST"; then
+    run_block "JS: terminal_snapshot_renderer" node --test "$JS_RENDERER_TEST" || true
+  fi
+  if require_mandatory_file "$JS_REPLAY_STATE_TEST"; then
+    run_block "JS: replay_snapshot_state" node --test "$JS_REPLAY_STATE_TEST" || true
+  fi
+  if require_mandatory_file "$JS_CHECKPOINT_SEEK_TEST"; then
+    run_block "JS: checkpoint_seek" node --test "$JS_CHECKPOINT_SEEK_TEST" || true
+  fi
+  if require_mandatory_file "$JS_TEMPLATE_SYNTAX_TEST"; then
+    run_block "JS: template_syntax" node --test "$JS_TEMPLATE_SYNTAX_TEST" || true
+  fi
+  if require_mandatory_file "$JS_PRODUCTION_CHECK_TEST"; then
+    run_block "JS: production_no_terminal_parser" node --test "$JS_PRODUCTION_CHECK_TEST" || true
   fi
   echo ""
 fi
@@ -237,18 +339,14 @@ fi
 if [ "$FLAG_PYTHON" = "1" ]; then
   banner "2. Python"
 
-  if [ -d "$PYTEST_DIR" ]; then
+  if require_mandatory_dir "$PYTEST_DIR"; then
     run_block "Python: tests/" \
       sh -c "PYTHONPATH=gateway python3 -m pytest $(pytest_args) -q $PYTEST_DIR" || true
-  else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} tests/ (diretório não encontrado)\n"
   fi
 
-  if [ -d "$GW_PYTEST_DIR" ]; then
+  if require_mandatory_dir "$GW_PYTEST_DIR"; then
     run_block "Python: gateway/tests/" \
       sh -c "PYTHONPATH=gateway python3 -m pytest $(pytest_args) -q $GW_PYTEST_DIR" || true
-  else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} gateway/tests/ (diretório não encontrado)\n"
   fi
   echo ""
 fi
@@ -258,10 +356,8 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$FLAG_TCL" = "1" ]; then
   banner "3. Tcl"
-  if [ -f "$TCL_TEST" ]; then
+  if require_mandatory_file "$TCL_TEST"; then
     run_block "Tcl: all.tcl" tclsh "$TCL_TEST" || true
-  else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} %s (arquivo não encontrado)\n" "$TCL_TEST"
   fi
   echo ""
 fi
@@ -296,18 +392,14 @@ fi
 if [ "$FLAG_SMOKE" = "1" ]; then
   banner "6. Smoke (remoto)"
   if [ "$REMOTE" = "1" ]; then
-    if [ -f "$SMOKE_SCRIPT" ]; then
+    if require_mandatory_file "$SMOKE_SCRIPT"; then
       run_block "Smoke: capture" python3 "$SMOKE_SCRIPT" --host "$REMOTE_HOST" --port "$REMOTE_PORT" || true
-    else
-      printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} %s (script não encontrado)\n" "$SMOKE_SCRIPT"
     fi
-    if [ -f "$REPLAY_SMOKE_SCRIPT" ]; then
+    if require_mandatory_file "$REPLAY_SMOKE_SCRIPT"; then
       run_block "Smoke: replay" python3 "$REPLAY_SMOKE_SCRIPT" --host "$REMOTE_HOST" --port "$REMOTE_PORT" || true
-    else
-      printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} %s (script não encontrado)\n" "$REPLAY_SMOKE_SCRIPT"
     fi
   else
-    printf "  ${ESC_YELLOW}[SKIP]${ESC_RESET} Smoke tests requerem --remote\n"
+    printf "  ${ESC_YELLOW}[INFO]${ESC_RESET} Smoke remoto não selecionado; use --remote para executar contra host externo\n"
   fi
   echo ""
 fi

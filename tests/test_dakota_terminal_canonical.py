@@ -100,10 +100,17 @@ class DakotaTerminalCanonicalTests(unittest.TestCase):
         snap = build_screen_snapshot_from_bytes(b"\x1b[7mA ", rows=1, cols=2)
         self.assertTrue(snap.text_sig.startswith("sha256:"))
         self.assertTrue(snap.visual_sig.startswith("sha256:"))
-        self.assertEqual(snap.semantic_sig, snap.screen_sig)
+        # semantic_sig agora e a canonica do TerminalEngine (sha256:...)
+        self.assertTrue(snap.semantic_sig.startswith("sha256:"),
+                       f"semantic_sig deve ser canonica, nao: {snap.semantic_sig[:30]}")
+        # screen_sig permanece legado
+        self.assertNotEqual(snap.semantic_sig, snap.screen_sig,
+                           "semantic_sig canonica NAO deve ser igual ao screen_sig legado")
         state = TerminalScreenState(rows=1, cols=2)
         state.feed_bytes(b"\x1b[7mA ")
-        self.assertEqual(state.snapshot().canonical_snapshot["visual_sig"], snap.visual_sig)
+        state_snap = state.snapshot()
+        self.assertTrue(state_snap.semantic_sig.startswith("sha256:"))
+        self.assertEqual(state_snap.canonical_snapshot["visual_sig"], snap.visual_sig)
 
     def test_python_and_javascript_match_all_shared_vectors(self):
         vector_paths = sorted(VECTORS.glob("*.json"))

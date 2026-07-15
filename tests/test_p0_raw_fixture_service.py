@@ -76,15 +76,21 @@ class RawFixtureServiceTests(unittest.TestCase):
         tl = result.get("timeline", [])
         self.assertGreater(len(tl), 0, "timeline deve ter eventos")
 
-        # Playback com data_b64
+        # Playback com diff/snapshot_compact (protocolo eficiente)
         pb = result.get("playback", {})
         pb_events = pb.get("events", [])
         self.assertGreater(len(pb_events), 0, "playback deve ter eventos")
 
         out_events = [e for e in pb_events if e.get("direction") == "out"]
         if out_events:
-            self.assertIn("data_b64", out_events[0], "data_b64 presente no playback")
-            self.assertNotEqual(out_events[0]["data_b64"], "")
+            # Playback eficiente: diff em eventos normais, snapshot_compact em checkpoints
+            ev = out_events[0]
+            has_diff = "diff" in ev and ev["diff"] is not None
+            has_checkpoint = "snapshot_compact" in ev
+            self.assertTrue(has_diff or has_checkpoint,
+                f"playback OUT deve ter diff ou snapshot_compact, tem: {list(ev.keys())}")
+            self.assertIn("text_sig", ev, "text_sig presente no playback")
+            self.assertIn("visual_sig", ev, "visual_sig presente no playback")
 
     def test_geometry_from_metadata_has_priority(self):
         """Metadados do session_start tem prioridade sobre resize."""

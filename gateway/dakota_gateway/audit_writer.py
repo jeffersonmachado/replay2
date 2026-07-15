@@ -99,6 +99,8 @@ class AuditWriter:
 
     def append(self, ev: AuditEvent) -> AuditEvent:
         ev.v = "v1"
+        if ev.timestamp_ms is None:
+            ev.timestamp_ms = int(ev.ts_ms or 0)
 
         fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX)
         try:
@@ -174,4 +176,3 @@ def write_manifest(jsonl_path: str) -> None:
 
 def b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
-

@@ -1,0 +1,1148 @@
+[acceptance] START name=phase-01-comparison timeout=120s command=bash scripts/acceptance/run-phase-01-comparison.sh
+[acceptance] START name=phase01-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_comparison_operational.py tests/test_comparison_modes.py
+...........................                                              [100%]
+27 passed in 0.15s
+[acceptance] END name=phase01-pytest duration=0s exit_code=0 timeout=false
+[acceptance] START name=phase01-structural timeout=30s command=bash -c ! rg -n "if not has_canonical and mode == .visual.|mode = .hybrid.  # fallback automatico|got == expected_sig|signature_now\\(\\).*==|== expected_sig" gateway/dakota_gateway/replay.py gateway/dakota_gateway/replay_control.py
+[acceptance] END name=phase01-structural duration=1s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-01-comparison duration=1s exit_code=0 timeout=false
+[acceptance] START name=phase-02-diffs timeout=120s command=bash scripts/acceptance/run-phase-02-diffs.sh
+[acceptance] START name=phase02-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_diff_protocol_adversarial.py tests/test_diff_validation.py
+....................................                                     [100%]
+36 passed in 0.65s
+[acceptance] END name=phase02-pytest duration=1s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-02-diffs duration=1s exit_code=0 timeout=false
+[acceptance] START name=phase-03-sessions timeout=120s command=bash scripts/acceptance/run-phase-03-sessions.sh
+[acceptance] START name=phase03-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_strict_global_session_isolation.py tests/test_scanner_and_isolation.py
+..........................                                               [100%]
+26 passed in 0.19s
+[acceptance] END name=phase03-pytest duration=1s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-03-sessions duration=1s exit_code=0 timeout=false
+[acceptance] START name=phase-04-snapshots-gateway timeout=120s command=bash scripts/acceptance/run-phase-04-snapshots-gateway.sh
+[acceptance] START name=phase04-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_snapshot_contracts.py tests/acceptance/test_gateway_persisted_out_event.py tests/acceptance/test_public_api_and_engine_decoder_contract.py
+.....                                                                    [100%]
+5 passed in 0.06s
+[acceptance] END name=phase04-pytest duration=0s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-04-snapshots-gateway duration=0s exit_code=0 timeout=false
+[acceptance] START name=phase-05-payload-frontend timeout=120s command=bash scripts/acceptance/run-phase-05-payload-frontend.sh
+[acceptance] START name=phase05-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_payload_no_duplication.py
+..                                                                       [100%]
+2 passed in 0.06s
+[acceptance] END name=phase05-pytest duration=0s exit_code=0 timeout=false
+[acceptance] START name=phase05-node timeout=120s command=node --test tests/js/acceptance/terminal_payload_adversarial.test.mjs tests/js/acceptance/playback_event_references.test.mjs
+TAP version 13
+# Subtest: timeline and playback payloads use event_refs instead of duplicating full events
+ok 1 - timeline and playback payloads use event_refs instead of duplicating full events
+  ---
+  duration_ms: 1.820836
+  ...
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# Subtest: snapshot validation rejects hostile numeric shapes before allocation
+ok 2 - snapshot validation rejects hostile numeric shapes before allocation
+  ---
+  duration_ms: 3.398233
+  ...
+# Subtest: diff validation rejects hostile sequence, resize and coordinate payloads
+ok 3 - diff validation rejects hostile sequence, resize and coordinate payloads
+  ---
+  duration_ms: 0.603449
+  ...
+# Subtest: applyDiff refuses to copy declared signatures blindly
+ok 4 - applyDiff refuses to copy declared signatures blindly
+  ---
+  duration_ms: 1.352072
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 77.879537
+[acceptance] END name=phase05-node duration=0s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-05-payload-frontend duration=0s exit_code=0 timeout=false
+[acceptance] START name=phase-06-decoder-fixture timeout=120s command=bash scripts/acceptance/run-phase-06-decoder-fixture.sh
+[acceptance] START name=phase06-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_decoder_warning_contract.py tests/acceptance/test_raw_capture8_pipeline.py
+..                                                                       [100%]
+2 passed in 0.05s
+[acceptance] END name=phase06-pytest duration=1s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-06-decoder-fixture duration=1s exit_code=0 timeout=false
+[acceptance] START name=phase-07-visual-runner timeout=120s command=bash scripts/acceptance/run-phase-07-visual-runner.sh
+[acceptance] START name=phase07-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_runner_contract.py tests/test_test_runner_script.py tests/test_terminal_snapshot_css_contract.py
+..............                                                           [100%]
+14 passed in 1.40s
+[acceptance] END name=phase07-pytest duration=2s exit_code=0 timeout=false
+[acceptance] START name=phase07-js timeout=120s command=node --test gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs gateway/control/static/js/components/replay_snapshot_state.test.mjs
+TAP version 13
+# Subtest: factory creates ReplaySnapshotState
+ok 1 - factory creates ReplaySnapshotState
+  ---
+  duration_ms: 2.325997
+  ...
+# Subtest: initial state is not initialized
+ok 2 - initial state is not initialized
+  ---
+  duration_ms: 0.37144
+  ...
+# Subtest: loadInitialSnapshot succeeds with valid payload
+ok 3 - loadInitialSnapshot succeeds with valid payload
+  ---
+  duration_ms: 0.690283
+  ...
+# Subtest: loadInitialSnapshot fails with null
+ok 4 - loadInitialSnapshot fails with null
+  ---
+  duration_ms: 0.389446
+  ...
+# Subtest: loadInitialSnapshot fails with invalid payload
+ok 5 - loadInitialSnapshot fails with invalid payload
+  ---
+  duration_ms: 0.482808
+  ...
+# Subtest: applyCheckpoint replaces state
+ok 6 - applyCheckpoint replaces state
+  ---
+  duration_ms: 0.999423
+  ...
+# Subtest: applyCheckpoint fails with null
+ok 7 - applyCheckpoint fails with null
+  ---
+  duration_ms: 0.570665
+  ...
+# Subtest: applyEventDiff applies cell change
+ok 8 - applyEventDiff applies cell change
+  ---
+  duration_ms: 1.12103
+  ...
+# Subtest: applyEventDiff rejects null diff
+ok 9 - applyEventDiff rejects null diff
+  ---
+  duration_ms: 0.527181
+  ...
+# Subtest: applyEventDiff rejects base_seq_global mismatch
+ok 10 - applyEventDiff rejects base_seq_global mismatch
+  ---
+  duration_ms: 0.518337
+  ...
+# Subtest: applyEventDiff rejects base_text_sig mismatch
+ok 11 - applyEventDiff rejects base_text_sig mismatch
+  ---
+  duration_ms: 0.317009
+  ...
+# Subtest: applyEventDiff only called once per event
+ok 12 - applyEventDiff only called once per event
+  ---
+  duration_ms: 0.197379
+  ...
+# Subtest: checkpoint + diffs produces correct final state
+ok 13 - checkpoint + diffs produces correct final state
+  ---
+  duration_ms: 0.189064
+  ...
+# Subtest: geometry change via checkpoint preserves cells
+ok 14 - geometry change via checkpoint preserves cells
+  ---
+  duration_ms: 0.116379
+  ...
+# Subtest: renderHtml returns HTML string
+ok 15 - renderHtml returns HTML string
+  ---
+  duration_ms: 0.173627
+  ...
+# Subtest: renderText returns text preserving geometry
+ok 16 - renderText returns text preserving geometry
+  ---
+  duration_ms: 0.141555
+  ...
+# Subtest: clone produces independent copy
+ok 17 - clone produces independent copy
+  ---
+  duration_ms: 0.162267
+  ...
+# Subtest: reset clears all state
+ok 18 - reset clears all state
+  ---
+  duration_ms: 0.11218
+  ...
+# Subtest: textSig and visualSig reflect current state
+ok 19 - textSig and visualSig reflect current state
+  ---
+  duration_ms: 0.114709
+  ...
+# decodeSnapshotPayload: payload invalido
+# Subtest: validateSnapshotPayload accepts valid snapshot
+ok 20 - validateSnapshotPayload accepts valid snapshot
+  ---
+  duration_ms: 3.316125
+  ...
+# Subtest: validateSnapshotPayload rejects null
+ok 21 - validateSnapshotPayload rejects null
+  ---
+  duration_ms: 0.447273
+  ...
+# Subtest: validateSnapshotPayload rejects missing cells/runs
+ok 22 - validateSnapshotPayload rejects missing cells/runs
+  ---
+  duration_ms: 0.411928
+  ...
+# Subtest: validateSnapshotPayload rejects huge geometry
+ok 23 - validateSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 0.393429
+  ...
+# Subtest: validateSnapshotPayload rejects zero rows
+ok 24 - validateSnapshotPayload rejects zero rows
+  ---
+  duration_ms: 0.239213
+  ...
+# Subtest: validateSnapshotPayload rejects negative cols
+ok 25 - validateSnapshotPayload rejects negative cols
+  ---
+  duration_ms: 0.206557
+  ...
+# Subtest: validateSnapshotPayload rejects float rows
+ok 26 - validateSnapshotPayload rejects float rows
+  ---
+  duration_ms: 0.235375
+  ...
+# Subtest: decodeSnapshotPayload handles compact format
+ok 27 - decodeSnapshotPayload handles compact format
+  ---
+  duration_ms: 0.739954
+  ...
+# Subtest: decodeSnapshotPayload handles cells directly
+ok 28 - decodeSnapshotPayload handles cells directly
+  ---
+  duration_ms: 1.001241
+  ...
+# Subtest: decodeSnapshotPayload rejects huge geometry
+ok 29 - decodeSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 3.033534
+  ...
+# Subtest: applyDiff applies cell changes
+ok 30 - applyDiff applies cell changes
+  ---
+  duration_ms: 1.776231
+  ...
+# Subtest: applyDiff updates text_sig and visual_sig
+ok 31 - applyDiff updates text_sig and visual_sig
+  ---
+  duration_ms: 0.370004
+  ...
+# Subtest: applyDiff handles geometry change
+ok 32 - applyDiff handles geometry change
+  ---
+  duration_ms: 0.214978
+  ...
+# Subtest: cloneSnapshot deep copies cells
+ok 33 - cloneSnapshot deep copies cells
+  ---
+  duration_ms: 0.194682
+  ...
+# Subtest: renderSnapshotToHtml produces spans with classes
+ok 34 - renderSnapshotToHtml produces spans with classes
+  ---
+  duration_ms: 0.473147
+  ...
+# Subtest: renderSnapshotToHtml groups consecutive same-attrs cells
+ok 35 - renderSnapshotToHtml groups consecutive same-attrs cells
+  ---
+  duration_ms: 0.181129
+  ...
+# Subtest: renderSnapshotToText preserves geometry
+ok 36 - renderSnapshotToText preserves geometry
+  ---
+  duration_ms: 0.235541
+  ...
+# Subtest: renderSnapshotToHtml handles empty snapshot
+ok 37 - renderSnapshotToHtml handles empty snapshot
+  ---
+  duration_ms: 0.085566
+  ...
+# Subtest: validateDiffPayload accepts valid diff
+ok 38 - validateDiffPayload accepts valid diff
+  ---
+  duration_ms: 0.092154
+  ...
+# Subtest: validateDiffPayload rejects invalid
+ok 39 - validateDiffPayload rejects invalid
+  ---
+  duration_ms: 0.084299
+  ...
+# Subtest: Unicode outside BMP not split into surrogate pairs
+ok 40 - Unicode outside BMP not split into surrogate pairs
+  ---
+  duration_ms: 0.185525
+  ...
+1..40
+# tests 40
+# suites 0
+# pass 40
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 123.702849
+[acceptance] END name=phase07-js duration=0s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+[acceptance] END name=phase-07-visual-runner duration=2s exit_code=0 timeout=false
+[acceptance] START name=acceptance-hash-check timeout=30s command=sha256sum -c artifacts/acceptance-test-baseline.sha256
+tests/acceptance/test_comparison_operational.py: OK
+tests/acceptance/test_decoder_warning_contract.py: OK
+tests/acceptance/test_diff_protocol_adversarial.py: OK
+tests/acceptance/test_gateway_persisted_out_event.py: OK
+tests/acceptance/test_payload_no_duplication.py: OK
+tests/acceptance/test_public_api_and_engine_decoder_contract.py: OK
+tests/acceptance/test_raw_capture8_pipeline.py: OK
+tests/acceptance/test_runner_contract.py: OK
+tests/acceptance/test_snapshot_contracts.py: OK
+tests/acceptance/test_strict_global_session_isolation.py: OK
+tests/js/acceptance/playback_event_references.test.mjs: OK
+tests/js/acceptance/terminal_payload_adversarial.test.mjs: OK
+[acceptance] END name=acceptance-hash-check duration=0s exit_code=0 timeout=false
+[acceptance] START name=python-acceptance timeout=120s command=python -m pytest -q tests/acceptance
+..........................................                               [100%]
+42 passed in 0.11s
+[acceptance] END name=python-acceptance duration=1s exit_code=0 timeout=false
+[acceptance] START name=js-acceptance timeout=120s command=node --test tests/js/acceptance/playback_event_references.test.mjs tests/js/acceptance/terminal_payload_adversarial.test.mjs
+TAP version 13
+# Subtest: timeline and playback payloads use event_refs instead of duplicating full events
+ok 1 - timeline and playback payloads use event_refs instead of duplicating full events
+  ---
+  duration_ms: 1.51451
+  ...
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# decodeSnapshotPayload: payload invalido
+# Subtest: snapshot validation rejects hostile numeric shapes before allocation
+ok 2 - snapshot validation rejects hostile numeric shapes before allocation
+  ---
+  duration_ms: 1.754068
+  ...
+# Subtest: diff validation rejects hostile sequence, resize and coordinate payloads
+ok 3 - diff validation rejects hostile sequence, resize and coordinate payloads
+  ---
+  duration_ms: 0.610738
+  ...
+# Subtest: applyDiff refuses to copy declared signatures blindly
+ok 4 - applyDiff refuses to copy declared signatures blindly
+  ---
+  duration_ms: 1.567568
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 85.508779
+[acceptance] END name=js-acceptance duration=0s exit_code=0 timeout=false
+[acceptance] START name=scripts-test-all timeout=300s command=bash scripts/test-all.sh
+
+[1m=== Replay2 — Suite de Testes ===[0m
+Modo: completo
+Host remoto: 10.5.8.24:8080
+
+[1m=== 1. JavaScript ===[0m
+[1m--- JS: virtual_terminal ---[0m
+  cmd: node --test gateway/control/static/js/virtual_terminal.test.mjs
+TAP version 13
+# Subtest: TEST 1 — reverse video does not create markers
+ok 1 - TEST 1 — reverse video does not create markers
+  ---
+  duration_ms: 3.330514
+  ...
+# Subtest: TEST 2 — reverse spaces preserved
+ok 2 - TEST 2 — reverse spaces preserved
+  ---
+  duration_ms: 0.723339
+  ...
+# Subtest: TEST 3 — empty lines preserved
+ok 3 - TEST 3 — empty lines preserved
+  ---
+  duration_ms: 2.18099
+  ...
+# Subtest: TEST 4 — ESC isolated between chunks
+ok 4 - TEST 4 — ESC isolated between chunks
+  ---
+  duration_ms: 2.075634
+  ...
+# Subtest: TEST 5 — CSI split in multiple points
+ok 5 - TEST 5 — CSI split in multiple points
+  ---
+  duration_ms: 1.04221
+  ...
+# Subtest: TEST 6 — DEC charset split
+ok 6 - TEST 6 — DEC charset split
+  ---
+  duration_ms: 1.155608
+  ...
+# Subtest: TEST 7 — CSI 2J does not move cursor
+ok 7 - TEST 7 — CSI 2J does not move cursor
+  ---
+  duration_ms: 1.095139
+  ...
+# Subtest: TEST 8 — CSI 0J, 1J and 2J
+ok 8 - TEST 8 — CSI 0J, 1J and 2J
+  ---
+  duration_ms: 0.811445
+  ...
+# Subtest: TEST 9 — CSI 0K, 1K and 2K
+ok 9 - TEST 9 — CSI 0K, 1K and 2K
+  ---
+  duration_ms: 0.756024
+  ...
+# Subtest: TEST 10 — scroll synchronized
+ok 10 - TEST 10 — scroll synchronized
+  ---
+  duration_ms: 0.575963
+  ...
+# Subtest: TEST 11 — fixed dimensions
+ok 11 - TEST 11 — fixed dimensions
+  ---
+  duration_ms: 0.546582
+  ...
+# Subtest: TEST 12 — timing
+ok 12 - TEST 12 — timing
+  ---
+  duration_ms: 0.241635
+  ...
+# Subtest: TEST 13 — grouping without duplication
+ok 13 - TEST 13 — grouping without duplication
+  ---
+  duration_ms: 0.708096
+  ...
+# Subtest: TEST 14 — one-byte events not discarded
+ok 14 - TEST 14 — one-byte events not discarded
+  ---
+  duration_ms: 0.311907
+  ...
+# Subtest: TEST 15 — snapshot not re-fed
+ok 15 - TEST 15 — snapshot not re-fed
+  ---
+  duration_ms: 0.118883
+  ...
+# Subtest: TEST 16 — same flow with different chunking
+ok 16 - TEST 16 — same flow with different chunking
+  ---
+  duration_ms: 4.410933
+  ...
+# Subtest: TEST 17 — wrapPending + LF no double advance
+ok 17 - TEST 17 — wrapPending + LF no double advance
+  ---
+  duration_ms: 0.321466
+  ...
+# Subtest: TEST 18 — RIS full terminal reset
+ok 18 - TEST 18 — RIS full terminal reset
+  ---
+  duration_ms: 0.828789
+  ...
+# Subtest: TEST 19 — IND index down
+ok 19 - TEST 19 — IND index down
+  ---
+  duration_ms: 0.282017
+  ...
+# Subtest: TEST 20 — NEL next line column zero
+ok 20 - TEST 20 — NEL next line column zero
+  ---
+  duration_ms: 0.218572
+  ...
+# Subtest: TEST 21 — SGR 2 means dim not bold-off
+ok 21 - TEST 21 — SGR 2 means dim not bold-off
+  ---
+  duration_ms: 0.295852
+  ...
+# Subtest: TEST 22 — SGR 22 resets bold and dim
+ok 22 - TEST 22 — SGR 22 resets bold and dim
+  ---
+  duration_ms: 0.279001
+  ...
+# Subtest: TEST 23 — feedBase64 handles UTF-8 split across two events
+ok 23 - TEST 23 — feedBase64 handles UTF-8 split across two events
+  ---
+  duration_ms: 0.48976
+  ...
+# Subtest: TEST 24 — feedBase64 handles 3-byte UTF-8 split
+ok 24 - TEST 24 — feedBase64 handles 3-byte UTF-8 split
+  ---
+  duration_ms: 0.268918
+  ...
+# Subtest: TEST 25 — feedBase64 handles 4-byte UTF-8 as one code point
+ok 25 - TEST 25 — feedBase64 handles 4-byte UTF-8 as one code point
+  ---
+  duration_ms: 0.331001
+  ...
+# Subtest: TEST 26 — feedBase64 with CP850 encoding
+ok 26 - TEST 26 — feedBase64 with CP850 encoding
+  ---
+  duration_ms: 0.577646
+  ...
+# Subtest: TEST 27 — feedBase64 with CP437 encoding
+ok 27 - TEST 27 — feedBase64 with CP437 encoding
+  ---
+  duration_ms: 0.61638
+  ...
+# Subtest: TEST 28 — feedBase64 with ISO-8859-1 encoding
+ok 28 - TEST 28 — feedBase64 with ISO-8859-1 encoding
+  ---
+  duration_ms: 0.259693
+  ...
+# Subtest: TEST 29 — renderSnapshot preserves cell attributes (reverse, fg, bg)
+ok 29 - TEST 29 — renderSnapshot preserves cell attributes (reverse, fg, bg)
+  ---
+  duration_ms: 8.822736
+  ...
+# Subtest: TEST 30 — renderSnapshotHtml produces spans with color classes
+ok 30 - TEST 30 — renderSnapshotHtml produces spans with color classes
+  ---
+  duration_ms: 5.795043
+  ...
+# Subtest: TEST 31 — TAB at column 0 goes to column 8
+ok 31 - TEST 31 — TAB at column 0 goes to column 8
+  ---
+  duration_ms: 0.285254
+  ...
+# Subtest: TEST 32 — TAB at column 7 goes to column 8
+ok 32 - TEST 32 — TAB at column 7 goes to column 8
+  ---
+  duration_ms: 0.238112
+  ...
+# Subtest: TEST 33 — TAB near last column stays within bounds
+ok 33 - TEST 33 — TAB near last column stays within bounds
+  ---
+  duration_ms: 0.110083
+  ...
+# Subtest: TEST 34 — text_sig differs for different geometries
+ok 34 - TEST 34 — text_sig differs for different geometries
+  ---
+  duration_ms: 0.347636
+  ...
+# Subtest: TEST 35 — visual_sig differs: A normal vs A reverse
+ok 35 - TEST 35 — visual_sig differs: A normal vs A reverse
+  ---
+  duration_ms: 0.231396
+  ...
+# Subtest: TEST 35b — browser sandbox signatures do not require node:crypto
+ok 36 - TEST 35b — browser sandbox signatures do not require node:crypto
+  ---
+  duration_ms: 6.531971
+  ...
+# Subtest: TEST 36 — SGR 28 resets hidden
+ok 37 - TEST 36 — SGR 28 resets hidden
+  ---
+  duration_ms: 0.560298
+  ...
+# Subtest: TEST 37 — SGR 25 resets blink
+ok 38 - TEST 37 — SGR 25 resets blink
+  ---
+  duration_ms: 0.308192
+  ...
+# Subtest: TEST 38 — createVirtualTerminal rejects invalid geometry before allocation
+ok 39 - TEST 38 — createVirtualTerminal rejects invalid geometry before allocation
+  ---
+  duration_ms: 29.237222
+  ...
+# Subtest: TEST 39 — CR then LF: CR returns to col 0, LF advances row
+ok 40 - TEST 39 — CR then LF: CR returns to col 0, LF advances row
+  ---
+  duration_ms: 0.194405
+  ...
+# Subtest: TEST 40 — LF in middle column: advances row, preserves column
+ok 41 - TEST 40 — LF in middle column: advances row, preserves column
+  ---
+  duration_ms: 0.152264
+  ...
+# Subtest: TEST 41 — RIS clears all SGR flags and decoder state
+ok 42 - TEST 41 — RIS clears all SGR flags and decoder state
+  ---
+  duration_ms: 0.933793
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 42
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 217.921153
+  [0;32m[PASS][0m JS: virtual_terminal (1s)
+[1m--- JS: capture_replay_timeline ---[0m
+  cmd: node --test gateway/control/static/js/components/capture_replay_timeline.test.mjs
+TAP version 13
+# Subtest: groups OUT events by proximity
+ok 1 - groups OUT events by proximity
+  ---
+  duration_ms: 1.957218
+  ...
+# Subtest: IN events create boundaries between groups
+ok 2 - IN events create boundaries between groups
+  ---
+  duration_ms: 0.23091
+  ...
+# Subtest: empty events array returns empty
+ok 3 - empty events array returns empty
+  ---
+  duration_ms: 0.204991
+  ...
+# Subtest: snapshot preserves geometry
+ok 4 - snapshot preserves geometry
+  ---
+  duration_ms: 2.508996
+  ...
+# Subtest: clear-screen produces empty snapshot (not discarded)
+ok 5 - clear-screen produces empty snapshot (not discarded)
+  ---
+  duration_ms: 11.771318
+  ...
+# Subtest: snapshot includes text_sig and visual_sig
+ok 6 - snapshot includes text_sig and visual_sig
+  ---
+  duration_ms: 2.316909
+  ...
+# Subtest: text_sig stable for same text, visual_sig changes with attributes
+ok 7 - text_sig stable for same text, visual_sig changes with attributes
+  ---
+  duration_ms: 2.71299
+  ...
+# Subtest: snapshot includes canonical cell data (snapshot field)
+ok 8 - snapshot includes canonical cell data (snapshot field)
+  ---
+  duration_ms: 0.527473
+  ...
+# Subtest: snapshot_html is present for terminal_snapshot
+ok 9 - snapshot_html is present for terminal_snapshot
+  ---
+  duration_ms: 2.086684
+  ...
+# Subtest: diff applies correctly between snapshots
+ok 10 - diff applies correctly between snapshots
+  ---
+  duration_ms: 1.07884
+  ...
+# Subtest: encoding UTF-8 split via snapshot works
+ok 11 - encoding UTF-8 split via snapshot works
+  ---
+  duration_ms: 0.87793
+  ...
+# Subtest: encoding CP850 via snapshot works
+ok 12 - encoding CP850 via snapshot works
+  ---
+  duration_ms: 0.772199
+  ...
+# Subtest: grouped snapshot preserves chunks via snapshot
+ok 13 - grouped snapshot preserves chunks via snapshot
+  ---
+  duration_ms: 6.557851
+  ...
+# Subtest: grouped three events via snapshot works
+ok 14 - grouped three events via snapshot works
+  ---
+  duration_ms: 10.330124
+  ...
+# Subtest: detailed display decodes UTF-8 and falls back unknown encoding to UTF-8
+ok 15 - detailed display decodes UTF-8 and falls back unknown encoding to UTF-8
+  ---
+  duration_ms: 1.046936
+  ...
+# Subtest: detailed display decodes CP850 and CP437 without browser TextDecoder support
+ok 16 - detailed display decodes CP850 and CP437 without browser TextDecoder support
+  ---
+  duration_ms: 0.593973
+  ...
+# Subtest: detailed display sanitizes ANSI after decoding
+ok 17 - detailed display sanitizes ANSI after decoding
+  ---
+  duration_ms: 0.392303
+  ...
+1..17
+# tests 17
+# suites 0
+# pass 17
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 134.191357
+  [0;32m[PASS][0m JS: capture_replay_timeline (0s)
+[1m--- JS: terminal_snapshot_renderer ---[0m
+  cmd: node --test gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs
+TAP version 13
+# decodeSnapshotPayload: payload invalido
+# Subtest: validateSnapshotPayload accepts valid snapshot
+ok 1 - validateSnapshotPayload accepts valid snapshot
+  ---
+  duration_ms: 4.189326
+  ...
+# Subtest: validateSnapshotPayload rejects null
+ok 2 - validateSnapshotPayload rejects null
+  ---
+  duration_ms: 0.142455
+  ...
+# Subtest: validateSnapshotPayload rejects missing cells/runs
+ok 3 - validateSnapshotPayload rejects missing cells/runs
+  ---
+  duration_ms: 0.154845
+  ...
+# Subtest: validateSnapshotPayload rejects huge geometry
+ok 4 - validateSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 0.112806
+  ...
+# Subtest: validateSnapshotPayload rejects zero rows
+ok 5 - validateSnapshotPayload rejects zero rows
+  ---
+  duration_ms: 0.124657
+  ...
+# Subtest: validateSnapshotPayload rejects negative cols
+ok 6 - validateSnapshotPayload rejects negative cols
+  ---
+  duration_ms: 0.107684
+  ...
+# Subtest: validateSnapshotPayload rejects float rows
+ok 7 - validateSnapshotPayload rejects float rows
+  ---
+  duration_ms: 0.114153
+  ...
+# Subtest: decodeSnapshotPayload handles compact format
+ok 8 - decodeSnapshotPayload handles compact format
+  ---
+  duration_ms: 0.32026
+  ...
+# Subtest: decodeSnapshotPayload handles cells directly
+ok 9 - decodeSnapshotPayload handles cells directly
+  ---
+  duration_ms: 0.31714
+  ...
+# Subtest: decodeSnapshotPayload rejects huge geometry
+ok 10 - decodeSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 0.86239
+  ...
+# Subtest: applyDiff applies cell changes
+ok 11 - applyDiff applies cell changes
+  ---
+  duration_ms: 0.528069
+  ...
+# Subtest: applyDiff updates text_sig and visual_sig
+ok 12 - applyDiff updates text_sig and visual_sig
+  ---
+  duration_ms: 0.112808
+  ...
+# Subtest: applyDiff handles geometry change
+ok 13 - applyDiff handles geometry change
+  ---
+  duration_ms: 0.143712
+  ...
+# Subtest: cloneSnapshot deep copies cells
+ok 14 - cloneSnapshot deep copies cells
+  ---
+  duration_ms: 0.085201
+  ...
+# Subtest: renderSnapshotToHtml produces spans with classes
+ok 15 - renderSnapshotToHtml produces spans with classes
+  ---
+  duration_ms: 0.264098
+  ...
+# Subtest: renderSnapshotToHtml groups consecutive same-attrs cells
+ok 16 - renderSnapshotToHtml groups consecutive same-attrs cells
+  ---
+  duration_ms: 0.138915
+  ...
+# Subtest: renderSnapshotToText preserves geometry
+ok 17 - renderSnapshotToText preserves geometry
+  ---
+  duration_ms: 0.17983
+  ...
+# Subtest: renderSnapshotToHtml handles empty snapshot
+ok 18 - renderSnapshotToHtml handles empty snapshot
+  ---
+  duration_ms: 0.090797
+  ...
+# Subtest: validateDiffPayload accepts valid diff
+ok 19 - validateDiffPayload accepts valid diff
+  ---
+  duration_ms: 0.071694
+  ...
+# Subtest: validateDiffPayload rejects invalid
+ok 20 - validateDiffPayload rejects invalid
+  ---
+  duration_ms: 0.07078
+  ...
+# Subtest: Unicode outside BMP not split into surrogate pairs
+ok 21 - Unicode outside BMP not split into surrogate pairs
+  ---
+  duration_ms: 0.206067
+  ...
+1..21
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 100.20057
+  [0;32m[PASS][0m JS: terminal_snapshot_renderer (0s)
+[1m--- JS: replay_snapshot_state ---[0m
+  cmd: node --test gateway/control/static/js/components/replay_snapshot_state.test.mjs
+TAP version 13
+# Subtest: factory creates ReplaySnapshotState
+ok 1 - factory creates ReplaySnapshotState
+  ---
+  duration_ms: 2.696632
+  ...
+# Subtest: initial state is not initialized
+ok 2 - initial state is not initialized
+  ---
+  duration_ms: 0.645969
+  ...
+# Subtest: loadInitialSnapshot succeeds with valid payload
+ok 3 - loadInitialSnapshot succeeds with valid payload
+  ---
+  duration_ms: 0.626409
+  ...
+# Subtest: loadInitialSnapshot fails with null
+ok 4 - loadInitialSnapshot fails with null
+  ---
+  duration_ms: 0.236842
+  ...
+# Subtest: loadInitialSnapshot fails with invalid payload
+ok 5 - loadInitialSnapshot fails with invalid payload
+  ---
+  duration_ms: 0.227414
+  ...
+# Subtest: applyCheckpoint replaces state
+ok 6 - applyCheckpoint replaces state
+  ---
+  duration_ms: 0.225426
+  ...
+# Subtest: applyCheckpoint fails with null
+ok 7 - applyCheckpoint fails with null
+  ---
+  duration_ms: 0.194961
+  ...
+# Subtest: applyEventDiff applies cell change
+ok 8 - applyEventDiff applies cell change
+  ---
+  duration_ms: 0.608104
+  ...
+# Subtest: applyEventDiff rejects null diff
+ok 9 - applyEventDiff rejects null diff
+  ---
+  duration_ms: 0.329915
+  ...
+# Subtest: applyEventDiff rejects base_seq_global mismatch
+ok 10 - applyEventDiff rejects base_seq_global mismatch
+  ---
+  duration_ms: 0.451669
+  ...
+# Subtest: applyEventDiff rejects base_text_sig mismatch
+ok 11 - applyEventDiff rejects base_text_sig mismatch
+  ---
+  duration_ms: 0.237823
+  ...
+# Subtest: applyEventDiff only called once per event
+ok 12 - applyEventDiff only called once per event
+  ---
+  duration_ms: 0.163137
+  ...
+# Subtest: checkpoint + diffs produces correct final state
+ok 13 - checkpoint + diffs produces correct final state
+  ---
+  duration_ms: 0.180756
+  ...
+# Subtest: geometry change via checkpoint preserves cells
+ok 14 - geometry change via checkpoint preserves cells
+  ---
+  duration_ms: 0.104996
+  ...
+# Subtest: renderHtml returns HTML string
+ok 15 - renderHtml returns HTML string
+  ---
+  duration_ms: 0.158309
+  ...
+# Subtest: renderText returns text preserving geometry
+ok 16 - renderText returns text preserving geometry
+  ---
+  duration_ms: 0.121685
+  ...
+# Subtest: clone produces independent copy
+ok 17 - clone produces independent copy
+  ---
+  duration_ms: 0.157936
+  ...
+# Subtest: reset clears all state
+ok 18 - reset clears all state
+  ---
+  duration_ms: 0.099238
+  ...
+# Subtest: textSig and visualSig reflect current state
+ok 19 - textSig and visualSig reflect current state
+  ---
+  duration_ms: 0.104445
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 94.052811
+  [0;32m[PASS][0m JS: replay_snapshot_state (0s)
+[1m--- JS: checkpoint_seek ---[0m
+  cmd: node --test gateway/control/static/js/components/checkpoint_seek.test.mjs
+TAP version 13
+# Subtest: findBestCheckpoint returns null for empty list
+ok 1 - findBestCheckpoint returns null for empty list
+  ---
+  duration_ms: 0.818044
+  ...
+# Subtest: findBestCheckpoint returns only checkpoint <= target
+ok 2 - findBestCheckpoint returns only checkpoint <= target
+  ---
+  duration_ms: 0.360605
+  ...
+# Subtest: findBestCheckpoint returns exact match
+ok 3 - findBestCheckpoint returns exact match
+  ---
+  duration_ms: 0.165215
+  ...
+# Subtest: findBestCheckpoint returns last if target beyond all
+ok 4 - findBestCheckpoint returns last if target beyond all
+  ---
+  duration_ms: 0.116704
+  ...
+# Subtest: findBestCheckpoint returns first if target before second
+ok 5 - findBestCheckpoint returns first if target before second
+  ---
+  duration_ms: 0.951265
+  ...
+# Subtest: seek from checkpoint + apply diffs reaches target
+ok 6 - seek from checkpoint + apply diffs reaches target
+  ---
+  duration_ms: 0.428444
+  ...
+# Subtest: seek with multiple checkpoints uses closest
+ok 7 - seek with multiple checkpoints uses closest
+  ---
+  duration_ms: 0.118836
+  ...
+# Subtest: seek does not apply event beyond target
+ok 8 - seek does not apply event beyond target
+  ---
+  duration_ms: 0.319709
+  ...
+# Subtest: seek to non-existent seq returns null checkpoint
+ok 9 - seek to non-existent seq returns null checkpoint
+  ---
+  duration_ms: 0.524302
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 82.04937
+  [0;32m[PASS][0m JS: checkpoint_seek (0s)
+[1m--- JS: template_syntax ---[0m
+  cmd: node --test gateway/control/static/js/components/template_syntax.test.mjs
+TAP version 13
+# Subtest: capture_session_replay.html has valid JavaScript syntax
+ok 1 - capture_session_replay.html has valid JavaScript syntax
+  ---
+  duration_ms: 62.307649
+  ...
+# Subtest: all HTML templates in gateway have valid JavaScript
+ok 2 - all HTML templates in gateway have valid JavaScript
+  ---
+  duration_ms: 252.350072
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 407.455671
+  [0;32m[PASS][0m JS: template_syntax (1s)
+[1m--- JS: production_no_terminal_parser ---[0m
+  cmd: node --test gateway/control/static/js/components/production_no_terminal_parser.test.mjs
+TAP version 13
+# Subtest: production files do not reference virtual_terminal.cjs
+ok 1 - production files do not reference virtual_terminal.cjs
+  ---
+  duration_ms: 11.060733
+  ...
+# Subtest: production files do not reference window.DakVT
+ok 2 - production files do not reference window.DakVT
+  ---
+  duration_ms: 1.872438
+  ...
+# Subtest: virtual_terminal.cjs does not exist in production static/js
+ok 3 - virtual_terminal.cjs does not exist in production static/js
+  ---
+  duration_ms: 0.204854
+  ...
+# Subtest: virtual_terminal.cjs exists only in tests/oracles
+ok 4 - virtual_terminal.cjs exists only in tests/oracles
+  ---
+  duration_ms: 0.167457
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 88.644347
+  [0;32m[PASS][0m JS: production_no_terminal_parser (0s)
+
+[1m=== 2. Python ===[0m
+[1m--- Python: tests/ ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ tests/
+........................................................................ [ 11%]
+........................................................................ [ 22%]
+.................................. [ 27%]
+................................................................. [ 37%]
+........................................................................ [ 48%]
+........................................................................ [ 60%]
+...................................................................... [ 70%]
+........................................................................ [ 82%]
+........................................................................ [ 93%]
+...........................................                              [100%]
+644 passed, 47 subtests passed in 113.53s (0:01:53)
+  [0;32m[PASS][0m Python: tests/ (114s)
+[1m--- Python: gateway/tests/ ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ gateway/tests/
+........................................................................ [ 75%]
+.......................                         [100%]
+95 passed, 25 subtests passed in 21.28s
+  [0;32m[PASS][0m Python: gateway/tests/ (21s)
+
+[1m=== 3. Tcl ===[0m
+[1m--- Tcl: all.tcl ---[0m
+  cmd: tclsh tests/all.tcl
+Tests running in interp:  /usr/bin/tclsh
+Tests located in:  /tmp/replay2-extracted-gate-final/dakota-replay2-0.5.1/tests
+Tests running in:  /tmp/replay2-extracted-gate-final/dakota-replay2-0.5.1
+Temporary files stored in /tmp/replay2-extracted-gate-final/dakota-replay2-0.5.1/tests/tmp
+Test files sourced into current interpreter
+Running tests that match:  *
+Skipping test files that match:  l.*.test
+Only running test files that match:  *.test.tcl
+Tests began at Wed Jul 15 15:23:49 -03 2026
+capture.test.tcl
+---- capture_apply_boundaries_none_01 start
+---- capture_apply_boundaries_clearscreen_01 start
+---- capture_apply_boundaries_inverse_01 start
+config.test.tcl
+---- config_parse_defaults_01 start
+---- config_parse_overrides_01 start
+---- config_reject_invalid_geometry_01 start
+---- config_env_override_encoding_01 start
+---- config_find_tclsh_01 start
+integration_legacy_sim.test.tcl
+---- integration_legacy_sim_login_01 start
+normalize.test.tcl
+---- normalize_strip_ansi_01 start
+---- normalize_boxes_01 start
+---- normalize_whitespace_01 start
+---- normalize_screen_pipeline_01 start
+signature.test.tcl
+---- signature_from_screen_login_01 start
+---- signature_from_screen_menu_01 start
+
+Tests ended at Wed Jul 15 15:23:50 -03 2026
+all.tcl:	Total	15	Passed	15	Skipped	0	Failed	0
+Sourced 5 Test Files.
+  [0;32m[PASS][0m Tcl: all.tcl (1s)
+
+[1m=== 4. Capture ===[0m
+[1m--- Python: test_capture_realtime_counting ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ tests/test_capture_realtime_counting.py
+....                                                                     [100%]
+4 passed in 0.03s
+  [0;32m[PASS][0m Python: test_capture_realtime_counting (1s)
+[1m--- Python: test_runtime_capture_session ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ tests/test_runtime_capture_session_unit.py
+......                                                                   [100%]
+6 passed in 2.35s
+  [0;32m[PASS][0m Python: test_runtime_capture_session (2s)
+
+[1m=== 5. Replay ===[0m
+[1m--- Python: test_capture8_replay_integration ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ tests/test_capture8_replay_integration.py
+........................                                                 [100%]
+24 passed in 0.28s
+  [0;32m[PASS][0m Python: test_capture8_replay_integration (1s)
+[1m--- Python: test_gateway_status_unit (replay) ---[0m
+  cmd: sh -c PYTHONPATH=gateway\ python3\ -m\ pytest\ \ -q\ tests/test_gateway_status_unit.py
+....................                                                     [100%]
+20 passed in 7.95s
+  [0;32m[PASS][0m Python: test_gateway_status_unit (replay) (8s)
+
+[1m=== Resultado Final ===[0m
+Suítes passaram: [0;32m14[0m
+Suítes falharam: [0;31m0[0m
+
+[0;32m[1mTodos os testes passaram[0m
+[acceptance] END name=scripts-test-all duration=150s exit_code=0 timeout=false
+[acceptance] START name=packaging timeout=120s command=bash scripts/build-tarball.sh
+Staging em: /tmp/tmp.w9VZsbc8uL/dakota-replay2-0.5.1
+Gerando: /tmp/replay2-extracted-gate-final/dakota-replay2-0.5.1/dist/dakota-replay2-0.5.1-20260715-152402.tar.gz
+OK: /tmp/replay2-extracted-gate-final/dakota-replay2-0.5.1/dist/dakota-replay2-0.5.1-20260715-152402.tar.gz
+[acceptance] END name=packaging duration=1s exit_code=0 timeout=false
+[acceptance] START name=tarball-inspection timeout=30s command=bash -c 
+  set -euo pipefail
+  tarball="$(ls -t dist/dakota-replay2-*.tar.gz | head -n 1)"
+  test -n "$tarball"
+  tar -tzf "$tarball" >/dev/null
+  for required in \
+    scripts/acceptance \
+    tests/acceptance \
+    tests/js/acceptance \
+    artifacts/acceptance-matrix.json \
+    artifacts/acceptance-test-baseline.sha256 \
+    artifacts/final-acceptance-report.md \
+    artifacts/final-acceptance-results.json \
+    artifacts/manual-validation.json \
+    artifacts/acceptance-log-summary.json
+  do
+    tar -tzf "$tarball" | rg "(^|/)${required}(/|$)" >/dev/null
+  done
+  ! tar -tzf "$tarball" | rg "(^|/)(node_modules|__pycache__|\\.pytest_cache|\\.git|\\.env|logs?|state/captures|chromium|\\.coverage|htmlcov)(/|$)|\\.(pyc|pyo|db|sqlite|sqlite3|pem|key|crt|pfx|ppk|tmp|swp|swo)$|id_rsa|id_ed25519|id_ecdsa|dakota-replay2-.*\\.tar\\.gz"
+
+[acceptance] END name=tarball-inspection duration=0s exit_code=0 timeout=false
+[acceptance] GATE PASSED
+exit_code=0

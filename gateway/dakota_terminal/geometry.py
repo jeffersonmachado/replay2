@@ -10,15 +10,20 @@ class Geometry:
 
 
 def validate_geometry(rows: int = 25, cols: int = 80) -> Geometry:
-    r = int(rows or 25)
-    c = int(cols or 80)
-    if r < 1 or c < 1:
+    """Valida geometria do terminal com verificacoes estritas de tipo.
+
+    Aceita somente int puro. Rejeita float, string, bool, None."""
+    if type(rows) is not int:
+        raise TypeError(f"rows must be int, got {type(rows).__name__}")
+    if type(cols) is not int:
+        raise TypeError(f"cols must be int, got {type(cols).__name__}")
+    if rows < 1 or cols < 1:
         raise ValueError("terminal geometry must be positive")
-    if r > 200:
+    if rows > 200:
         raise ValueError("terminal rows exceed limit")
-    if c > 500:
+    if cols > 500:
         raise ValueError("terminal cols exceed limit")
-    if r * c > 100000:
+    if rows * cols > 100000:
         raise ValueError("terminal cell count exceeds limit")
-    return Geometry(r, c)
+    return Geometry(rows, cols)
 

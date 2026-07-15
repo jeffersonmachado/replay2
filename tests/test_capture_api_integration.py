@@ -355,7 +355,7 @@ class CaptureApiIntegrationTests(unittest.TestCase):
         cid = self._insert_capture(log_dir)
         status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id={session_id}")
         self.assertEqual(status, 200)
-        self.assertEqual(payload["timeline"][0]["integrity_warning"]["integrity_error"], "byte_count_mismatch")
+        self.assertEqual(payload["timeline_items"][0]["integrity_warning"]["integrity_error"], "byte_count_mismatch")
 
     def test_replay_invalid_base64_returns_422(self):
         """Replay com Base64 impossivel retorna 422 estruturado."""
@@ -390,7 +390,7 @@ class CaptureApiIntegrationTests(unittest.TestCase):
         cid = self._insert_capture(log_dir)
         status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id={session_id}")
         self.assertEqual(status, 422)
-        self.assertEqual(payload["timeline"][0]["integrity_warning"]["integrity_error"], "invalid_base64")
+        self.assertEqual(payload["timeline_items"][0]["integrity_warning"]["integrity_error"], "invalid_base64")
 
     # ═══════════════════════════════════════════════════════════════════════
     # Delete

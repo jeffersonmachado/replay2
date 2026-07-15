@@ -160,8 +160,8 @@ class DeterministicRecordUnitTests(unittest.TestCase):
 
         self.assertNotIn("screen_buf += data", gateway_source)
         self.assertNotIn("screen_buf += data", replay_source)
-        self.assertIn("screen_state.feed_bytes(data)", gateway_source)
-        self.assertIn("screen_state.feed_bytes(data)", replay_source)
+        self.assertIn("screen_state.feed_bytes(data", gateway_source)
+        self.assertIn("screen_state.feed_bytes(data", replay_source)
 
     def test_input_analysis_and_safe_split_cover_basic_cases(self):
         command_parts = split_input_for_deterministic_record(b"abc\r")
@@ -197,10 +197,14 @@ class _FakeTargetSession:
         self.last_out_ms = int(time.time() * 1000) - 5_000
         return b""
 
-    def signature_now(self) -> str:
+    def _next_screen_sig(self) -> str:
         if len(self._signatures) > 1:
             return self._signatures.pop(0)
         return self._signatures[0]
+
+    def canonical_snapshot_now(self) -> dict:
+        sig = self._next_screen_sig()
+        return {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": sig}
 
     def close(self):
         return None
@@ -218,14 +222,14 @@ class DeterministicReplayUnitTests(unittest.TestCase):
         log_file.write_text("\n".join(json.dumps(item) for item in entries), encoding="utf-8")
         return tmpdir.name
 
-    def test_replay_parallel_sessions_deterministic_waits_for_signature_and_writes_input(self):
+    def test_replay_parallel_sessions_deterministic_hybrid_legacy_screen_sig_writes_input(self):
         log_dir = self._write_log(
             [
                 {"type": "deterministic_input", "session_id": "s1", "seq_global": 1, "screen_sig": "SIG:MENU", "key_b64": "QQ=="},
             ]
         )
         _FakeTargetSession.signatures_by_session = {"s1": ["SIG:MENU"]}
-        cfg = ReplayConfig(log_dir=log_dir, target_host="legacy", input_mode="deterministic")
+        cfg = ReplayConfig(log_dir=log_dir, target_host="legacy", input_mode="deterministic", comparison_mode="hybrid")
 
         with patch("dakota_gateway.replay._TargetSession", _FakeTargetSession), patch("dakota_gateway.replay.selectors.DefaultSelector", _FakeSelector):
             replay_parallel_sessions(cfg)

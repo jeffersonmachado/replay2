@@ -1,0 +1,212 @@
+TAP version 13
+# Subtest: factory creates ReplaySnapshotState
+ok 1 - factory creates ReplaySnapshotState
+  ---
+  duration_ms: 2.128084
+  ...
+# Subtest: initial state is not initialized
+ok 2 - initial state is not initialized
+  ---
+  duration_ms: 0.244216
+  ...
+# Subtest: loadInitialSnapshot succeeds with valid payload
+ok 3 - loadInitialSnapshot succeeds with valid payload
+  ---
+  duration_ms: 0.30653
+  ...
+# Subtest: loadInitialSnapshot fails with null
+ok 4 - loadInitialSnapshot fails with null
+  ---
+  duration_ms: 0.123842
+  ...
+# Subtest: loadInitialSnapshot fails with invalid payload
+ok 5 - loadInitialSnapshot fails with invalid payload
+  ---
+  duration_ms: 0.234042
+  ...
+# Subtest: applyCheckpoint replaces state
+ok 6 - applyCheckpoint replaces state
+  ---
+  duration_ms: 0.195711
+  ...
+# Subtest: applyCheckpoint fails with null
+ok 7 - applyCheckpoint fails with null
+  ---
+  duration_ms: 0.170245
+  ...
+# Subtest: applyEventDiff applies cell change
+ok 8 - applyEventDiff applies cell change
+  ---
+  duration_ms: 0.588802
+  ...
+# Subtest: applyEventDiff rejects null diff
+ok 9 - applyEventDiff rejects null diff
+  ---
+  duration_ms: 0.515357
+  ...
+# Subtest: applyEventDiff rejects base_seq_global mismatch
+ok 10 - applyEventDiff rejects base_seq_global mismatch
+  ---
+  duration_ms: 0.429559
+  ...
+# Subtest: applyEventDiff rejects base_text_sig mismatch
+ok 11 - applyEventDiff rejects base_text_sig mismatch
+  ---
+  duration_ms: 0.329653
+  ...
+# Subtest: applyEventDiff only called once per event
+ok 12 - applyEventDiff only called once per event
+  ---
+  duration_ms: 0.195662
+  ...
+# Subtest: checkpoint + diffs produces correct final state
+ok 13 - checkpoint + diffs produces correct final state
+  ---
+  duration_ms: 0.21691
+  ...
+# Subtest: geometry change via checkpoint preserves cells
+ok 14 - geometry change via checkpoint preserves cells
+  ---
+  duration_ms: 0.127922
+  ...
+# Subtest: renderHtml returns HTML string
+ok 15 - renderHtml returns HTML string
+  ---
+  duration_ms: 0.230906
+  ...
+# Subtest: renderText returns text preserving geometry
+ok 16 - renderText returns text preserving geometry
+  ---
+  duration_ms: 0.154886
+  ...
+# Subtest: clone produces independent copy
+ok 17 - clone produces independent copy
+  ---
+  duration_ms: 0.161735
+  ...
+# Subtest: reset clears all state
+ok 18 - reset clears all state
+  ---
+  duration_ms: 0.124261
+  ...
+# Subtest: textSig and visualSig reflect current state
+ok 19 - textSig and visualSig reflect current state
+  ---
+  duration_ms: 0.123623
+  ...
+# decodeSnapshotPayload: payload invalido
+# Subtest: validateSnapshotPayload accepts valid snapshot
+ok 20 - validateSnapshotPayload accepts valid snapshot
+  ---
+  duration_ms: 3.536099
+  ...
+# Subtest: validateSnapshotPayload rejects null
+ok 21 - validateSnapshotPayload rejects null
+  ---
+  duration_ms: 0.406773
+  ...
+# Subtest: validateSnapshotPayload rejects missing cells/runs
+ok 22 - validateSnapshotPayload rejects missing cells/runs
+  ---
+  duration_ms: 0.600532
+  ...
+# Subtest: validateSnapshotPayload rejects huge geometry
+ok 23 - validateSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 0.26068
+  ...
+# Subtest: validateSnapshotPayload rejects zero rows
+ok 24 - validateSnapshotPayload rejects zero rows
+  ---
+  duration_ms: 0.384386
+  ...
+# Subtest: validateSnapshotPayload rejects negative cols
+ok 25 - validateSnapshotPayload rejects negative cols
+  ---
+  duration_ms: 0.206997
+  ...
+# Subtest: validateSnapshotPayload rejects float rows
+ok 26 - validateSnapshotPayload rejects float rows
+  ---
+  duration_ms: 0.280062
+  ...
+# Subtest: decodeSnapshotPayload handles compact format
+ok 27 - decodeSnapshotPayload handles compact format
+  ---
+  duration_ms: 0.631899
+  ...
+# Subtest: decodeSnapshotPayload handles cells directly
+ok 28 - decodeSnapshotPayload handles cells directly
+  ---
+  duration_ms: 0.589856
+  ...
+# Subtest: decodeSnapshotPayload rejects huge geometry
+ok 29 - decodeSnapshotPayload rejects huge geometry
+  ---
+  duration_ms: 1.114367
+  ...
+# Subtest: applyDiff applies cell changes
+ok 30 - applyDiff applies cell changes
+  ---
+  duration_ms: 0.944671
+  ...
+# Subtest: applyDiff updates text_sig and visual_sig
+ok 31 - applyDiff updates text_sig and visual_sig
+  ---
+  duration_ms: 0.2513
+  ...
+# Subtest: applyDiff handles geometry change
+ok 32 - applyDiff handles geometry change
+  ---
+  duration_ms: 0.16253
+  ...
+# Subtest: cloneSnapshot deep copies cells
+ok 33 - cloneSnapshot deep copies cells
+  ---
+  duration_ms: 0.15875
+  ...
+# Subtest: renderSnapshotToHtml produces spans with classes
+ok 34 - renderSnapshotToHtml produces spans with classes
+  ---
+  duration_ms: 0.336801
+  ...
+# Subtest: renderSnapshotToHtml groups consecutive same-attrs cells
+ok 35 - renderSnapshotToHtml groups consecutive same-attrs cells
+  ---
+  duration_ms: 0.202509
+  ...
+# Subtest: renderSnapshotToText preserves geometry
+ok 36 - renderSnapshotToText preserves geometry
+  ---
+  duration_ms: 0.191399
+  ...
+# Subtest: renderSnapshotToHtml handles empty snapshot
+ok 37 - renderSnapshotToHtml handles empty snapshot
+  ---
+  duration_ms: 0.076176
+  ...
+# Subtest: validateDiffPayload accepts valid diff
+ok 38 - validateDiffPayload accepts valid diff
+  ---
+  duration_ms: 0.126969
+  ...
+# Subtest: validateDiffPayload rejects invalid
+ok 39 - validateDiffPayload rejects invalid
+  ---
+  duration_ms: 0.147236
+  ...
+# Subtest: Unicode outside BMP not split into surrogate pairs
+ok 40 - Unicode outside BMP not split into surrogate pairs
+  ---
+  duration_ms: 0.205156
+  ...
+1..40
+# tests 40
+# suites 0
+# pass 40
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 105.375237
+exit_code=0

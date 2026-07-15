@@ -42,7 +42,11 @@ def _replay_status_code(replay_data: dict) -> int:
         return 500
 
     playback = replay_data.get("playback") or {}
-    for items in (replay_data.get("replay_events") or [], replay_data.get("timeline") or [], playback.get("events") or []):
+    for items in (
+        replay_data.get("events") or [],
+        replay_data.get("timeline_items") or [],
+        playback.get("events") or [],
+    ):
         for container in items if isinstance(items, list) else []:
             warning = container.get("integrity_warning") if isinstance(container, dict) else None
             if warning and warning.get("integrity_error") == "invalid_base64":

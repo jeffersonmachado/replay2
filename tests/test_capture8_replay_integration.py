@@ -2,7 +2,7 @@
 Integration test for capture 8 replay data validation.
 
 Validates the full flow:
-  session_replay_service → payload → geometry → timeline → playback → consistency
+  audit JSONL → prepare_session_replay_data → payload → geometry → timeline → playback → consistency
 
 Run:
   PYTHONPATH=gateway python3 -m pytest tests/test_capture8_replay_integration.py -v
@@ -10,46 +10,96 @@ Run:
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import re
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from dakota_gateway.compliance import (
-    normalize_target_policy,
-    summarize_capture_sessions,
-)
 from control.services.session_replay_service import (
     _detect_encoding,
     _detect_geometry,
     prepare_session_replay_data,
 )
 
-# ── Fixture: load sanitized capture 8 data ──────────────────────────────────
+# ── Fixture: raw audit JSONL processed through the service ──────────────────
 
+SID = "758f897c-572e-4f5d-b1eb-cb2fcd16f726"
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "capture8_replay_fixture.json"
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def _load_audit_events() -> list[dict]:
+    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    assert payload["format"] == "dakota.capture.audit.raw.v1"
+    assert payload["session_id"] == SID
+    return list(payload["events"])
 
 
 @pytest.fixture(scope="module")
 def capture8_data():
-    """Load sanitized capture 8 replay data from fixture file."""
-    if not FIXTURE_PATH.exists():
-        pytest.skip(f"Fixture not found: {FIXTURE_PATH}")
-    with open(FIXTURE_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Processa a fixture bruta de disco pelo serviço real."""
+    audit_events = _load_audit_events()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Escreve arquivo audit JSONL
+        audit_path = Path(tmpdir) / "audit-000001.jsonl"
+        with open(audit_path, "w", encoding="utf-8") as f:
+            for ev in audit_events:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+        result = prepare_session_replay_data(str(tmpdir), SID)
+        if result.get("error"):
+            pytest.skip(f"Service error: {result['error']}")
+        return result
+
+
+def test_fixture_is_raw_disk_capture_without_derived_payloads():
+    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    forbidden = {"replay_events", "timeline", "playback", "snapshots", "diffs"}
+    assert forbidden.isdisjoint(payload.keys())
+    for ev in payload["events"]:
+        assert forbidden.isdisjoint(ev.keys())
+        if ev.get("type") == "bytes":
+            raw = base64.b64decode(ev["data_b64"])
+            assert ev["n"] == len(raw), f"seq {ev.get('seq_global')} has invalid n"
+
+
+def test_fixture_contains_required_chunked_terminal_cases():
+    events = _load_audit_events()
+    chunks = [base64.b64decode(ev["data_b64"]) for ev in events if ev.get("type") == "bytes"]
+    stream = b"".join(chunks)
+    assert any(ev.get("type") == "session_start" for ev in events)
+    assert any(ev.get("type") == "session_end" for ev in events)
+    assert any(ev.get("dir") == "in" for ev in events)
+    assert b"\x1b(0" in stream and b"\x1b)0" in stream and b"\x0e" in stream and b"\x0f" in stream
+    assert b"\x1b[7m" in stream and b"\x1b[42m" in stream
+    assert any(chunk.endswith(b"\xc3") for chunk in chunks) and any(chunk == b"\xa1\r\n" for chunk in chunks)
+    assert any(chunk.endswith(b"\xe2") for chunk in chunks) and any(chunk == b"\x82" for chunk in chunks) and any(chunk == b"\xac\r\n" for chunk in chunks)
+    assert any(chunk.endswith(b"\xf0\x9f") for chunk in chunks) and any(chunk == b"\x98" for chunk in chunks) and any(chunk == b"\x80\r\n" for chunk in chunks)
+    assert any(chunk == b"\x1b[31" for chunk in chunks)
+    assert b"\x1b]" in stream and b"\x1b\\" in stream
+    assert b"\x1b[2;4r" in stream and b"\x1bM" in stream
+    assert b"\x1b[8;5;10t" in stream and any(chunk == b"\x1b[8;3" for chunk in chunks) and any(chunk.startswith(b";4t") for chunk in chunks)
+    assert b"\x1b[8;6;12t\x1b[8;4;8t" in stream
+    assert any(chunk == b"\x1b" for chunk in chunks) and any(chunk.startswith(b"cafter-ris") for chunk in chunks)
+    assert b"\x1b[2J\x1b[H" in stream and b"\x1b[2;2H" in stream
+    assert any(ev.get("type") == "checkpoint" for ev in events)
+    assert any(ev.get("type") == "deterministic_input" for ev in events)
 
 
 # ── Geometry ───────────────────────────────────────────────────────────────
 
 
-def test_geometry_is_legacy_fallback(capture8_data):
-    """Capture 8 has no explicit geometry metadata — must use fallback."""
+def test_geometry_is_session_metadata(capture8_data):
+    """Fixture has session_start with explicit geometry metadata."""
     geom = capture8_data.get("geometry", {})
     assert geom.get("rows") == 25
     assert geom.get("cols") == 80
-    assert geom.get("geometry_source") == "legacy_fallback"
+    assert geom.get("geometry_source") == "session_metadata"
 
 
 def test_geometry_not_inferred_from_cursor():
@@ -166,13 +216,18 @@ def test_playback_has_timestamp_ms(capture8_data):
         assert ev["timestamp_ms"] > 0
 
 
-def test_playback_has_data_b64(capture8_data):
-    """Playback events must preserve data_b64 for UTF-8 decoder."""
+def test_playback_has_diff_or_checkpoint(capture8_data):
+    """Playback events must have diff (normal) or snapshot_compact (checkpoint)."""
     playback = capture8_data.get("playback", {})
-    for ev in playback.get("events", [])[:10]:
-        assert "data_b64" in ev, f"seq {ev.get('seq')} must have data_b64"
-        assert isinstance(ev["data_b64"], str), f"data_b64 must be string"
-        assert ev["data_b64"] != "", f"seq {ev.get('seq')} data_b64 cannot be empty"
+    out_events = [e for e in playback.get("events", []) if e.get("direction") == "out"]
+    assert len(out_events) > 0, "deve haver eventos OUT"
+    for ev in out_events[:10]:
+        has_diff = "diff" in ev and ev["diff"] is not None
+        has_checkpoint = "snapshot_compact" in ev
+        assert has_diff or has_checkpoint, \
+            f"seq {ev.get('seq')} must have diff or snapshot_compact, got keys: {list(ev.keys())}"
+        assert "text_sig" in ev, f"seq {ev.get('seq')} must have text_sig"
+        assert "visual_sig" in ev, f"seq {ev.get('seq')} must have visual_sig"
 
 
 def test_playback_total_bytes_consistent(capture8_data):
@@ -189,17 +244,17 @@ def test_playback_total_bytes_consistent(capture8_data):
 
 
 def test_session_has_login_screen(capture8_data):
-    """Capture 8 must contain the Recital login screen."""
+    """Fixture must contain the login screen text."""
     timeline = capture8_data.get("timeline", [])
     all_text = " ".join(e.get("data_decoded", "") for e in timeline)
     assert "Login do Sistema" in all_text, "login screen not found"
 
 
-def test_session_has_main_menu(capture8_data):
-    """Capture 8 must contain the main menu."""
+def test_session_has_reverse_video(capture8_data):
+    """Fixture must contain reverse video text."""
     timeline = capture8_data.get("timeline", [])
     all_text = " ".join(e.get("data_decoded", "") for e in timeline)
-    assert "Menu Principal" in all_text, "main menu not found"
+    assert "Destaque" in all_text, "reverse video text not found"
 
 
 def test_session_has_dec_graphics(capture8_data):

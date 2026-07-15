@@ -75,8 +75,9 @@ function buildTimelineItems(events, deps) {
     var seq = Number(ev.seq_global || 0);
 
     var snap = null;
-    if (ev.snapshot_compact && typeof decodeSnapshotPayload === "function") {
-      snap = decodeSnapshotPayload(ev.snapshot_compact);
+    var snapshotPayload = ev.render_snapshot || ev.snapshot_compact;
+    if (snapshotPayload && typeof decodeSnapshotPayload === "function") {
+      snap = decodeSnapshotPayload(snapshotPayload);
     } else if (ev.snapshot && ev.snapshot.cells) {
       snap = ev.snapshot;
     }

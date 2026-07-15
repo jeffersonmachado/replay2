@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "session_id": "val-001",
+  "initial_geometry": [
+    2,
+    3
+  ],
+  "final_geometry": [
+    3,
+    4
+  ],
+  "event_count": 13,
+  "timeline_item_count": 13,
+  "checkpoint_count": 5,
+  "diff_count": 13,
+  "playback_event_refs": 13,
+  "text_sig": "sha256:b6ececd1804231e3711c9fa3e6deec61518ca0177c1d93ea2cf39cd61c7d13c8",
+  "visual_sig": "sha256:7f005df41541478db0af459ef05ce1751741d6b3ecb2637063a2d5afffa496aa",
+  "semantic_sig": "sha256:17063525861bdbc6237b2867aff811b73ec3efcf16d468eedc6dd6a800950123",
+  "payload_bytes": 67351
+}

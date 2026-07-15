@@ -243,6 +243,14 @@ class TerminalGateway:
                     screen_snapshot_ts_ms=stable_state.ts_ms or None,
                     screen_snapshot_age_ms=snapshot_age_ms,
                     source="gateway_record",
+                    # Assinaturas canonicas (v0.5.0+)
+                    text_sig=snapshot.text_sig or None,
+                    visual_sig=snapshot.visual_sig or None,
+                    semantic_sig=snapshot.semantic_sig or None,
+                    expected_text_sig=snapshot.text_sig or None,
+                    expected_visual_sig=snapshot.visual_sig or None,
+                    expected_semantic_sig=snapshot.semantic_sig or None,
+                    engine_version=snapshot.canonical_snapshot.get("engine_version") if snapshot.canonical_snapshot else None,
                     **refs,
                 )
             )
@@ -281,6 +289,91 @@ class TerminalGateway:
         )
         return events
 
+    def _append_session_start(self, *, gateway_endpoint: str, command: str | None = None) -> None:
+        self._append(
+            AuditEvent(
+                v="v1",
+                seq_global=0,
+                ts_ms=self._ts_ms(),
+                type="session_start",
+                actor=self.actor,
+                session_id=self.session_id,
+                seq_session=self._next_seq_session(),
+                **self._capture_refs(),
+                entry_mode="gateway_ssh",
+                via_gateway=True,
+                gateway_session_id=self.session_id,
+                gateway_endpoint=gateway_endpoint,
+                source_host=self.cfg.source_host,
+                source_user=self.cfg.source_user,
+                source_command=self.cfg.source_command if command is None else command,
+                rows=self.cfg.rows,
+                cols=self.cfg.cols,
+                term=self.cfg.term,
+                encoding=self.cfg.encoding,
+                geometry_source=self.cfg.geometry_source,
+            )
+        )
+
+    def _append_session_end(self) -> None:
+        self._append(
+            AuditEvent(
+                v="v1",
+                seq_global=0,
+                ts_ms=self._ts_ms(),
+                type="session_end",
+                actor=self.actor,
+                session_id=self.session_id,
+                seq_session=self._next_seq_session(),
+                **self._capture_refs(),
+            )
+        )
+
+    def _append_out_bytes_event(
+        self,
+        *,
+        data: bytes,
+        screen_state: TerminalScreenState,
+        ts_ms: int | None = None,
+        seq_session: int | None = None,
+    ) -> ScreenSnapshot:
+        event_ts_ms = self._ts_ms() if ts_ms is None else int(ts_ms)
+        out_seq_session = self._next_seq_session() if seq_session is None else int(seq_session)
+        screen_state.feed_bytes(data, seq_global=out_seq_session, direction="out")
+        out_snapshot = screen_state.snapshot()
+        canonical = out_snapshot.canonical_snapshot or {}
+        rows = int(canonical.get("rows") or screen_state.rows)
+        cols = int(canonical.get("cols") or screen_state.cols)
+        self._append(
+            AuditEvent(
+                v="v1",
+                seq_global=0,
+                ts_ms=event_ts_ms,
+                timestamp_ms=event_ts_ms,
+                type="bytes",
+                actor=self.actor,
+                session_id=self.session_id,
+                seq_session=out_seq_session,
+                **self._capture_refs(),
+                dir="out",
+                data_b64=b64(data),
+                n=len(data),
+                text_sig=out_snapshot.text_sig or None,
+                visual_sig=out_snapshot.visual_sig or None,
+                semantic_sig=out_snapshot.semantic_sig or out_snapshot.screen_sig or None,
+                engine_version=canonical.get("engine_version") or None,
+                snapshot_version=canonical.get("snapshot_version") or None,
+                signature_version=canonical.get("signature_version") or None,
+                rows=rows,
+                cols=cols,
+                term=canonical.get("term") or self.cfg.term,
+                encoding=canonical.get("encoding") or screen_state.encoding,
+                geometry_source="terminal_snapshot",
+                comparison_mode="visual",
+            )
+        )
+        return out_snapshot
+
     def _ssh_argv(self) -> list[str]:
         # Use ssh client; force tty with -tt.
         if not self.cfg.source_host:
@@ -315,21 +408,12 @@ class TerminalGateway:
     def _run_batch_pipe(self, gateway_endpoint: str) -> int:
         """Modo batch sem PTY: captura saida de comando via pipe (compativel com AIX)."""
         command = str(self.cfg.source_command or "").strip()
-        self._append(
-            AuditEvent(
-                v="v1", seq_global=0, ts_ms=self._ts_ms(),
-                type="session_start", actor=self.actor, session_id=self.session_id,
-                seq_session=self._next_seq_session(),
-                **self._capture_refs(),
-                entry_mode="gateway_ssh", via_gateway=True,
-                gateway_session_id=self.session_id, gateway_endpoint=gateway_endpoint,
-                source_host=self.cfg.source_host or "",
-                source_user=self.cfg.source_user or "",
-                source_command=command,
-                rows=self.cfg.rows, cols=self.cfg.cols,
-                term=self.cfg.term, encoding=self.cfg.encoding,
-                geometry_source=self.cfg.geometry_source,
-            )
+        self._append_session_start(gateway_endpoint=gateway_endpoint, command=command)
+        screen_state = TerminalScreenState(
+            rows=self.cfg.rows,
+            cols=self.cfg.cols,
+            encoding=self.cfg.encoding,
+            session_id=self.session_id,
         )
         try:
             proc = subprocess.Popen(
@@ -342,28 +426,13 @@ class TerminalGateway:
             out, _ = proc.communicate(timeout=300)
             if out:
                 os.write(1, out)
-                self._append(
-                    AuditEvent(
-                        v="v1", seq_global=0, ts_ms=self._ts_ms(),
-                        type="bytes", actor=self.actor, session_id=self.session_id,
-                        seq_session=self._next_seq_session(),
-                        **self._capture_refs(),
-                        dir="out", data_b64=b64(out), n=len(out),
-                    )
-                )
+                self._append_out_bytes_event(data=out, screen_state=screen_state)
             rc = proc.returncode
         except Exception as e:
             out = str(e).encode()
             os.write(1, out)
             rc = 1
-        self._append(
-            AuditEvent(
-                v="v1", seq_global=0, ts_ms=self._ts_ms(),
-                type="session_end", actor=self.actor, session_id=self.session_id,
-                seq_session=self._next_seq_session(),
-                **self._capture_refs(),
-            )
-        )
+        self._append_session_end()
         self.writer.close()
         return int(rc or 0)
 
@@ -409,30 +478,14 @@ class TerminalGateway:
             pass
 
         # Captura inicia assim que a conexão de gateway é estabelecida.
-        self._append(
-            AuditEvent(
-                v="v1",
-                seq_global=0,
-                ts_ms=self._ts_ms(),
-                type="session_start",
-                actor=self.actor,
-                session_id=self.session_id,
-                seq_session=self._next_seq_session(),
-                **self._capture_refs(),
-                entry_mode="gateway_ssh",
-                via_gateway=True,
-                gateway_session_id=self.session_id,
-                gateway_endpoint=gateway_endpoint,
-                source_host=self.cfg.source_host,
-                source_user=self.cfg.source_user,
-                source_command=self.cfg.source_command,
-                rows=self.cfg.rows, cols=self.cfg.cols,
-                term=self.cfg.term, encoding=self.cfg.encoding,
-                geometry_source=self.cfg.geometry_source,
-            )
-        )
+        self._append_session_start(gateway_endpoint=gateway_endpoint)
 
-        screen_state = TerminalScreenState(rows=self.cfg.rows, cols=self.cfg.cols, encoding=self.cfg.encoding)
+        screen_state = TerminalScreenState(
+            rows=self.cfg.rows,
+            cols=self.cfg.cols,
+            encoding=self.cfg.encoding,
+            session_id=self.session_id,
+        )
         last_out_ms = self._ts_ms()
         last_checkpoint_ms = 0
         stable_state = _StableScreenState()
@@ -473,6 +526,17 @@ class TerminalGateway:
                 sig=snapshot.screen_sig,
                 norm_sha256=snapshot.norm_sha256,
                 norm_len=snapshot.norm_len,
+                screen_sig=snapshot.screen_sig,
+                screen_sample=snapshot.screen_sample,
+                # Assinaturas canonicas (v0.5.0+)
+                text_sig=snapshot.text_sig or None,
+                visual_sig=snapshot.visual_sig or None,
+                semantic_sig=snapshot.semantic_sig or None,
+                engine_version=snapshot.canonical_snapshot.get("engine_version") if snapshot.canonical_snapshot else None,
+                rows=screen_state.rows,
+                cols=screen_state.cols,
+                term=self.cfg.term,
+                encoding=screen_state.encoding,
             )
             self._append(ev)
             last_checkpoint_ms = now
@@ -511,24 +575,15 @@ class TerminalGateway:
                             proc.terminate()
                             break
                         os.write(1, data)
-                        self._append(
-                            AuditEvent(
-                                v="v1",
-                                seq_global=0,
-                                ts_ms=self._ts_ms(),
-                                type="bytes",
-                                actor=self.actor,
-                                session_id=self.session_id,
-                                seq_session=self._next_seq_session(),
-                                **self._capture_refs(),
-                                dir="out",
-                                data_b64=b64(data),
-                                n=len(data),
-                            )
-                        )
                         last_out_ms = self._ts_ms()
-                        screen_state.feed_bytes(data)
+                        out_seq_session = self._next_seq_session()
                         screen_dirty = True
+                        self._append_out_bytes_event(
+                            data=data,
+                            screen_state=screen_state,
+                            ts_ms=last_out_ms,
+                            seq_session=out_seq_session,
+                        )
 
                 maybe_checkpoint(force=False)
 
@@ -545,17 +600,6 @@ class TerminalGateway:
                 pass
             rc = proc.wait(timeout=2) if proc.poll() is None else proc.returncode
 
-            self._append(
-                AuditEvent(
-                    v="v1",
-                    seq_global=0,
-                    ts_ms=self._ts_ms(),
-                    type="session_end",
-                    actor=self.actor,
-                    session_id=self.session_id,
-                    seq_session=self._next_seq_session(),
-                    **self._capture_refs(),
-                )
-            )
+            self._append_session_end()
             self.writer.close()
             return int(rc or 0)

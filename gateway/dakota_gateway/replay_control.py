@@ -10,16 +10,16 @@ from pathlib import Path
 
 from .state_db import exec1, init_db, now_ms, query_all, query_one
 from .verifier import verify_log, VerificationError
-from .replay import ReplayConfig, ReplayError, _TargetSession, _decode_replay_input  # type: ignore
+from .replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _decode_replay_input, _session_config_from_event  # type: ignore
 from .compliance import compliance_blocks_execution
 from .replay_failures import (
     add_run_failure,
     build_failure_record,
     classify_checkpoint_failure,
-    evaluate_checkpoint_match,
 )
 from .replay_run_state import add_run_event, get_run, set_run_status, update_progress
 from .terminal_config import TerminalGeometry, normalize_encoding, validate_terminal_geometry
+from dakota_terminal.comparison import compare_signatures
 
 import base64
 import selectors
@@ -240,8 +240,16 @@ def _deterministic_failure(
     checkpoint_quiet_ms: int,
     mode_label: str,
     concurrent_mode: bool,
+    match: dict | None = None,
 ) -> dict:
-    match = evaluate_checkpoint_match(expected_sig, observed_sig, params)
+    match = match or {
+        "comparison_mode_requested": _comparison_mode_from_params(params),
+        "comparison_mode_used": "legacy_screen_sig",
+        "expected_sig": expected_sig,
+        "observed_sig": observed_sig,
+        "matched": expected_sig == observed_sig,
+        "fallback_reason": "legacy_deterministic_failure_adapter",
+    }
     failure_type, severity, reason = classify_checkpoint_failure(
         expected_sig=expected_sig,
         observed_sig=observed_sig,
@@ -276,6 +284,115 @@ def _deterministic_failure(
     )
 
 
+def _comparison_mode_from_params(params: dict | None, default: str = "visual") -> str:
+    raw = params if isinstance(params, dict) else {}
+    mode = str(raw.get("comparison_mode") or raw.get("match_mode") or default).strip().lower()
+    return mode if mode in {"visual", "text", "semantic", "hybrid"} else default
+
+
+def _legacy_checkpoint_expected(sig: str) -> dict:
+    return {"screen_sig": str(sig or "")}
+
+
+def _expected_snapshot_from_event(ev: dict, *, legacy_sig: str = "") -> dict:
+    return {
+        "text_sig": str(ev.get("expected_text_sig") or ev.get("text_sig") or ""),
+        "visual_sig": str(ev.get("expected_visual_sig") or ev.get("visual_sig") or ""),
+        "semantic_sig": str(ev.get("expected_semantic_sig") or ev.get("semantic_sig") or ""),
+        "screen_sig": str(legacy_sig or ev.get("screen_sig") or ev.get("sig") or ""),
+    }
+
+
+def _event_requires_deterministic_comparison(ev: dict, params: dict | None) -> bool:
+    expected = _expected_snapshot_from_event(ev)
+    mode = _comparison_mode_from_params(params)
+    if mode == "visual":
+        return bool(expected.get("visual_sig"))
+    if mode == "text":
+        return bool(expected.get("text_sig"))
+    if mode == "semantic":
+        return bool(expected.get("semantic_sig"))
+    return any(
+        bool(expected.get(key))
+        for key in ("visual_sig", "text_sig", "semantic_sig", "screen_sig")
+    )
+
+
+def _match_failure_values(match: dict, expected_snapshot: dict, observed_snapshot: dict) -> tuple[str, str]:
+    expected_sig = str(match.get("expected_sig") or expected_snapshot.get("screen_sig") or "")
+    observed_sig = str(match.get("observed_sig") or observed_snapshot.get("screen_sig") or "")
+    return expected_sig, observed_sig
+
+
+def _observed_snapshot_from_session(session: _TargetSession) -> dict:
+    if hasattr(session, "canonical_snapshot_now"):
+        return session.canonical_snapshot_now()
+    return {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": ""}
+
+
+def _session_start_by_id(events: list[dict], sid: str) -> dict:
+    for ev in events:
+        if ev.get("type") == "session_start" and str(ev.get("session_id") or "") == sid:
+            return ev
+    return {"session_id": sid}
+
+
+def _state_for_session(cfg: ReplayConfig, sid: str, ev: dict | None = None) -> SessionReplayState:
+    session_cfg = _session_config_from_event(cfg, ev or {"session_id": sid})
+    return SessionReplayState(
+        session_id=sid,
+        config=session_cfg,
+        rows=session_cfg.rows,
+        cols=session_cfg.cols,
+        term=session_cfg.term,
+        encoding=session_cfg.encoding,
+        comparison_mode=session_cfg.comparison_mode,
+    )
+
+
+def compare_expected_observed(expected_snapshot: dict, observed_snapshot: dict, params: dict | None) -> dict:
+    return compare_signatures(
+        expected_snapshot,
+        observed_snapshot,
+        mode=_comparison_mode_from_params(params),
+        legacy_expected_screen_sig=str(expected_snapshot.get("screen_sig") or ""),
+        legacy_observed_screen_sig=str(observed_snapshot.get("screen_sig") or ""),
+    )
+
+
+def _wait_for_expected_observed(
+    *,
+    session: _TargetSession,
+    selector: selectors.BaseSelector,
+    expected_event: dict,
+    params: dict | None,
+    should_pause_or_cancel,
+    checkpoint_quiet_ms: int,
+    checkpoint_timeout_ms: int,
+) -> tuple[bool, dict, dict]:
+    expected_snapshot = _expected_snapshot_from_event(expected_event)
+    deadline = int(time.time() * 1000) + checkpoint_timeout_ms
+    last_observed = {}
+    last_match = compare_expected_observed(expected_snapshot, {}, params)
+    while int(time.time() * 1000) < deadline:
+        should_pause_or_cancel()
+        for _, _ in selector.select(timeout=0.05):
+            try:
+                session.read_out()
+            except Exception:
+                pass
+        quiet = int(time.time() * 1000) - session.last_out_ms
+        if quiet >= checkpoint_quiet_ms:
+            observed = _observed_snapshot_from_session(session)
+            last_observed = observed
+            last_match = compare_expected_observed(expected_snapshot, observed, params)
+            if last_match["matched"]:
+                return True, last_match, observed
+        time.sleep(0.02)
+    observed = last_observed or _observed_snapshot_from_session(session)
+    return False, compare_expected_observed(expected_snapshot, observed, params), observed
+
+
 def _should_apply_deterministic_input(on_failure, failure: dict, *, params: dict | None) -> bool:
     on_failure(failure)
     mode = _on_deterministic_mismatch(params)
@@ -296,12 +413,25 @@ def replay_strict_global_controlled(
     checkpoint_timeout_ms: int = 5000,
 ):
     sessions: dict[str, _TargetSession] = {}
+    states: dict[str, SessionReplayState] = {}
+    session_configs: dict[str, ReplayConfig] = {}
     sel = selectors.DefaultSelector()
     input_mode = _replay_input_mode(params)
 
-    def get_sess(sid: str) -> _TargetSession:
+    def remember_session_start(sid: str, ev: dict) -> None:
+        if sid not in session_configs:
+            state = _state_for_session(cfg, sid, ev)
+            states[sid] = state
+            session_configs[sid] = state.config
+
+    def get_sess(sid: str, ev: dict | None = None) -> _TargetSession:
         if sid not in sessions:
-            s = _TargetSession(cfg, sid)
+            if sid not in session_configs:
+                state = _state_for_session(cfg, sid, ev)
+                states[sid] = state
+                session_configs[sid] = state.config
+            s = _TargetSession(session_configs[sid], sid)
+            states[sid].engine = s.screen_state
             sessions[sid] = s
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
         return sessions[sid]
@@ -315,23 +445,26 @@ def replay_strict_global_controlled(
             except Exception:
                 pass
 
-    def wait_checkpoint(sid: str, expected_sig: str, seq_global: int, seq_session: int = 0):
+    def wait_checkpoint(sid: str, expected_event: dict, seq_global: int, seq_session: int = 0):
         s = get_sess(sid)
         deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-        last_got = ""
+        expected_snapshot = _expected_snapshot_from_event(expected_event)
+        last_observed = {}
         while int(time.time() * 1000) < deadline:
             should_pause_or_cancel()
             drain_output(0.05)
             quiet = int(time.time() * 1000) - s.last_out_ms
             if quiet >= cfg.checkpoint_quiet_ms:
-                got = s.signature_now()
-                last_got = got
-                match = evaluate_checkpoint_match(expected_sig, got, params)
+                observed = _observed_snapshot_from_session(s)
+                last_observed = observed
+                match = compare_expected_observed(expected_snapshot, observed, params)
                 if match["matched"]:
                     return
             time.sleep(0.02)
-        got = s.signature_now() or last_got
-        match = evaluate_checkpoint_match(expected_sig, got, params)
+        observed = last_observed or _observed_snapshot_from_session(s)
+        match = compare_expected_observed(expected_snapshot, observed, params)
+        expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
+        got = match.get("observed_sig") or observed.get("screen_sig") or ""
         failure_type, severity, reason = classify_checkpoint_failure(
             expected_sig=expected_sig,
             observed_sig=got,
@@ -367,39 +500,48 @@ def replay_strict_global_controlled(
             typ = ev.get("type") or ""
             sid = ev.get("session_id") or ""
 
+            if typ == "session_start" and sid:
+                remember_session_start(sid, ev)
+                continue
+
             if _is_replay_input_event(ev, input_mode=input_mode) and sid:
                 expected_sig = str(ev.get("screen_sig") or "") if input_mode == "deterministic" else ""
-                if expected_sig:
+                expected_snapshot = _expected_snapshot_from_event(ev)
+                if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, params):
                     try:
-                        wait_checkpoint(sid, expected_sig, seq_global, int(ev.get("seq_session") or 0))
+                        wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0))
                     except ReplayError:
                         if input_mode != "deterministic":
                             raise
+                        observed_snapshot = _observed_snapshot_from_session(get_sess(sid, ev))
+                        match = compare_expected_observed(expected_snapshot, observed_snapshot, params)
+                        expected_failure_sig, observed_failure_sig = _match_failure_values(match, expected_snapshot, observed_snapshot)
                         failure = _deterministic_failure(
                             sid=sid,
                             seq_global=seq_global,
                             seq_session=int(ev.get("seq_session") or 0),
-                            expected_sig=expected_sig,
-                            observed_sig=get_sess(sid).signature_now(),
+                            expected_sig=expected_failure_sig,
+                            observed_sig=observed_failure_sig,
                             params=params,
                             checkpoint_timeout_ms=checkpoint_timeout_ms,
                             checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
                             mode_label="strict-global-deterministic",
                             concurrent_mode=False,
+                            match=match,
                         )
                         if not _should_apply_deterministic_input(on_failure, failure, params=params):
                             on_progress(seq_global, None)
                             continue
                 data = _decode_replay_input(ev)
                 if data:
-                    s = get_sess(sid)
+                    s = get_sess(sid, ev)
                     s.write_in(data)
                 on_progress(seq_global, expected_sig or None)
                 drain_output(0.0)
             elif typ == "checkpoint" and sid:
                 expected_sig = ev.get("sig") or ""
                 if expected_sig:
-                    wait_checkpoint(sid, expected_sig, seq_global, int(ev.get("seq_session") or 0))
+                    wait_checkpoint(sid, _legacy_checkpoint_expected(expected_sig), seq_global, int(ev.get("seq_session") or 0))
                     on_progress(seq_global, expected_sig)
 
         end_deadline = time.time() + 0.25
@@ -433,7 +575,9 @@ def replay_parallel_sessions_controlled(
 
     for sid, events in per_session.items():
         should_pause_or_cancel()
-        s = _TargetSession(cfg, sid)
+        state = _state_for_session(cfg, sid, _session_start_by_id(events, sid))
+        s = _TargetSession(state.config, sid)
+        state.engine = s.screen_state
         sel = selectors.DefaultSelector()
         sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
         try:
@@ -443,38 +587,31 @@ def replay_parallel_sessions_controlled(
                 typ = ev.get("type") or ""
                 if _is_replay_input_event(ev, input_mode=input_mode):
                     expected_sig = str(ev.get("screen_sig") or "") if input_mode == "deterministic" else ""
-                    if expected_sig:
-                        deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-                        last_got = ""
-                        while int(time.time() * 1000) < deadline:
-                            should_pause_or_cancel()
-                            events2 = sel.select(timeout=0.05)
-                            for _, _ in events2:
-                                try:
-                                    _ = s.read_out()
-                                except Exception:
-                                    pass
-                            quiet = int(time.time() * 1000) - s.last_out_ms
-                            if quiet >= cfg.checkpoint_quiet_ms:
-                                got = s.signature_now()
-                                last_got = got
-                                match = evaluate_checkpoint_match(expected_sig, got, params)
-                                if match["matched"]:
-                                    break
-                            time.sleep(0.02)
-                        else:
-                            got = s.signature_now() or last_got
+                    expected_snapshot = _expected_snapshot_from_event(ev)
+                    if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, params):
+                        matched, match, observed = _wait_for_expected_observed(
+                            session=s,
+                            selector=sel,
+                            expected_event=ev,
+                            params=params,
+                            should_pause_or_cancel=should_pause_or_cancel,
+                            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                            checkpoint_timeout_ms=checkpoint_timeout_ms,
+                        )
+                        if not matched:
+                            expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
                             failure = _deterministic_failure(
                                 sid=sid,
                                 seq_global=seq_global,
                                 seq_session=int(ev.get("seq_session") or 0),
-                                expected_sig=expected_sig,
+                                expected_sig=expected_failure_sig,
                                 observed_sig=got,
                                 params=params,
                                 checkpoint_timeout_ms=checkpoint_timeout_ms,
                                 checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
                                 mode_label="parallel-sessions-deterministic",
                                 concurrent_mode=False,
+                                match=match,
                             )
                             if not _should_apply_deterministic_input(on_failure, failure, params=params):
                                 on_progress(seq_global, None)
@@ -486,27 +623,17 @@ def replay_parallel_sessions_controlled(
                 elif typ == "checkpoint":
                     expected_sig = ev.get("sig") or ""
                     if expected_sig:
-                        deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-                        last_got = ""
-                        while int(time.time() * 1000) < deadline:
-                            should_pause_or_cancel()
-                            events2 = sel.select(timeout=0.05)
-                            for _, _ in events2:
-                                try:
-                                    _ = s.read_out()
-                                except Exception:
-                                    pass
-                            quiet = int(time.time() * 1000) - s.last_out_ms
-                            if quiet >= cfg.checkpoint_quiet_ms:
-                                got = s.signature_now()
-                                last_got = got
-                                match = evaluate_checkpoint_match(expected_sig, got, params)
-                                if match["matched"]:
-                                    break
-                            time.sleep(0.02)
-                        else:
-                            got = s.signature_now() or last_got
-                            match = evaluate_checkpoint_match(expected_sig, got, params)
+                        matched, match, observed = _wait_for_expected_observed(
+                            session=s,
+                            selector=sel,
+                            expected_event=_legacy_checkpoint_expected(expected_sig),
+                            params=params,
+                            should_pause_or_cancel=should_pause_or_cancel,
+                            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                            checkpoint_timeout_ms=checkpoint_timeout_ms,
+                        )
+                        if not matched:
+                            got = match.get("observed_sig") or observed.get("screen_sig") or ""
                             failure_type, severity, reason = classify_checkpoint_failure(
                                 expected_sig=expected_sig,
                                 observed_sig=got,
@@ -616,7 +743,9 @@ def replay_parallel_sessions_concurrent_controlled(
                     return
 
             user_override = pick_user(sid)
-            s = _TargetSession(cfg, sid, target_user_override=user_override)
+            state = _state_for_session(cfg, sid, _session_start_by_id(events, sid))
+            s = _TargetSession(state.config, sid, target_user_override=user_override)
+            state.engine = s.screen_state
             sel = selectors.DefaultSelector()
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
             last_in_ts = None
@@ -645,38 +774,31 @@ def replay_parallel_sessions_concurrent_controlled(
                         last_in_ts = ts
 
                         expected_sig = str(ev.get("screen_sig") or "") if input_mode == "deterministic" else ""
-                        if expected_sig:
-                            deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-                            last_got = ""
-                            while int(time.time() * 1000) < deadline:
-                                should_pause_or_cancel()
-                                events2 = sel.select(timeout=0.05)
-                                for _, _ in events2:
-                                    try:
-                                        _ = s.read_out()
-                                    except Exception:
-                                        pass
-                                quiet = int(time.time() * 1000) - s.last_out_ms
-                                if quiet >= cfg.checkpoint_quiet_ms:
-                                    got = s.signature_now()
-                                    last_got = got
-                                    match = evaluate_checkpoint_match(expected_sig, got, load_params.__dict__)
-                                    if match["matched"]:
-                                        break
-                                time.sleep(0.02)
-                            else:
-                                got = s.signature_now() or last_got
+                        expected_snapshot = _expected_snapshot_from_event(ev)
+                        if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, load_params.__dict__):
+                            matched, match, observed = _wait_for_expected_observed(
+                                session=s,
+                                selector=sel,
+                                expected_event=ev,
+                                params=load_params.__dict__,
+                                should_pause_or_cancel=should_pause_or_cancel,
+                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                                checkpoint_timeout_ms=checkpoint_timeout_ms,
+                            )
+                            if not matched:
+                                expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
                                 failure = _deterministic_failure(
                                     sid=sid,
                                     seq_global=seq_global,
                                     seq_session=int(ev.get("seq_session") or 0),
-                                    expected_sig=expected_sig,
+                                    expected_sig=expected_failure_sig,
                                     observed_sig=got,
                                     params=load_params.__dict__,
                                     checkpoint_timeout_ms=checkpoint_timeout_ms,
                                     checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
                                     mode_label="parallel-sessions-concurrent-deterministic",
                                     concurrent_mode=True,
+                                    match=match,
                                 )
                                 msg = str(failure.get("message") or "")
                                 try:
@@ -699,28 +821,19 @@ def replay_parallel_sessions_concurrent_controlled(
                     elif typ == "checkpoint":
                         expected_sig = ev.get("sig") or ""
                         if expected_sig:
-                            deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-                            last_got = ""
-                            while int(time.time() * 1000) < deadline:
-                                should_pause_or_cancel()
-                                events2 = sel.select(timeout=0.05)
-                                for _, _ in events2:
-                                    try:
-                                        _ = s.read_out()
-                                    except Exception:
-                                        pass
-                                quiet = int(time.time() * 1000) - s.last_out_ms
-                                if quiet >= cfg.checkpoint_quiet_ms:
-                                    got = s.signature_now()
-                                    last_got = got
-                                    match = evaluate_checkpoint_match(expected_sig, got, load_params.__dict__)
-                                    if match["matched"]:
-                                        on_progress(seq_global, expected_sig)
-                                        break
-                                time.sleep(0.02)
+                            matched, match, observed = _wait_for_expected_observed(
+                                session=s,
+                                selector=sel,
+                                expected_event=_legacy_checkpoint_expected(expected_sig),
+                                params=load_params.__dict__,
+                                should_pause_or_cancel=should_pause_or_cancel,
+                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                                checkpoint_timeout_ms=checkpoint_timeout_ms,
+                            )
+                            if matched:
+                                on_progress(seq_global, expected_sig)
                             else:
-                                got = s.signature_now() or last_got
-                                match = evaluate_checkpoint_match(expected_sig, got, load_params.__dict__)
+                                got = match.get("observed_sig") or observed.get("screen_sig") or ""
                                 failure_type, severity, reason = classify_checkpoint_failure(
                                     expected_sig=expected_sig,
                                     observed_sig=got,

@@ -18,7 +18,7 @@ GATEWAY_DIR = ROOT / "gateway"
 sys.path.insert(0, str(GATEWAY_DIR))
 
 import dakota_gateway.auth as auth
-from dakota_gateway.replay_control import evaluate_checkpoint_match
+from dakota_gateway.replay_failures import evaluate_checkpoint_match
 from dakota_gateway.state_db import connect, init_db, now_ms
 
 CONTROL_SERVER_PATH = GATEWAY_DIR / "control" / "server.py"

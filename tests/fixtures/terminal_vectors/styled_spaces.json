@@ -1,0 +1,24 @@
+{
+  "name": "Styled spaces",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "G1s0Mm0gIBtbMG1Y"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "  X  ",
+    "text_sig": "sha256:106aad7439448237068086946f458a622cab2a552ec0b779590f0f204e846776",
+    "visual_sig": "sha256:3fad4bf728f35c7410d15c5654a9cd6e6de48e2a7856ade2d2161205aa715b74"
+  }
+}

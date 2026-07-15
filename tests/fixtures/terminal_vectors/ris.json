@@ -1,0 +1,24 @@
+{
+  "name": "RIS reset",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDG2Na"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 1,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "Z    ",
+    "text_sig": "sha256:b728abe85b7167875fda3613ba546a1468fddc2771981827a88fd33440f572c7",
+    "visual_sig": "sha256:583e9d31d3a56e7adc2fba469f401544e1fd2fb61ae41e96beadc7ee8c84a0dc"
+  }
+}

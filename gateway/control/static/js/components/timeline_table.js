@@ -3,7 +3,7 @@
  * Usado por: aba Eventos, aba Compliance, Replay (capture_session_replay.html)
  */
 import { escapeHtml, html, text } from "../core/dom.js";
-import { typeBadge, dirBadge, eventDetails, decodeBase64, resolveEventByteCount } from "./timeline_core.js";
+import { typeBadge, dirBadge, eventDetails, decodeEventForDisplay, resolveEventByteCount } from "./timeline_core.js";
 
 export function renderEventsTable(events, targetId = "#gw_recent_events", countId = "#gw_events_count") {
   if (!events.length) {
@@ -45,8 +45,12 @@ function formatCardContent(ev) {
     return ev.summary || "";
   }
   if (ev.type === "deterministic_input") return ev.summary || ev.key_text || ev.key_kind || "-";
-  if (ev.type === "bytes" && ev.data_b64) {
-    const data = decodeBase64(ev.data_b64);
+  if (ev.type === "bytes" && (ev.data_b64 || ev.data_b64_chunks)) {
+    if (typeof ev.data_decoded === "string") {
+      return ev.data_decoded.length > 600 ? ev.data_decoded.substring(0, 600) + "\u2026" : ev.data_decoded;
+    }
+    const fallbackEncoding = typeof window !== "undefined" ? window.DAKOTA_SESSION_ENCODING : "utf-8";
+    const data = decodeEventForDisplay(ev, ev.encoding || fallbackEncoding || "utf-8", "display");
     return data.length > 600 ? data.substring(0, 600) + "\u2026" : data;
   }
   return ev.data_decoded || ev.summary || "-";

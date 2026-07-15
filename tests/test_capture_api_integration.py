@@ -19,6 +19,7 @@ Cobertura:
 from __future__ import annotations
 
 import http.cookiejar
+import base64
 import importlib.util
 import json
 import os
@@ -121,6 +122,47 @@ class CaptureApiIntegrationTests(unittest.TestCase):
                 return exc.code, json.loads(raw_body) if raw_body.strip() else {}, dict(exc.headers)
             except Exception:
                 return exc.code, {"error": raw_body}, dict(exc.headers)
+
+    @classmethod
+    def _insert_capture(cls, log_dir: Path) -> int:
+        con = connect(cls.db_path)
+        try:
+            ts = now_ms()
+            cur = con.execute(
+                """
+                INSERT INTO capture_sessions(
+                    session_uuid, status, created_by, created_by_username,
+                    started_at_ms, ended_at_ms, environment_json,
+                    gateway_state_snapshot_json, log_dir, notes,
+                    session_count, event_count
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    f"api-test-{ts}",
+                    "finished",
+                    1,
+                    "admin",
+                    ts,
+                    ts,
+                    "{}",
+                    "{}",
+                    str(log_dir),
+                    "api-test",
+                    1,
+                    1,
+                ),
+            )
+            con.commit()
+            return int(cur.lastrowid)
+        finally:
+            con.close()
+
+    @staticmethod
+    def _write_audit(log_dir: Path, events: list[dict]) -> None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / "audit-0001.jsonl").open("w", encoding="utf-8") as fh:
+            for ev in events:
+                fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
     # ═══════════════════════════════════════════════════════════════════════
     # Autenticação
@@ -259,15 +301,96 @@ class CaptureApiIntegrationTests(unittest.TestCase):
             self.assertIn("error", payload)
 
     def test_replay_nonexistent_session_returns_error(self):
-        """Replay com session_id inexistente retorna erro."""
-        self._request("POST", "/api/gateway/activate", {})
-        caps = self._request("GET", "/api/captures")[1]
-        if caps.get("captures"):
-            cid = caps["captures"][0]["id"]
-            status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id=nonexistent-12345")
-            self.assertIn(status, [200, 404])
-            if status == 200:
-                self.assertIn("error", payload)
+        """Replay com session_id inexistente retorna 404 estruturado."""
+        log_dir = Path(self.tmpdir.name) / "capture-replay-missing-session"
+        self._write_audit(
+            log_dir,
+            [
+                {
+                    "type": "session_start",
+                    "v": "v1",
+                    "seq_global": 1,
+                    "ts_ms": 1000,
+                    "actor": "test",
+                    "session_id": "existing-session",
+                    "seq_session": 1,
+                }
+            ],
+        )
+        cid = self._insert_capture(log_dir)
+        status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id=nonexistent-12345")
+        self.assertEqual(status, 404)
+        self.assertEqual(payload.get("error", {}).get("code"), "session_not_found")
+
+    def test_replay_byte_count_mismatch_returns_200_with_warning(self):
+        """Replay com byte_count inconsistente retorna 200 com warning estruturado."""
+        session_id = "bad-bytes-session"
+        log_dir = Path(self.tmpdir.name) / "capture-replay-bad-bytes"
+        self._write_audit(
+            log_dir,
+            [
+                {
+                    "type": "session_start",
+                    "v": "v1",
+                    "seq_global": 1,
+                    "ts_ms": 1000,
+                    "actor": "test",
+                    "session_id": session_id,
+                    "seq_session": 1,
+                },
+                {
+                    "type": "bytes",
+                    "v": "v1",
+                    "seq_global": 2,
+                    "ts_ms": 1100,
+                    "actor": "test",
+                    "session_id": session_id,
+                    "seq_session": 2,
+                    "dir": "out",
+                    "n": 1,
+                    "data_b64": base64.b64encode(b"HELLO").decode("ascii"),
+                },
+            ],
+        )
+        cid = self._insert_capture(log_dir)
+        status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id={session_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["timeline"][0]["integrity_warning"]["integrity_error"], "byte_count_mismatch")
+
+    def test_replay_invalid_base64_returns_422(self):
+        """Replay com Base64 impossivel retorna 422 estruturado."""
+        session_id = "invalid-base64-session"
+        log_dir = Path(self.tmpdir.name) / "capture-replay-invalid-base64"
+        self._write_audit(
+            log_dir,
+            [
+                {
+                    "type": "session_start",
+                    "v": "v1",
+                    "seq_global": 1,
+                    "ts_ms": 1000,
+                    "actor": "test",
+                    "session_id": session_id,
+                    "seq_session": 1,
+                },
+                {
+                    "type": "bytes",
+                    "v": "v1",
+                    "seq_global": 2,
+                    "ts_ms": 1100,
+                    "actor": "test",
+                    "session_id": session_id,
+                    "seq_session": 2,
+                    "dir": "out",
+                    "n": 99,
+                    "data_b64": "not base64!!!",
+                },
+            ],
+        )
+        cid = self._insert_capture(log_dir)
+        status, payload, _ = self._request("GET", f"/api/captures/{cid}/replay?session_id={session_id}")
+        self.assertEqual(status, 422)
+        self.assertEqual(payload["timeline"][0]["integrity_warning"]["integrity_error"], "invalid_base64")
 
     # ═══════════════════════════════════════════════════════════════════════
     # Delete

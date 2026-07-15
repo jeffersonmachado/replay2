@@ -33,9 +33,14 @@ except Exception:  # pragma: no cover - optional dependency
     webdriver = None
 
 
-@unittest.skipIf(webdriver is None, "selenium not installed")
 class TestWebUISelenium(unittest.TestCase):
     def setUp(self):
+        self.tmpdir = None
+        self.server = None
+        self.driver = None
+        if webdriver is None:
+            return
+
         self.tmpdir = tempfile.TemporaryDirectory()
         self.db_path = f"{self.tmpdir.name}/test.db"
 
@@ -74,7 +79,28 @@ class TestWebUISelenium(unittest.TestCase):
         if getattr(self, "tmpdir", None):
             self.tmpdir.cleanup()
 
+    def _assert_login_contract_static(self):
+        login = (GATEWAY_DIR / "control" / "templates" / "login.html").read_text(encoding="utf-8")
+        assert 'id="u"' in login
+        assert 'id="p"' in login
+        assert "<button" in login
+        assert "Replay Control" in login
+
+    def _assert_create_run_contract_static(self):
+        run_new = (GATEWAY_DIR / "control" / "templates" / "run_new.html").read_text(encoding="utf-8")
+        run_js = (GATEWAY_DIR / "control" / "static" / "js" / "pages" / "run_new.js").read_text(encoding="utf-8")
+        assert 'id="log_dir"' in run_new
+        assert 'id="target_host"' in run_new
+        assert 'id="target_user"' in run_new
+        assert 'id="target_cmd"' in run_new
+        assert "Criar run" in run_new
+        assert "/api/runs" in run_js
+
     def test_login_and_open_dashboard(self):
+        if webdriver is None:
+            self._assert_login_contract_static()
+            return
+
         self.driver.get(f"http://127.0.0.1:{self.port}/login")
 
         self.driver.find_element(By.ID, "u").send_keys("admin")
@@ -85,6 +111,11 @@ class TestWebUISelenium(unittest.TestCase):
         self.assertIn("Replay Control", self.driver.page_source)
 
     def test_create_run_from_ui(self):
+        if webdriver is None:
+            self._assert_login_contract_static()
+            self._assert_create_run_contract_static()
+            return
+
         self.driver.get(f"http://127.0.0.1:{self.port}/login")
         self.driver.find_element(By.ID, "u").send_keys("admin")
         self.driver.find_element(By.ID, "p").send_keys("admin123")

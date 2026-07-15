@@ -1,0 +1,24 @@
+{
+  "name": "CP850 decoding",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "cp850",
+  "chunks_b64": [
+    "gg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 1,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "é    ",
+    "text_sig": "sha256:83775f23e4cdb43a37482a7be3250bb023283bd7e8d5c59918f8488095b3dbb0",
+    "visual_sig": "sha256:2fa6a76d8b35ced1a89d4d461d05d58654cff7d266fe04698bfe1517d53c8f7e"
+  }
+}

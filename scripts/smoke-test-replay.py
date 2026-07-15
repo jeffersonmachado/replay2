@@ -96,7 +96,7 @@ def main():
     rows, cols = geom.get("rows"), geom.get("cols")
     src = geom.get("geometry_source", "?")
     check(rows and cols, f"geometry: {rows}x{cols} (source={src})", f"rows={rows} cols={cols}")
-    check(src in ("session_metadata", "pty_resize", "legacy_fallback"), f"geometry_source válido: {src}")
+    check(src in ("explicit", "session_metadata", "tty", "environment", "resize_event", "legacy_fallback"), f"geometry_source válido: {src}")
 
     # 2. Encoding
     print("--- 2. Encoding ---")

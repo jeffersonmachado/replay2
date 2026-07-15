@@ -1,0 +1,24 @@
+{
+  "name": "Basic text",
+  "rows": 3,
+  "cols": 10,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJD"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "ABC       \n          \n          ",
+    "text_sig": "sha256:7f115e3e224f70d890a868be113afd315aa9d6574af19f876c2ae23040c7fd22",
+    "visual_sig": "sha256:e1ef197aec45823d6b1b102206236c39a20a70b63cd310660958b73a5129b9ca"
+  }
+}

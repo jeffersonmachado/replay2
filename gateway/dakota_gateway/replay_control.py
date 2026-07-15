@@ -19,6 +19,7 @@ from .replay_failures import (
     evaluate_checkpoint_match,
 )
 from .replay_run_state import add_run_event, get_run, set_run_status, update_progress
+from .terminal_config import TerminalGeometry, normalize_encoding, validate_terminal_geometry
 
 import base64
 import selectors
@@ -81,6 +82,37 @@ def _iter_events(log_dir: str):
                     continue
                 if isinstance(ev, dict):
                     yield ev
+
+
+def _first_session_start(log_dir: str, session_id: str | None = None) -> dict:
+    clean_sid = str(session_id or "").strip()
+    for ev in _iter_events(log_dir):
+        if isinstance(ev, dict) and ev.get("type") == "session_start":
+            if clean_sid and str(ev.get("session_id") or "").strip() != clean_sid:
+                continue
+            return ev
+    return {}
+
+
+def _terminal_options_from_run(log_dir: str, params: dict) -> dict:
+    session_start = _first_session_start(log_dir, params.get("replay_session_id"))
+    try:
+        if session_start.get("rows") is not None and session_start.get("cols") is not None:
+            geom = validate_terminal_geometry(int(session_start.get("rows")), int(session_start.get("cols")))
+        else:
+            geom = TerminalGeometry(25, 80)
+        if params.get("rows") is not None or params.get("cols") is not None:
+            rows = geom.rows if params.get("rows") is None else int(params.get("rows"))
+            cols = geom.cols if params.get("cols") is None else int(params.get("cols"))
+            geom = validate_terminal_geometry(rows, cols)
+    except Exception:
+        geom = TerminalGeometry(25, 80)
+    return {
+        "rows": geom.rows,
+        "cols": geom.cols,
+        "term": str(params.get("term") or session_start.get("term") or "xterm"),
+        "encoding": normalize_encoding(params.get("encoding") or session_start.get("encoding") or "utf-8"),
+    }
 
 
 def _normalize_replay_window_params(params: dict | None) -> dict:
@@ -982,6 +1014,14 @@ class Runner:
             # Update progress by scanning seq_end from manifests when available.
             wait_if_paused_or_cancelled()
 
+            params = {}
+            try:
+                if run["params_json"]:
+                    params = json.loads(run["params_json"]) if isinstance(run["params_json"], str) else {}
+            except Exception:
+                params = {}
+            term_opts = _terminal_options_from_run(run["log_dir"], params)
+
             cfg = ReplayConfig(
                 log_dir=run["log_dir"],
                 target_host=run["target_host"],
@@ -992,6 +1032,10 @@ class Runner:
                 gateway_host=str(params.get("gateway_host") or ""),
                 gateway_user=str(params.get("gateway_user") or ""),
                 gateway_port=int(params.get("gateway_port") or 0),
+                rows=term_opts["rows"],
+                cols=term_opts["cols"],
+                term=term_opts["term"],
+                encoding=term_opts["encoding"],
             )
 
             # Runner executes replay synchronously; pause/cancel are checked between coarse phases.
@@ -1012,13 +1056,6 @@ class Runner:
             def should_pause_or_cancel():
                 wait_if_paused_or_cancelled()
 
-            # Load-test params
-            params = {}
-            try:
-                if run["params_json"]:
-                    params = json.loads(run["params_json"]) if isinstance(run["params_json"], str) else {}
-            except Exception:
-                params = {}
             cfg.input_mode = _replay_input_mode(params)
             cfg.on_deterministic_mismatch = _on_deterministic_mismatch(params)
 

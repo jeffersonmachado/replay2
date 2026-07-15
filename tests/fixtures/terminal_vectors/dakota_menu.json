@@ -1,0 +1,24 @@
+{
+  "name": "Dakota menu sample",
+  "rows": 5,
+  "cols": 30,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "G1syShtbSBsoMGxxcXFxcXFxcWsbKEINCk1lbnUgRGFrb3RhDQpPcGNhbzogMQ=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 2,
+      "col": 8,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "┌────────┐                    \nMenu Dakota                   \nOpcao: 1                      \n                              \n                              ",
+    "text_sig": "sha256:2279f7427d36ab2ba6517d3650e3bc0fa82531f37817e8db066224fd772bac7a",
+    "visual_sig": "sha256:1fef85abee8413071d28dc8a057f68b59141433b25ac0f774f4dd5559d9acf1b"
+  }
+}

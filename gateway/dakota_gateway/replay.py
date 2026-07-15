@@ -17,7 +17,8 @@ try:
 except Exception:  # pragma: no cover
     termios = None
 
-from .screen import build_screen_snapshot_from_bytes
+from .screen import TerminalScreenState
+from .terminal_config import normalize_encoding, validate_terminal_geometry
 
 
 @dataclass
@@ -44,6 +45,12 @@ class ReplayConfig:
     input_mode: str = "raw"
     on_deterministic_mismatch: str = "fail-fast"
 
+    def __post_init__(self) -> None:
+        geom = validate_terminal_geometry(int(self.rows), int(self.cols))
+        self.rows = geom.rows
+        self.cols = geom.cols
+        self.encoding = normalize_encoding(self.encoding)
+
 
 class ReplayError(Exception):
     pass
@@ -66,7 +73,7 @@ class _TargetSession:
             env=dict(os.environ, TERM=cfg.term),
         )
         os.close(self.slave_fd)
-        self.screen_buf = b""
+        self.screen_state = TerminalScreenState(rows=cfg.rows, cols=cfg.cols, encoding=cfg.encoding)
         self.last_out_ms = int(time.time() * 1000)
 
     @staticmethod
@@ -129,13 +136,11 @@ class _TargetSession:
         data = os.read(self.master_fd, 8192)
         if data:
             self.last_out_ms = int(time.time() * 1000)
-            self.screen_buf += data
-            if len(self.screen_buf) > self.cfg.max_screen_bytes:
-                self.screen_buf = self.screen_buf[-self.cfg.max_screen_bytes :]
+            self.screen_state.feed_bytes(data)
         return data
 
     def signature_now(self) -> str:
-        return build_screen_snapshot_from_bytes(self.screen_buf).screen_sig
+        return self.screen_state.snapshot().screen_sig
 
 
 def _decode_replay_input(ev: dict) -> bytes:

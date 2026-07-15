@@ -1,0 +1,24 @@
+{
+  "name": "OSC ST consumed",
+  "rows": 1,
+  "cols": 6,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QRtdMDt0aXRsZRtcQg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 2,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "AB    ",
+    "text_sig": "sha256:5404adfe8da96114761c2298134f535d95aba397c37afe91fe23ffc8427bf8ab",
+    "visual_sig": "sha256:f7ca196ac3dbbcc7260baad16a6cb5145062690932da458f444baccc5f365c7c"
+  }
+}

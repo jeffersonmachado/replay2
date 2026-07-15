@@ -1,0 +1,24 @@
+{
+  "name": "Erase display",
+  "rows": 3,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDREUKMTIzNDUbWzE7M0gbWzBK"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 2,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "AB   \n     \n     ",
+    "text_sig": "sha256:d6f59e63e729d382ed466549de900566d9bdddfd84a207748db3f586bc397ec7",
+    "visual_sig": "sha256:ab17d85a6a4370a38dd1416f68b7602f58af7322eeb3a44e08f38ee05fbe64d6"
+  }
+}

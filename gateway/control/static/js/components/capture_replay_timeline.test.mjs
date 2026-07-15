@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { decodeEventForDisplay, normalizeDisplayEncoding } from './timeline_core.js';
 
 const require = createRequire(import.meta.url);
 const vt = require('../virtual_terminal.cjs');
@@ -172,4 +173,45 @@ test('encoding CP850 via feedBase64 produces correct char', () => {
   const items = buildTimelineItems(events, deps);
   assert.equal(items.length, 1);
   assert.equal(items[0].snapshot.cells[0].ch, 'é', 'CP850: 0x82 = é');
+});
+
+test('grouped base64 keeps chunks and does not concatenate padded strings', () => {
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'QQ==', n_bytes: 1 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'Qg==', n_bytes: 1 },
+  ];
+  const items = buildTimelineItems(events, makeDeps());
+  assert.deepEqual(items[0].data_b64_chunks, ['QQ==', 'Qg==']);
+  assert.notEqual(items[0].data_b64, 'QQ==Qg==');
+  assert.equal(Buffer.from(items[0].data_b64, 'base64').toString('utf8'), 'AB');
+});
+
+test('grouped base64 round-trip handles three one-byte chunks and UTF-8 split', () => {
+  const events = [
+    { seq_global: 1, ts_ms: 1000, type: 'bytes', direction: 'out', data_b64: 'ww==', n_bytes: 1 },
+    { seq_global: 2, ts_ms: 1100, type: 'bytes', direction: 'out', data_b64: 'oQ==', n_bytes: 1 },
+    { seq_global: 3, ts_ms: 1200, type: 'bytes', direction: 'out', data_b64: 'IQ==', n_bytes: 1 },
+  ];
+  const items = buildTimelineItems(events, makeDeps());
+  assert.deepEqual(items[0].data_b64_chunks, ['ww==', 'oQ==', 'IQ==']);
+  assert.equal(Buffer.from(items[0].data_b64, 'base64').toString('hex'), 'c3a121');
+  assert.equal(items[0].snapshot.cells[0].ch, 'á');
+  assert.equal(items[0].snapshot.cells[1].ch, '!');
+});
+
+test('detailed display decodes UTF-8 and falls back unknown encoding to UTF-8', () => {
+  assert.equal(normalizeDisplayEncoding('x-unknown-codepage'), 'utf-8');
+  const event = { type: 'bytes', data_b64: 'w6E=', encoding: 'x-unknown-codepage' };
+  assert.equal(decodeEventForDisplay(event, 'utf-8', 'display'), 'á');
+});
+
+test('detailed display decodes CP850 and CP437 without browser TextDecoder support', () => {
+  assert.equal(decodeEventForDisplay({ type: 'bytes', data_b64: 'gg==', encoding: 'cp850' }), 'é');
+  assert.equal(decodeEventForDisplay({ type: 'bytes', data_b64: 'xNo=', encoding: 'cp437' }), '─┌');
+});
+
+test('detailed display sanitizes ANSI after decoding', () => {
+  const event = { type: 'bytes', data_b64: Buffer.from('\x1b[31má\x1b[0m', 'utf8').toString('base64'), encoding: 'utf-8' };
+  assert.equal(decodeEventForDisplay(event, 'utf-8', 'display'), 'á');
+  assert.equal(decodeEventForDisplay(event, 'utf-8', 'raw'), '\x1b[31má\x1b[0m');
 });

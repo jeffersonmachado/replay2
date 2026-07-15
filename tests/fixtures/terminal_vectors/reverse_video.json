@@ -1,0 +1,24 @@
+{
+  "name": "Reverse video",
+  "rows": 1,
+  "cols": 8,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "G1s3bUEgG1swbUI="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "A B     ",
+    "text_sig": "sha256:40b1698970b88cda6d9f71f2fc1405006be5f9be96c0b82e382f937b12de99ed",
+    "visual_sig": "sha256:0657056e81585b7f506b65fd234e949fc350cb6202441a438d335d80452b8eb6"
+  }
+}

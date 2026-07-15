@@ -1,0 +1,24 @@
+{
+  "name": "DEC G0 box drawing",
+  "rows": 1,
+  "cols": 4,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "GygwbHFxaxsoQg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": true
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "┌──┐",
+    "text_sig": "sha256:953dded27b3cfb10083b56fec15b06fc48f497bf45252c04f3f2cf0ba6735401",
+    "visual_sig": "sha256:832cf62e174132cf00530e99502ee00ed59b4cfb0c28aacdddcc2e48d1833c2b"
+  }
+}

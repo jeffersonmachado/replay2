@@ -68,9 +68,23 @@ proc start_legacy_session {cfg} {
         error "Config inválida: legacy_cmd vazio (use --legacy-cmd ou DAKOTA_LEGACY_CMD)"
     }
 
+    set oldTermExists [info exists ::env(TERM)]
+    if {$oldTermExists} { set oldTerm $::env(TERM) }
+    set ::env(TERM) [dict get $cfg term]
+
     # `-nottycopy` e `-nottyinit` evitam interferência com terminais interativos.
     # Observação: `spawn` aceita um comando como lista.
-    eval [linsert $cmd 0 spawn -nottycopy -nottyinit]
+    set rc [catch {eval [linsert $cmd 0 spawn -nottycopy -nottyinit]} err opts]
+    if {$oldTermExists} {
+        set ::env(TERM) $oldTerm
+    } else {
+        catch {unset ::env(TERM)}
+    }
+    if {$rc != 0} { return -options $opts $err }
+
+    if {[info exists spawn_out(slave,name)]} {
+        catch {exec stty rows [dict get $cfg rows] columns [dict get $cfg cols] < $spawn_out(slave,name)}
+    }
 
     # Configuração básica do canal Expect/resultante (encoding).
     fconfigure $spawn_id \
@@ -242,5 +256,4 @@ proc main {} {
 }
 
 main
-
 

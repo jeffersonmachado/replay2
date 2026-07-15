@@ -1,0 +1,24 @@
+{
+  "name": "Cursor overwrite",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDREUNWg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 1,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "ZBCDE",
+    "text_sig": "sha256:f47138fd90f4eed056fc957525394f5e41856ac1c14ae61e9df3ac6250a7a6f1",
+    "visual_sig": "sha256:94207a9a7075614c543768bdfbaa0a46648e2ba01a72cb1558676dcc1f2a4c78"
+  }
+}

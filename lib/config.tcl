@@ -60,6 +60,9 @@ Opções:
   --legacy-cmd <tcl_list>     Comando do legado como lista Tcl.
                              Ex: --legacy-cmd "{ssh user@host legacy_app}"
   --encoding <enc>            Encoding (default: utf-8)
+  --rows <n>                  Linhas do terminal/PTY (default: 25)
+  --cols <n>                  Colunas do terminal/PTY (default: 80)
+  --term <name>               TERM aplicado ao processo legado (default: xterm)
   --translation <mode>        Translation (default: crlf)
   --capture-timeout <secs>    Timeout total de captura (default: 2.0)
   --capture-quiet-ms <ms>     Silêncio para considerar captura estável (default: 200)
@@ -80,9 +83,22 @@ Opções:
 
 Env vars (alternativas):
   DAKOTA_LEGACY_CMD, DAKOTA_ENCODING, DAKOTA_LOG_LEVEL, DAKOTA_LOG_FORMAT,
-  DAKOTA_LOG_STREAM, DAKOTA_DUMP_DIR, DAKOTA_SCREENS_DIR, DAKOTA_PLUGINS_FILE,
+  DAKOTA_ROWS, DAKOTA_COLS, DAKOTA_TERM, DAKOTA_LOG_STREAM, DAKOTA_DUMP_DIR, DAKOTA_SCREENS_DIR, DAKOTA_PLUGINS_FILE,
   DAKOTA_RECORD_FILE, DAKOTA_CONTROL_PORT, DAKOTA_CONTROL_BIND
 }]\n
+}
+
+proc ::config::validate_geometry {rows cols} {
+    if {![string is integer -strict $rows] || ![string is integer -strict $cols]} {
+        error "Geometria inválida: rows/cols devem ser inteiros"
+    }
+    set r [expr {int($rows)}]
+    set c [expr {int($cols)}]
+    if {$r < 1 || $c < 1} { error "Geometria inválida: rows/cols devem ser positivos" }
+    if {$r > 200} { error "Geometria inválida: rows acima do limite 200" }
+    if {$c > 500} { error "Geometria inválida: cols acima do limite 500" }
+    if {$r * $c > 100000} { error "Geometria inválida: total de células acima do limite 100000" }
+    return [list $r $c]
 }
 
 proc ::config::parse_argv {argv app_root} {
@@ -93,6 +109,10 @@ proc ::config::parse_argv {argv app_root} {
     set cfg [dict create \
         legacy_cmd {} \
         encoding "utf-8" \
+        rows 25 \
+        cols 80 \
+        term "xterm" \
+        geometry_source "legacy_fallback" \
         translation "crlf" \
         capture_timeout 2.0 \
         capture_quiet_ms 200 \
@@ -116,6 +136,24 @@ proc ::config::parse_argv {argv app_root} {
     }
     if {[info exists ::env(DAKOTA_ENCODING)] && $::env(DAKOTA_ENCODING) ne ""} {
         dict set cfg encoding $::env(DAKOTA_ENCODING)
+    }
+    if {[info exists ::env(DAKOTA_ROWS)] && $::env(DAKOTA_ROWS) ne "" && [info exists ::env(DAKOTA_COLS)] && $::env(DAKOTA_COLS) ne ""} {
+        lassign [::config::validate_geometry $::env(DAKOTA_ROWS) $::env(DAKOTA_COLS)] r c
+        dict set cfg rows $r
+        dict set cfg cols $c
+        dict set cfg geometry_source "environment"
+    } elseif {[info exists ::env(LINES)] && $::env(LINES) ne "" && [info exists ::env(COLUMNS)] && $::env(COLUMNS) ne ""} {
+        if {![catch {::config::validate_geometry $::env(LINES) $::env(COLUMNS)} geom]} {
+            lassign $geom r c
+            dict set cfg rows $r
+            dict set cfg cols $c
+            dict set cfg geometry_source "environment"
+        }
+    }
+    if {[info exists ::env(DAKOTA_TERM)] && $::env(DAKOTA_TERM) ne ""} {
+        dict set cfg term $::env(DAKOTA_TERM)
+    } elseif {[info exists ::env(TERM)] && $::env(TERM) ne ""} {
+        dict set cfg term $::env(TERM)
     }
     if {[info exists ::env(DAKOTA_LOG_LEVEL)] && $::env(DAKOTA_LOG_LEVEL) ne ""} {
         dict set cfg log_level $::env(DAKOTA_LOG_LEVEL)
@@ -163,6 +201,26 @@ proc ::config::parse_argv {argv app_root} {
             --encoding {
                 incr i
                 dict set cfg encoding [lindex $argv $i]
+            }
+            --rows {
+                incr i
+                set rows [lindex $argv $i]
+                lassign [::config::validate_geometry $rows [dict get $cfg cols]] r c
+                dict set cfg rows $r
+                dict set cfg cols $c
+                dict set cfg geometry_source "explicit"
+            }
+            --cols {
+                incr i
+                set cols [lindex $argv $i]
+                lassign [::config::validate_geometry [dict get $cfg rows] $cols] r c
+                dict set cfg rows $r
+                dict set cfg cols $c
+                dict set cfg geometry_source "explicit"
+            }
+            --term {
+                incr i
+                dict set cfg term [lindex $argv $i]
             }
             --translation {
                 incr i
@@ -233,4 +291,3 @@ proc ::config::parse_argv {argv app_root} {
 
     return $cfg
 }
-

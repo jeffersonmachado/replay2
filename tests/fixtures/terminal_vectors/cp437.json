@@ -1,0 +1,24 @@
+{
+  "name": "CP437 decoding",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "cp437",
+  "chunks_b64": [
+    "s8Q="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 2,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "│─   ",
+    "text_sig": "sha256:847fc5cb6da87e896a5e494bf03e89423ce2528b2a582d71e90464ea4a7a933e",
+    "visual_sig": "sha256:ef46c8bfd169c0864e36256aa1041dc730a1bfbda1b9bb2736897962e12de151"
+  }
+}

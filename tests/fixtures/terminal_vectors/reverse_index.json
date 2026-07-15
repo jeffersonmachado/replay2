@@ -1,0 +1,24 @@
+{
+  "name": "Reverse index",
+  "rows": 2,
+  "cols": 4,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QRtNWg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 2,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": " Z  \nA   ",
+    "text_sig": "sha256:100a7f6c67bbc0c3464fffa9cdc5b76ceba706d35b017f93e5a2b64c9cbd52e8",
+    "visual_sig": "sha256:eb8c96f0b530a09ae6011aa4112a77994fc719481fddf3ef4ef33920079b832a"
+  }
+}

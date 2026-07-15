@@ -20,9 +20,11 @@ from .audit_writer import AuditWriter, b64
 from .schema import AuditEvent
 from .screen import (
     ScreenSnapshot,
+    TerminalScreenState,
     build_screen_snapshot_from_bytes,
     split_input_for_deterministic_record,
 )
+from .terminal_config import normalize_encoding, validate_terminal_geometry
 
 
 def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
@@ -76,10 +78,17 @@ class GatewayConfig:
     cols: int = 80
     term: str = "xterm"
     encoding: str = "utf-8"
+    geometry_source: str = "legacy_fallback"
 
     checkpoint_quiet_ms: int = 250
     checkpoint_min_bytes: int = 512
     max_screen_bytes: int = 65535
+
+    def __post_init__(self) -> None:
+        geom = validate_terminal_geometry(int(self.rows), int(self.cols))
+        self.rows = geom.rows
+        self.cols = geom.cols
+        self.encoding = normalize_encoding(self.encoding)
 
 
 @dataclass
@@ -162,17 +171,28 @@ class TerminalGateway:
         do buffer cru. A assinatura visual (visual_sig) e gerada no frontend
         pelo terminal virtual.
         """
-        return build_screen_snapshot_from_bytes(screen_buf)
+        return build_screen_snapshot_from_bytes(
+            screen_buf,
+            encoding=self.cfg.encoding,
+            rows=self.cfg.rows,
+            cols=self.cfg.cols,
+        )
+
+    def _screen_snapshot_from_state(self, screen_state: TerminalScreenState) -> ScreenSnapshot:
+        return screen_state.snapshot()
 
     def _select_snapshot_for_input(
         self,
         *,
-        screen_buf: bytes,
+        screen_buf: bytes = b"",
+        screen_state: TerminalScreenState | None = None,
         stable_state: _StableScreenState,
         now_ms: int,
     ) -> tuple[ScreenSnapshot, str, int | None]:
         if stable_state.snapshot is not None and stable_state.ts_ms > 0:
             return stable_state.snapshot, "stable", max(0, now_ms - stable_state.ts_ms)
+        if screen_state is not None and screen_state.bytes_seen > 0:
+            return self._screen_snapshot_from_state(screen_state), "terminal_state", None
         if screen_buf:
             return self._screen_snapshot_from_buf(screen_buf), "buffer", None
         return self._screen_snapshot_from_buf(b""), "empty", None
@@ -181,12 +201,14 @@ class TerminalGateway:
         self,
         *,
         data: bytes,
-        screen_buf: bytes,
+        screen_buf: bytes = b"",
+        screen_state: TerminalScreenState | None = None,
         stable_state: _StableScreenState,
         now_ms: int,
     ) -> list[AuditEvent]:
         snapshot, screen_source, snapshot_age_ms = self._select_snapshot_for_input(
             screen_buf=screen_buf,
+            screen_state=screen_state,
             stable_state=stable_state,
             now_ms=now_ms,
         )
@@ -230,13 +252,15 @@ class TerminalGateway:
         self,
         *,
         data: bytes,
-        screen_buf: bytes,
+        screen_buf: bytes = b"",
+        screen_state: TerminalScreenState | None = None,
         stable_state: _StableScreenState,
         now_ms: int,
     ) -> list[AuditEvent]:
         events = self._build_deterministic_events_for_input(
             data=data,
             screen_buf=screen_buf,
+            screen_state=screen_state,
             stable_state=stable_state,
             now_ms=now_ms,
         )
@@ -304,6 +328,7 @@ class TerminalGateway:
                 source_command=command,
                 rows=self.cfg.rows, cols=self.cfg.cols,
                 term=self.cfg.term, encoding=self.cfg.encoding,
+                geometry_source=self.cfg.geometry_source,
             )
         )
         try:
@@ -403,35 +428,36 @@ class TerminalGateway:
                 source_command=self.cfg.source_command,
                 rows=self.cfg.rows, cols=self.cfg.cols,
                 term=self.cfg.term, encoding=self.cfg.encoding,
+                geometry_source=self.cfg.geometry_source,
             )
         )
 
-        screen_buf = b""
+        screen_state = TerminalScreenState(rows=self.cfg.rows, cols=self.cfg.cols, encoding=self.cfg.encoding)
         last_out_ms = self._ts_ms()
         last_checkpoint_ms = 0
         stable_state = _StableScreenState()
         screen_dirty = False
 
         def maybe_checkpoint(force: bool = False):
-            nonlocal screen_buf, last_checkpoint_ms, stable_state, screen_dirty
+            nonlocal last_checkpoint_ms, stable_state, screen_dirty
             now = self._ts_ms()
             quiet = now - last_out_ms
             if not force:
                 if quiet < self.cfg.checkpoint_quiet_ms:
                     return
-            if screen_dirty or (force and stable_state.snapshot is None and screen_buf):
+            if screen_dirty or (force and stable_state.snapshot is None and screen_state.bytes_seen > 0):
                 stable_state = _StableScreenState(
-                    snapshot=self._screen_snapshot_from_buf(screen_buf),
+                    snapshot=self._screen_snapshot_from_state(screen_state),
                     ts_ms=now,
                     source="stable",
                 )
                 screen_dirty = False
-            if len(screen_buf) < self.cfg.checkpoint_min_bytes:
+            if screen_state.bytes_seen < self.cfg.checkpoint_min_bytes:
                 return
             if not force and now - last_checkpoint_ms < self.cfg.checkpoint_quiet_ms:
                 return
 
-            snapshot = stable_state.snapshot or self._screen_snapshot_from_buf(screen_buf)
+            snapshot = stable_state.snapshot or self._screen_snapshot_from_state(screen_state)
             # only checkpoint when signature has TIT (like replay2 loop)
             if "TIT=" not in snapshot.screen_sig:
                 return
@@ -470,7 +496,7 @@ class TerminalGateway:
                         event_ts_ms = self._ts_ms()
                         for ev in self._build_audit_events_for_input(
                             data=data,
-                            screen_buf=screen_buf,
+                            screen_state=screen_state,
                             stable_state=stable_state,
                             now_ms=event_ts_ms,
                         ):
@@ -501,10 +527,7 @@ class TerminalGateway:
                             )
                         )
                         last_out_ms = self._ts_ms()
-                        screen_buf += data
-                        screen_buf = _apply_screen_boundaries(screen_buf)
-                        if len(screen_buf) > self.cfg.max_screen_bytes:
-                            screen_buf = screen_buf[-self.cfg.max_screen_bytes :]
+                        screen_state.feed_bytes(data)
                         screen_dirty = True
 
                 maybe_checkpoint(force=False)

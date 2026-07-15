@@ -12,6 +12,7 @@ ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 [ -d "$ROOT_DIR/bin" ] || die "não achei $ROOT_DIR/bin"
 [ -d "$ROOT_DIR/lib" ] || die "não achei $ROOT_DIR/lib"
 [ -d "$ROOT_DIR/screens" ] || die "não achei $ROOT_DIR/screens"
+[ -d "$ROOT_DIR/examples" ] || die "não achei $ROOT_DIR/examples"
 [ -f "$ROOT_DIR/install.sh" ] || die "não achei $ROOT_DIR/install.sh"
 [ -f "$ROOT_DIR/uninstall.sh" ] || die "não achei $ROOT_DIR/uninstall.sh"
 
@@ -37,7 +38,7 @@ mkdir -p "$STAGE_DIR"
 
 info "Staging em: $STAGE_DIR"
 
-cp -R "$ROOT_DIR/bin" "$ROOT_DIR/lib" "$ROOT_DIR/screens" "$STAGE_DIR/"
+cp -R "$ROOT_DIR/bin" "$ROOT_DIR/lib" "$ROOT_DIR/screens" "$ROOT_DIR/examples" "$STAGE_DIR/"
 if [ -d "$ROOT_DIR/gateway" ]; then
   cp -R "$ROOT_DIR/gateway" "$STAGE_DIR/"
   # Remove itens que NÃO devem ir para o artefato

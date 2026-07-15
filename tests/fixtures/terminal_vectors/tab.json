@@ -1,0 +1,24 @@
+{
+  "name": "Tab stop",
+  "rows": 1,
+  "cols": 10,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QQlC"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 9,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "A       B ",
+    "text_sig": "sha256:a0f73c390427cd002b0f4fb5b4888766b963b0c9e18660b1acc8a5e43c9c33aa",
+    "visual_sig": "sha256:49d09d443dd49be84d5e2eed6f23a1931d5bb539f2ad6252b7f7eba34c87c6cd"
+  }
+}

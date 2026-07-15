@@ -1,0 +1,24 @@
+{
+  "name": "Erase line",
+  "rows": 2,
+  "cols": 8,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDREVGR0gNG1sySw=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 0,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "        \n        ",
+    "text_sig": "sha256:4a67331ae1842b822452f5103d5fddb443c301a559c4ea7cb6031ff594cee9e4",
+    "visual_sig": "sha256:fa4564c71214d378fba3f55d6b140a1090da3331401cb95b9e821e0a511b2287"
+  }
+}

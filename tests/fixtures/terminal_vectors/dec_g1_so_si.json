@@ -1,0 +1,24 @@
+{
+  "name": "DEC G1 SO SI",
+  "rows": 1,
+  "cols": 6,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "GykwDmxxD0FC"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 4,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "dec_special",
+    "active_charset": "g0",
+    "text": "┌─AB  ",
+    "text_sig": "sha256:a495d16c8c4c648980503b06837d8e12a265aa3763419c9fe214472e82fc8bd2",
+    "visual_sig": "sha256:adc45e08a8d3e93b024663627cd0f504e85e51c8174f2df36069c5d8977bf330"
+  }
+}

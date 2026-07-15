@@ -1,0 +1,24 @@
+{
+  "name": "Resize-sized fixture",
+  "rows": 4,
+  "cols": 6,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDCkRFRg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 1,
+      "col": 5,
+      "visible": true,
+      "wrap_pending": true
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "ABC   \n   DEF\n      \n      ",
+    "text_sig": "sha256:d539c36bce711255feb52f940546ba6fe1d72a2891e925bf09e1efee41d2ea8d",
+    "visual_sig": "sha256:24b66b7af4d5c26e00a977ef0df008c16dd893b44eecc24dea2d24df5f409e8b"
+  }
+}

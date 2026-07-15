@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import codecs
 import re
 from dataclasses import dataclass
+
+from dakota_terminal import TerminalEngine
 
 
 _ANSI_RE = re.compile(r"\x1B\[[0-9;?]*[A-Za-z]")
@@ -46,6 +49,12 @@ _BOX_MAP = str.maketrans(
         "╬": "+",
     }
 )
+
+_DEC_SPECIAL_GRAPHICS_MAP = {
+    "l": "┌", "k": "┐", "m": "└", "j": "┘",
+    "q": "─", "x": "│", "t": "├", "u": "┤",
+    "v": "┴", "w": "┬", "n": "┼",
+}
 
 
 def strip_ansi(text: str) -> str:
@@ -146,6 +155,10 @@ class ScreenSnapshot:
     norm_sha256: str
     norm_len: int
     screen_sample: str
+    canonical_snapshot: dict | None = None
+    text_sig: str = ""
+    visual_sig: str = ""
+    semantic_sig: str = ""
 
 
 @dataclass
@@ -175,23 +188,93 @@ def screen_sample_from_norm(norm_screen: str, *, max_lines: int = 6, max_width: 
 
 def build_screen_snapshot(raw_text: str) -> ScreenSnapshot:
     norm_text = normalize_screen(raw_text)
+    semantic_sig = signature_from_screen(norm_text)
     return ScreenSnapshot(
         raw_bytes=raw_text.encode("utf-8", errors="replace"),
         raw_text=raw_text,
         norm_text=norm_text,
-        screen_sig=signature_from_screen(norm_text),
+        screen_sig=semantic_sig,
         norm_sha256=sha256_hex_text(norm_text),
         norm_len=len(norm_text),
         screen_sample=screen_sample_from_norm(norm_text),
+        semantic_sig=semantic_sig,
     )
 
 
-def build_screen_snapshot_from_bytes(raw_bytes: bytes, *, encoding: str = "utf-8") -> ScreenSnapshot:
-    try:
-        raw_text = raw_bytes.decode(encoding, errors="replace")
-    except Exception:
-        raw_text = raw_bytes.decode(errors="replace")
-    snapshot = build_screen_snapshot(raw_text)
+class TerminalScreenState:
+    """Compatibility facade over dakota_terminal.engine.TerminalEngine."""
+
+    def __init__(self, *, rows: int = 25, cols: int = 80, encoding: str = "utf-8"):
+        self.engine = TerminalEngine(rows=rows, cols=cols, encoding=encoding)
+
+    def reset(self) -> None:
+        self.engine.reset()
+
+    def scroll(self) -> None:
+        self.engine._scroll_up()
+
+    def reverse_index(self) -> None:
+        self.engine._reverse_index()
+
+    def set_cursor(self, rr: int, cc: int) -> None:
+        self.engine._set_cursor(rr, cc)
+
+    def feed_bytes(self, data: bytes) -> None:
+        self.engine.feed_bytes(data)
+
+    def feed_text(self, raw_text: str) -> None:
+        self.engine.feed_text(raw_text)
+
+    def text(self) -> str:
+        return self.engine.text()
+
+    def snapshot(self) -> ScreenSnapshot:
+        snap = build_screen_snapshot(self.text())
+        canonical = self.engine.snapshot()
+        snap.canonical_snapshot = canonical
+        snap.text_sig = canonical["text_sig"]
+        snap.visual_sig = canonical["visual_sig"]
+        return snap
+
+    @property
+    def rows(self) -> int:
+        return self.engine.rows
+
+    @property
+    def cols(self) -> int:
+        return self.engine.cols
+
+    @property
+    def encoding(self) -> str:
+        return self.engine.encoding
+
+    @property
+    def bytes_seen(self) -> int:
+        return self.engine.bytes_seen
+
+    @property
+    def cells(self):
+        return [[cell.ch for cell in row] for row in self.engine.cells]
+
+    @property
+    def r(self) -> int:
+        return self.engine.cursor_row
+
+    @property
+    def c(self) -> int:
+        return self.engine.cursor_col
+
+
+def _canonical_terminal_text(raw_text: str, *, rows: int = 25, cols: int = 80) -> str:
+    state = TerminalScreenState(rows=rows, cols=cols)
+    state.feed_text(raw_text)
+    return state.text()
+
+
+def build_screen_snapshot_from_bytes(raw_bytes: bytes, *, encoding: str = "utf-8", rows: int = 25, cols: int = 80) -> ScreenSnapshot:
+    state = TerminalScreenState(rows=rows, cols=cols, encoding=encoding)
+    state.feed_bytes(raw_bytes)
+    snapshot = state.snapshot()
     snapshot.raw_bytes = bytes(raw_bytes)
     return snapshot
 

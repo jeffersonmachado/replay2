@@ -38,7 +38,7 @@ Cmds:
   inspect dump <dir>              Inspeciona um dump gerado
   plugins list|validate|enable|disable [args]
   record --out <file> -- [run args...]   Grava eventos (via --record-file)
-  replay --legacy-cmd <tcl_list> --record <file> [--encoding <enc>] [--translation <t>]
+  replay --legacy-cmd <tcl_list> --record <file> [--encoding <enc>] [--rows <n>] [--cols <n>] [--term <name>] [--translation <t>]
   control attach --host <h> --port <p>   Conecta ao ControlAPI
   tui --port <p> [--host <h>]            TUI de debug (precisa ControlAPI)
 }]\n
@@ -223,6 +223,9 @@ proc cmd_replay {args} {
     set recordFile ""
     set encoding "utf-8"
     set translation "crlf"
+    set rows 25
+    set cols 80
+    set term "xterm"
 
     set i 0
     while {$i < [llength $args]} {
@@ -240,6 +243,18 @@ proc cmd_replay {args} {
                 incr i
                 set encoding [lindex $args $i]
             }
+            --rows {
+                incr i
+                set rows [lindex $args $i]
+            }
+            --cols {
+                incr i
+                set cols [lindex $args $i]
+            }
+            --term {
+                incr i
+                set term [lindex $args $i]
+            }
             --translation {
                 incr i
                 set translation [lindex $args $i]
@@ -253,10 +268,23 @@ proc cmd_replay {args} {
     if {$legacy_raw eq ""} { die "replay: falta --legacy-cmd" }
     if {$recordFile eq ""} { die "replay: falta --record <arquivo>" }
     if {![file exists $recordFile]} { die "replay: record não existe: $recordFile" }
+    lassign [::config::validate_geometry $rows $cols] rows cols
 
     # Parse legacy cmd como lista Tcl
     set legacy_cmd [lrange $legacy_raw 0 end]
-    eval [linsert $legacy_cmd 0 spawn -nottycopy -nottyinit]
+    set oldTermExists [info exists ::env(TERM)]
+    if {$oldTermExists} { set oldTerm $::env(TERM) }
+    set ::env(TERM) $term
+    set rc [catch {eval [linsert $legacy_cmd 0 spawn -nottycopy -nottyinit]} err opts]
+    if {$oldTermExists} {
+        set ::env(TERM) $oldTerm
+    } else {
+        catch {unset ::env(TERM)}
+    }
+    if {$rc != 0} { return -options $opts $err }
+    if {[info exists spawn_out(slave,name)]} {
+        catch {exec stty rows $rows columns $cols < $spawn_out(slave,name)}
+    }
     fconfigure $spawn_id -encoding $encoding -translation $translation
 
     set f [open $recordFile r]
@@ -509,4 +537,3 @@ switch -exact -- $cmd {
         die "comando desconhecido: $cmd"
     }
 }
-

@@ -1,0 +1,24 @@
+{
+  "name": "Basic colors",
+  "rows": 1,
+  "cols": 8,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "G1szMTs0NDsxbVIgG1szOTs0OTsyMm1O"
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "R N     ",
+    "text_sig": "sha256:4752f072442817affcbd6ad0fd6ede1c226cd85f0fda1b76e6b12e76639febfc",
+    "visual_sig": "sha256:17f598bf7870429b21c4cef7746a2275fcb6a54bea636d9ca7c2e16e21fbb978"
+  }
+}

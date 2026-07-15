@@ -326,6 +326,16 @@ input[type="range"] {
   ]);
 
   // Carregar dados de replay
+  function replayErrorMessage(payload, fallback) {
+    const error = payload && payload.error;
+    if (error && typeof error === 'object') {
+      const code = error.code ? `${error.code}: ` : '';
+      return code + (error.message || fallback || 'erro desconhecido');
+    }
+    if (typeof error === 'string' && error) return error;
+    return fallback || 'erro desconhecido';
+  }
+
   async function loadReplayData() {
     if (!captureId || !sessionId) {
       alert('capture_id e session_id são obrigatórios');
@@ -334,10 +344,14 @@ input[type="range"] {
 
     try {
       const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}`);
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
       }
-      replayData = await response.json();
+      if (payload?.error) {
+        throw new Error(replayErrorMessage(payload, 'erro no replay'));
+      }
+      replayData = payload;
       if (replayData?.geometry) {
         const rawRows = Number(replayData.geometry.rows);
         const rawCols = Number(replayData.geometry.cols);
@@ -376,7 +390,7 @@ input[type="range"] {
       console.error('Erro ao carregar dados de replay:', err);
       document.getElementById('events-list').innerHTML = `
         <div class="text-red-300 text-sm p-4 rounded bg-red-900/20 border border-red-700/40">
-          Erro ao carregar dados: ${err.message}
+          Erro ao carregar dados: ${escapeHtml(err.message)}
         </div>
       `;
     }
@@ -472,7 +486,7 @@ input[type="range"] {
             '<div><strong>' + renderEventSeqLabel(ev) + '</strong> | ' + renderEventMetaLabel(ev) + ' | ' + (displayTs ? new Date(displayTs).toLocaleTimeString() : '-') + '</div>' +
             (ev.type === 'deterministic_input' ? '<button type="button" class="det-details-toggle" data-det-toggle="' + escapeHtml(String(ev.seq_global || '')) + '">Detalhes</button>' : '') +
           '</div>' +
-          '<pre class="event-content">' + escapeHtml(displayContent) + '</pre>' +
+          '<pre class="event-content' + (isSnapshot ? ' terminal-snapshot' : '') + '">' + escapeHtml(displayContent) + '</pre>' +
           (ev.type === 'deterministic_input' ? '<div class="hidden text-xs text-stone-300 whitespace-pre-wrap" data-det-details="' + escapeHtml(String(ev.seq_global || '')) + '">' +
             'screen=' + escapeHtml(ev.screen_sig || '-') + '\n' +
             'source=' + escapeHtml(ev.screen_source || '-') + '\n' +
@@ -558,13 +572,22 @@ input[type="range"] {
     const items = [];
     let pendingGroup = null;
     const sessionTerminal = makeTerm();
+    const mergeBase64ChunksLocal = (chunks) => {
+      if (!chunks || !chunks.length) return '';
+      if (typeof DakTimeline !== 'undefined' && typeof DakTimeline.mergeBase64Chunks === 'function') {
+        return DakTimeline.mergeBase64Chunks(chunks);
+      }
+      let raw = '';
+      for (const chunk of chunks) raw += atob(chunk || '');
+      return btoa(raw);
+    };
     const flushGroup = () => {
       if (!pendingGroup) return;
       const snap = renderPlainText ? renderPlainText(sessionTerminal) : '';
       const snapshotObj = renderSnapshot ? renderSnapshot(sessionTerminal) : null;
       const snapHtml = renderSnapshotHtml && snapshotObj ? renderSnapshotHtml(snapshotObj) : null;
       if (snap !== null && snap !== undefined) {
-        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, content_kind:'terminal_snapshot', snapshot:snapshotObj, snapshot_html:snapHtml, text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
+        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, data_b64_chunks:pendingGroup.dataB64List.slice(), data_b64:pendingGroup.dataB64Merged||'', content_kind:'terminal_snapshot', snapshot:snapshotObj, snapshot_html:snapHtml, text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
       }
       pendingGroup = null;
     };
@@ -576,10 +599,13 @@ input[type="range"] {
       const tsMs=eventTimestamp(ev),seq=Number(ev?.seq_global||0);
       const belongs=pendingGroup&&(tsMs-pendingGroup.lastTs)<=700&&pendingGroup.events.length<8;
       if(!belongs)flushGroup();
-      if(!pendingGroup)pendingGroup={events:[],startTs:tsMs,lastTs:tsMs,startSeq:seq,lastSeq:seq,totalBytes:0};
+      if(!pendingGroup)pendingGroup={events:[],startTs:tsMs,lastTs:tsMs,startSeq:seq,lastSeq:seq,totalBytes:0,dataB64List:[],dataB64Merged:''};
       else{pendingGroup.lastTs=tsMs;pendingGroup.lastSeq=seq;}
       if (dataB64 && typeof feedBase64 === 'function') {
         feedBase64(sessionTerminal, dataB64, sessionEncoding);
+        pendingGroup.dataB64List.push(dataB64);
+        try { pendingGroup.dataB64Merged = mergeBase64ChunksLocal(pendingGroup.dataB64List); }
+        catch (e) { pendingGroup.dataB64Merged = ''; }
       } else if (rawText && typeof feed === 'function') {
         feed(sessionTerminal, rawText);
       }

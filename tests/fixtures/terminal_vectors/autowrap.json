@@ -1,0 +1,24 @@
+{
+  "name": "Autowrap",
+  "rows": 2,
+  "cols": 3,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QUJDRA=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 1,
+      "col": 1,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "ABC\nD  ",
+    "text_sig": "sha256:a5f49a80901af3e8de9afe17d571c4c93de264cccf29e0278eb4b2e6bd3677b3",
+    "visual_sig": "sha256:3d47770847e591f52d8ece99e9a568ac576d41f858f22f25b2be0fdc8d0ab52f"
+  }
+}

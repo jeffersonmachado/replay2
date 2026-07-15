@@ -3,13 +3,28 @@
 Extraido de gateway_observability_service.py para separar
 a logica de replay (dominio de execucao) da observabilidade
 (dominio de monitoramento).
+
+v0.3.19+: TerminalEngine Python como fonte oficial de snapshots,
+diffs, checkpoints e assinaturas. O JS terminal nao interpreta
+mais ANSI no fluxo de producao.
 """
 from __future__ import annotations
 
 import base64
+import codecs
 import json
 import re
 from pathlib import Path
+
+from dakota_gateway.terminal_config import is_supported_encoding, normalize_encoding, validate_terminal_geometry
+from dakota_terminal import (
+    TerminalEngine,
+    snapshot_from_engine,
+    encode_snapshot_compact,
+    create_diff,
+    apply_diff,
+    validate_diff,
+)
 
 
 def _event_direction(ev: dict) -> str:
@@ -27,23 +42,28 @@ def _detect_encoding(events: list[dict], session_start: dict | None = None) -> s
     Encodings suportados: utf-8, cp850, cp437, iso-8859-1, windows-1252, latin1, ascii
     """
     if session_start:
-        enc = str(session_start.get("encoding") or "").strip().lower()
-        # Normaliza aliases comuns
-        if enc in ("utf-8", "utf8", "ascii"):
-            return "utf-8"
-        if enc in ("cp850", "ibm850", "850"):
-            return "cp850"
-        if enc in ("cp437", "ibm437", "437"):
-            return "cp437"
-        if enc in ("iso-8859-1", "latin-1"):
-            return "iso-8859-1"
-        if enc == "latin1":
-            return "latin1"  # alias valido, preservado para compatibilidade
-        if enc in ("cp1252", "windows-1252", "1252"):
-            return "windows-1252"
+        enc = normalize_encoding(session_start.get("encoding") or "")
         if enc:
-            return enc  # encoding desconhecido mas explicitamente configurado
+            return enc
     return "utf-8"
+
+
+def _encoding_resolution(session_start: dict | None) -> dict:
+    requested = str((session_start or {}).get("encoding") or "").strip()
+    if not requested:
+        return {"encoding": "utf-8", "encoding_source": "default"}
+    encoding = normalize_encoding(requested)
+    if is_supported_encoding(requested):
+        return {"encoding": encoding, "encoding_source": "session_metadata"}
+    return {
+        "encoding": "utf-8",
+        "encoding_source": "fallback",
+        "encoding_warning": {
+            "requested_encoding": requested,
+            "resolved_encoding": "utf-8",
+            "message": "encoding nao suportado; usando utf-8",
+        },
+    }
 
 
 def _detect_geometry(events: list[dict], session_start: dict | None = None) -> dict:
@@ -61,18 +81,25 @@ def _detect_geometry(events: list[dict], session_start: dict | None = None) -> d
     if session_start:
         s_rows = session_start.get("rows")
         s_cols = session_start.get("cols")
-        if isinstance(s_rows, int) and isinstance(s_cols, int) and 1 <= s_rows <= 200 and 1 <= s_cols <= 500:
+        try:
+            geom = validate_terminal_geometry(s_rows, s_cols)
             s_term = str(session_start.get("term") or "xterm")
-            s_enc = _resolve_encoding_from_session(session_start)
+            enc_info = _encoding_resolution(session_start)
+            src = str(session_start.get("geometry_source") or "session_metadata").strip()
+            if src not in {"explicit", "session_metadata", "tty", "environment", "resize_event", "legacy_fallback"}:
+                src = "session_metadata"
             return {
-                "rows": s_rows, "cols": s_cols,
+                "rows": geom.rows, "cols": geom.cols,
                 "term": s_term,
-                "encoding": s_enc,
-                "geometry_source": "session_metadata",
+                **enc_info,
+                "geometry_source": src,
             }
+        except Exception:
+            pass
 
     # Encoding: metadados ou fallback utf-8
-    encoding = _resolve_encoding_from_session(session_start) if session_start else "utf-8"
+    enc_info = _encoding_resolution(session_start)
+    encoding = enc_info["encoding"]
     term = str(session_start.get("term") or "xterm") if session_start else "xterm"
 
     # Prioridade 2: resize via CSI 8;rows;cols t (apenas eventos OUT)
@@ -91,12 +118,15 @@ def _detect_geometry(events: list[dict], session_start: dict | None = None) -> d
         for match in re.finditer(rb'\x1b\[8;(\d+);(\d+)t', raw):
             r = int(match.group(1))
             c = int(match.group(2))
-            if 1 <= r <= 200 and 1 <= c <= 500:
-                rows = r
-                cols = c
+            try:
+                geom = validate_terminal_geometry(r, c)
+                rows = geom.rows
+                cols = geom.cols
+            except Exception:
+                continue
     if rows and cols:
-        return {"rows": rows, "cols": cols, "term": term, "encoding": encoding, "geometry_source": "pty_resize"}
-    return {"rows": 25, "cols": 80, "term": term, "encoding": encoding, "geometry_source": "legacy_fallback"}
+        return {"rows": rows, "cols": cols, "term": term, **enc_info, "geometry_source": "resize_event"}
+    return {"rows": 25, "cols": 80, "term": term, **enc_info, "geometry_source": "legacy_fallback"}
 
 
 def _resolve_encoding_from_session(session_start: dict | None) -> str:
@@ -107,22 +137,26 @@ def _resolve_encoding_from_session(session_start: dict | None) -> str:
     """
     if not session_start:
         return "utf-8"
-    enc = str(session_start.get("encoding") or "").strip().lower()
-    if enc in ("utf-8", "utf8", "ascii"):
-        return "utf-8"
-    if enc in ("cp850", "ibm850", "850"):
-        return "cp850"
-    if enc in ("cp437", "ibm437", "437"):
-        return "cp437"
-    if enc in ("iso-8859-1", "latin-1"):
-        return "iso-8859-1"
-    if enc == "latin1":
-        return "latin1"  # alias valido, preservado para compatibilidade
-    if enc in ("cp1252", "windows-1252", "1252"):
-        return "windows-1252"
-    if enc:
-        return enc
-    return "utf-8"
+    return _encoding_resolution(session_start)["encoding"]
+
+
+def _decode_event_bytes(data_b64: str, declared_n: int | None) -> tuple[bytes, dict | None]:
+    try:
+        raw = base64.b64decode(data_b64, validate=True) if data_b64 else b""
+    except Exception:
+        return b"", {
+            "declared_bytes": declared_n,
+            "actual_bytes": 0,
+            "integrity_error": "invalid_base64",
+        }
+    actual = len(raw)
+    if declared_n is not None and declared_n != actual:
+        return raw, {
+            "declared_bytes": declared_n,
+            "actual_bytes": actual,
+            "integrity_error": "byte_count_mismatch",
+        }
+    return raw, None
 
 
 def prepare_session_replay_data(
@@ -205,9 +239,33 @@ def prepare_session_replay_data(
     geometry = _detect_geometry(events, session_start)
     detected_encoding = _detect_encoding(events, session_start)
 
+    # ── TerminalEngine Python: fonte oficial ────────────────────────────
+    engine = TerminalEngine(
+        rows=geometry["rows"],
+        cols=geometry["cols"],
+        term=geometry.get("term", "xterm"),
+        encoding=detected_encoding,
+    )
+
     replay_events = []
     deterministic_events = []
     timeline = []
+    decoders: dict[str, codecs.IncrementalDecoder] = {}
+
+    # ── Snapshots, diffs, checkpoints ───────────────────────────────────
+    initial_snapshot = snapshot_from_engine(engine)
+    checkpoints: list[dict] = []
+    current_snapshot = initial_snapshot
+    last_out_snapshot = initial_snapshot
+    last_snapshot = initial_snapshot
+    out_event_count = 0
+    CHECKPOINT_INTERVAL = 250   # snapshot completo a cada N eventos OUT
+
+    # Adiciona checkpoint inicial
+    checkpoints.append({
+        "seq_global": 0,
+        "snapshot": encode_snapshot_compact(initial_snapshot),
+    })
 
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
@@ -216,48 +274,92 @@ def prepare_session_replay_data(
             session_start = ev
         elif ev_type == "session_end":
             session_end = ev
+            engine.finish()
+            final_snapshot = snapshot_from_engine(engine)
+            checkpoints.append({
+                "seq_global": int(ev.get("seq_global") or 0),
+                "snapshot": encode_snapshot_compact(final_snapshot),
+            })
         elif ev_type == "bytes":
             data_b64 = str(ev.get("data_b64") or "").strip()
             direction = str(ev.get("dir") or "").strip()
-            n = int(ev.get("n") or 0)
+            declared_n = int(ev["n"]) if ev.get("n") is not None else None
             seq_global = int(ev.get("seq_global") or 0)
             ts_ms = int(ev.get("ts_ms") or 0)
 
-            try:
-                data_raw = base64.b64decode(data_b64) if data_b64 else b""
+            data_raw, integrity_warning = _decode_event_bytes(data_b64, declared_n)
+            actual_n = len(data_raw)
+
+            # Alimenta TerminalEngine com bytes OUT
+            if direction == "out" and data_raw:
+                engine.feed_bytes(data_raw)
+                out_event_count += 1
+                current_snapshot = snapshot_from_engine(engine)
+
+                # Gera checkpoint a cada N eventos OUT
+                if out_event_count % CHECKPOINT_INTERVAL == 0:
+                    checkpoints.append({
+                        "seq_global": seq_global,
+                        "snapshot": encode_snapshot_compact(current_snapshot),
+                    })
+
+                # Gera diff entre ultimo snapshot OUT e atual
+                diff = create_diff(last_out_snapshot, current_snapshot)
+                last_out_snapshot = current_snapshot
+                last_snapshot = current_snapshot
+            else:
+                if data_raw:
+                    # IN: nao altera tela, mas registra
+                    pass
+                current_snapshot = last_snapshot
+                diff = None
+
+            # Decodifica para legado
+            if integrity_warning and integrity_warning.get("integrity_error") == "invalid_base64":
+                data_str = "[base64 inválido]"
+            else:
                 try:
-                    data_str = data_raw.decode(detected_encoding, errors="replace")
+                    decoder_key = direction or "unknown"
+                    decoder = decoders.get(decoder_key)
+                    if decoder is None:
+                        decoder = codecs.getincrementaldecoder(detected_encoding)(errors="replace")
+                        decoders[decoder_key] = decoder
+                    data_str = decoder.decode(data_raw, final=False)
                 except Exception:
                     data_str = data_raw.hex()
-            except Exception:
-                data_str = "[erro ao decodificar]"
 
-            replay_events.append({
-                "seq_global": seq_global,
-                "ts_ms": ts_ms,
-                "type": "bytes",
-                "direction": direction,
-                "n_bytes": n,
-                "data_decoded": data_str,
-                "data_b64": data_b64,
-            })
-            timeline.append({
-                "seq_global": seq_global,
-                "ts_ms": ts_ms,
-                "timestamp_ms": ts_ms,
-                "type": "bytes",
-                "direction": direction,
-                "n_bytes": n,
-                "data_b64": data_b64,
-                "data_decoded": data_str,
+            replay_item = {
+                "seq_global": seq_global, "ts_ms": ts_ms, "type": "bytes",
+                "direction": direction, "n_bytes": actual_n,
+                "declared_bytes": declared_n, "actual_bytes": actual_n,
+                "data_decoded": data_str, "data_b64": data_b64,
+            }
+            if integrity_warning:
+                replay_item["integrity_warning"] = integrity_warning
+            replay_events.append(replay_item)
+
+            timeline_item = {
+                "seq_global": seq_global, "ts_ms": ts_ms, "timestamp_ms": ts_ms,
+                "type": "bytes", "direction": direction, "n_bytes": actual_n,
+                "declared_bytes": declared_n, "actual_bytes": actual_n,
+                "data_b64": data_b64, "data_decoded": data_str,
                 "summary": data_str[:400],
-            })
+            }
+            if direction == "out" and diff:
+                timeline_item["snapshot"] = current_snapshot
+                timeline_item["snapshot_compact"] = encode_snapshot_compact(current_snapshot)
+                timeline_item["diff"] = diff
+                timeline_item["text_sig"] = current_snapshot.get("text_sig", "")
+                timeline_item["visual_sig"] = current_snapshot.get("visual_sig", "")
+                timeline_item["engine_version"] = engine.engine_version
+            if integrity_warning:
+                timeline_item["integrity_warning"] = integrity_warning
+            timeline.append(timeline_item)
         elif ev_type == "deterministic_input":
             seq_global = int(ev.get("seq_global") or 0)
             ts_ms = int(ev.get("ts_ms") or 0)
             deterministic_item = {
-                "seq_global": seq_global,
-                "ts_ms": ts_ms,
+                "seq_global": seq_global, "ts_ms": ts_ms,
                 "type": "deterministic_input",
                 "screen_sig": str(ev.get("screen_sig") or ""),
                 "screen_sample": str(ev.get("screen_sample") or ""),
@@ -276,12 +378,12 @@ def prepare_session_replay_data(
                 "screen_snapshot_ts_ms": int(ev.get("screen_snapshot_ts_ms") or 0) or None,
                 "screen_snapshot_age_ms": int(ev.get("screen_snapshot_age_ms") or 0) or None,
                 "source": str(ev.get("source") or ""),
+                "expected_text_sig": current_snapshot.get("text_sig", "") if current_snapshot else "",
+                "expected_visual_sig": current_snapshot.get("visual_sig", "") if current_snapshot else "",
             }
             deterministic_events.append(deterministic_item)
             timeline.append({
-                "seq_global": seq_global,
-                "ts_ms": ts_ms,
-                "timestamp_ms": ts_ms,
+                "seq_global": seq_global, "ts_ms": ts_ms, "timestamp_ms": ts_ms,
                 "type": "deterministic_input",
                 "screen_sig": deterministic_item["screen_sig"],
                 "screen_sample": deterministic_item["screen_sample"],
@@ -293,6 +395,8 @@ def prepare_session_replay_data(
                 "contains_escape": deterministic_item["contains_escape"],
                 "is_probable_paste": deterministic_item["is_probable_paste"],
                 "is_probable_command": deterministic_item["is_probable_command"],
+                "expected_text_sig": deterministic_item["expected_text_sig"],
+                "expected_visual_sig": deterministic_item["expected_visual_sig"],
                 "summary": (
                     f"{deterministic_item['screen_sig'][:48]} "
                     f"[{deterministic_item['screen_source'] or 'unknown'}] -> "
@@ -300,6 +404,7 @@ def prepare_session_replay_data(
                 ),
             })
 
+    # ── Playback script ─────────────────────────────────────────────────
     playback_script = []
     for ev in replay_events:
         playback_script.append({
@@ -318,6 +423,10 @@ def prepare_session_replay_data(
         "session_start": session_start,
         "session_end": session_end,
         "geometry": geometry,
+        "engine_version": engine.engine_version,
+        "initial_snapshot": encode_snapshot_compact(initial_snapshot),
+        "final_snapshot": encode_snapshot_compact(snapshot_from_engine(engine)),
+        "checkpoints": checkpoints,
         "replay_events": replay_events,
         "deterministic_events": deterministic_events,
         "timeline": sorted(timeline, key=lambda item: (int(item.get("seq_global") or 0), int(item.get("ts_ms") or 0))),
@@ -328,5 +437,6 @@ def prepare_session_replay_data(
             "event_count": len(replay_events),
             "deterministic_event_count": len(deterministic_events),
             "available_input_modes": ["raw", "deterministic"],
+            "comparison_modes": ["visual", "text", "semantic", "hybrid"],
         },
     }

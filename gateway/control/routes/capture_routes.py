@@ -28,6 +28,28 @@ from control.services.session_replay_service import (
     prepare_session_replay_data as _prepare_session_replay_data,
 )
 
+
+def _replay_status_code(replay_data: dict) -> int:
+    error = replay_data.get("error")
+    if isinstance(error, dict):
+        code = str(error.get("code") or "")
+        if code in {"log_dir_not_found", "no_audit_files", "session_not_found"}:
+            return 404
+        if code == "invalid_params":
+            return 400
+        return 500
+    if error:
+        return 500
+
+    playback = replay_data.get("playback") or {}
+    for items in (replay_data.get("replay_events") or [], replay_data.get("timeline") or [], playback.get("events") or []):
+        for container in items if isinstance(items, list) else []:
+            warning = container.get("integrity_warning") if isinstance(container, dict) else None
+            if warning and warning.get("integrity_error") == "invalid_base64":
+                return 422
+    return 200
+
+
 def handle_capture_get_route(
     handler,
     parsed_path,
@@ -154,7 +176,8 @@ def handle_capture_get_route(
             return True
         log_dir = capture.get("log_dir") or ""
         replay_data = _prepare_session_replay_data(log_dir, session_id)
-        write_json(handler, 200, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
+        status = _replay_status_code(replay_data)
+        write_json(handler, status, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
         return True
 
     # GET /api/captures/{id}

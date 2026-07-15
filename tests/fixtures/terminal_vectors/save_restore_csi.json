@@ -1,0 +1,24 @@
+{
+  "name": "CSI save restore",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QRtbc0JDRBtbdVo="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 2,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "AZCD ",
+    "text_sig": "sha256:d62a518e8b4e4e216b3fb5e47bf8214a2c6f913fa8eab5522005b5ffda760ad8",
+    "visual_sig": "sha256:6d182f22e0a5018e5d319dd3929a4c7c77ac98c0e1b5f3886b0d2887bf7072ef"
+  }
+}

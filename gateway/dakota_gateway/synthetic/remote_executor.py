@@ -13,6 +13,7 @@ from .journey import JourneyDefinition, JourneyDataset, JourneyStep
 from .journey_builder import JourneyBuilder
 from .journey_verifier import JourneyVerifier, JourneyVerificationResult
 from .error_detector import ErrorDetector
+from ..screen import TerminalScreenState
 
 
 @dataclass
@@ -178,7 +179,7 @@ class RemoteExecutor:
         os.close(slave_fd)
 
         screens: list[dict] = []
-        screen_buf = b""
+        screen_state = TerminalScreenState(rows=25, cols=80, encoding="utf-8")
         input_lines = inputs.split("\n")
 
         sel = selectors.DefaultSelector()
@@ -189,7 +190,7 @@ class RemoteExecutor:
         start = int(time.time() * 1000)
 
         try:
-            while input_idx < len(input_lines) or screen_buf:
+            while input_idx < len(input_lines) or screen_state.bytes_seen:
                 elapsed = int(time.time() * 1000) - start
                 if elapsed > timeout_ms:
                     break
@@ -198,7 +199,7 @@ class RemoteExecutor:
                 for key, _ in events:
                     data = os.read(master_fd, 8192)
                     if data:
-                        screen_buf += data
+                        screen_state.feed_bytes(data)
 
                 # Enviar próximo input quando tela estabilizar
                 if input_idx < len(input_lines):
@@ -218,12 +219,12 @@ class RemoteExecutor:
                     input_idx += 1
 
                 # Capturar snapshot da tela
-                if screen_buf and input_idx > 0:
+                if screen_state.bytes_seen and input_idx > 0:
                     try:
-                        screen_text = screen_buf.decode("utf-8", errors="replace")
+                        snapshot = screen_state.snapshot()
                         screens.append({
-                            "screen_text": screen_text[-2000:],
-                            "screen_sig": "",
+                            "screen_text": snapshot.raw_text[-2000:],
+                            "screen_sig": snapshot.screen_sig,
                         })
                     except Exception:
                         pass

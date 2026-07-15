@@ -1,0 +1,28 @@
+{
+  "name": "UTF-8 split three bytes",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "QQ==",
+    "4g==",
+    "gg==",
+    "rA==",
+    "Qg=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "A€B  ",
+    "text_sig": "sha256:862a688b361582ebd89f45d135ad8b0433530dff83fb41143a1406dd39e0cc28",
+    "visual_sig": "sha256:731c52d2f363f30db15dc6950a8a2fb61308e5cb6f21b0fbd1e2ed3fa36a8a9f"
+  }
+}

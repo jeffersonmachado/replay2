@@ -78,7 +78,7 @@ def test_geometry_resize_detected():
     result = _detect_geometry(fake)
     assert result["rows"] == 30
     assert result["cols"] == 100
-    assert result["geometry_source"] == "pty_resize"
+    assert result["geometry_source"] == "resize_event"
 
     # Out of bounds
     fake_huge = [{"data_b64": base64.b64encode(b"\x1b[8;999;999t").decode(), "direction": "out"}]

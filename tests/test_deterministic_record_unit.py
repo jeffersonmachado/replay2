@@ -16,7 +16,13 @@ sys.path.insert(0, str(GATEWAY_DIR))
 
 from dakota_gateway.gateway import GatewayConfig, TerminalGateway, _StableScreenState
 from dakota_gateway.replay import ReplayConfig, ReplayError, replay_parallel_sessions
-from dakota_gateway.screen import analyze_input_chunk, build_screen_snapshot, build_screen_snapshot_from_bytes, split_input_for_deterministic_record
+from dakota_gateway.screen import (
+    TerminalScreenState,
+    analyze_input_chunk,
+    build_screen_snapshot,
+    build_screen_snapshot_from_bytes,
+    split_input_for_deterministic_record,
+)
 
 
 class _FakeSelector:
@@ -102,6 +108,60 @@ class DeterministicRecordUnitTests(unittest.TestCase):
         self.assertEqual(rebuilt.norm_sha256, event.norm_sha256)
         self.assertEqual(rebuilt.norm_len, event.norm_len)
         gw.writer.close()
+
+    def test_backend_snapshot_uses_visible_terminal_state_not_byte_history(self):
+        snap = build_screen_snapshot_from_bytes(b"ABC\rX", rows=1, cols=3)
+        self.assertEqual(snap.raw_text.split("\n")[0], "XBC")
+        self.assertNotIn("ABC\rX", snap.norm_text)
+
+    def test_backend_snapshot_erase_and_encoding_are_canonical(self):
+        erased = build_screen_snapshot_from_bytes(b"ABC\x1b[2K", rows=1, cols=3)
+        self.assertEqual(erased.raw_text, "   ")
+        cp850 = build_screen_snapshot_from_bytes(b"\x82", encoding="cp850", rows=1, cols=3)
+        self.assertIn("é", cp850.raw_text)
+
+    def test_backend_snapshot_handles_dec_graphics_shift_and_osc(self):
+        top = build_screen_snapshot_from_bytes(b"\x1b(0lqqk\x1b(B", rows=1, cols=4)
+        self.assertEqual(top.raw_text, "┌──┐")
+
+        g1 = build_screen_snapshot_from_bytes(b"\x1b)0\x0elq\x0fAB", rows=1, cols=4)
+        self.assertEqual(g1.raw_text, "┌─AB")
+
+        osc = build_screen_snapshot_from_bytes(b"A\x1b]0;ignored title\x07B", rows=1, cols=4)
+        self.assertEqual(osc.raw_text[:2], "AB")
+
+    def test_backend_snapshot_handles_cursor_save_restore_and_ri(self):
+        saved = build_screen_snapshot_from_bytes(b"A\x1b7BCD\x1b8Z", rows=1, cols=4)
+        self.assertEqual(saved.raw_text, "AZCD")
+
+        csi_saved = build_screen_snapshot_from_bytes(b"A\x1b[sBCD\x1b[uZ", rows=1, cols=4)
+        self.assertEqual(csi_saved.raw_text, "AZCD")
+
+        ri = build_screen_snapshot_from_bytes(b"A\x1bMZ", rows=2, cols=2)
+        self.assertEqual(ri.raw_text.split("\n")[0], " Z")
+
+    def test_terminal_screen_state_is_incremental_canonical_matrix(self):
+        raw = b"\x1b[2J\x1b[H\x1b(0lqqk\x1b(B\r\nNome: \xc3\xa1"
+        whole = TerminalScreenState(rows=3, cols=20, encoding="utf-8")
+        whole.feed_bytes(raw)
+
+        chunked = TerminalScreenState(rows=3, cols=20, encoding="utf-8")
+        for chunk in [b"\x1b", b"[2", b"J\x1b[H\x1b", b"(0lq", b"qk\x1b(B\r", b"\nNome: \xc3", b"\xa1"]:
+            chunked.feed_bytes(chunk)
+
+        self.assertEqual(chunked.text(), whole.text())
+        self.assertIn("┌──┐", chunked.text())
+        self.assertIn("á", chunked.text())
+        self.assertEqual(chunked.snapshot().screen_sig, whole.snapshot().screen_sig)
+
+    def test_gateway_and_replay_do_not_append_raw_screen_history(self):
+        gateway_source = (ROOT / "gateway/dakota_gateway/gateway.py").read_text(encoding="utf-8")
+        replay_source = (ROOT / "gateway/dakota_gateway/replay.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("screen_buf += data", gateway_source)
+        self.assertNotIn("screen_buf += data", replay_source)
+        self.assertIn("screen_state.feed_bytes(data)", gateway_source)
+        self.assertIn("screen_state.feed_bytes(data)", replay_source)
 
     def test_input_analysis_and_safe_split_cover_basic_cases(self):
         command_parts = split_input_for_deterministic_record(b"abc\r")

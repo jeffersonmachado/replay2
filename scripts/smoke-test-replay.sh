@@ -123,6 +123,14 @@ if [ "$GEOM_ROWS" != "?" ] && [ "$GEOM_COLS" != "?" ]; then
 else
   fail "geometry" "ausente ou inválida (rows=$GEOM_ROWS cols=$GEOM_COLS)"
 fi
+case "$GEOM_SRC" in
+  explicit|session_metadata|tty|environment|resize_event|legacy_fallback)
+    pass "geometry_source válido: $GEOM_SRC"
+    ;;
+  *)
+    fail "geometry_source" "origem inválida: $GEOM_SRC"
+    ;;
+esac
 
 # ── 2. Encoding ─────────────────────────────────────────────────────────────
 echo "--- 2. Encoding ---"
@@ -149,6 +157,11 @@ if [ "$TIMELINE_COUNT" -gt 0 ]; then
 else
   fail "timeline" "vazia (0 eventos)"
 fi
+if [ "$HAS_TS" = "yes" ]; then
+  pass "timestamp_ms em todos os eventos"
+else
+  fail "timestamp_ms" "há eventos sem timestamp_ms"
+fi
 
 # ── 4. Playback ─────────────────────────────────────────────────────────────
 echo "--- 4. Playback ---"
@@ -165,6 +178,11 @@ if [ "$PLAYBACK_COUNT" -gt 0 ]; then
   pass "playback: $PLAYBACK_COUNT eventos, data_b64=$HAS_DATA_B64"
 else
   fail "playback" "vazio (0 eventos)"
+fi
+if [ "$HAS_DATA_B64" = "yes" ]; then
+  pass "data_b64 em todos os eventos de playback"
+else
+  fail "data_b64" "há eventos de playback sem data_b64"
 fi
 
 # ── 5. Snapshots ────────────────────────────────────────────────────────────
@@ -187,6 +205,16 @@ VISUAL_SIG=$(echo "$SNAPSHOT_INFO" | sed -n '3p' | cut -d'=' -f2)
 
 if [ "$SNAP_COUNT" -gt 0 ]; then
   pass "snapshots: $SNAP_COUNT (terminal_snapshot), text_sig=$TEXT_SIG visual_sig=$VISUAL_SIG"
+  if [ "$TEXT_SIG" = "yes" ]; then
+    pass "text_sig presente"
+  else
+    fail "text_sig" "snapshot sem text_sig"
+  fi
+  if [ "$VISUAL_SIG" = "yes" ]; then
+    pass "visual_sig presente"
+  else
+    fail "visual_sig" "snapshot sem visual_sig"
+  fi
 else
   echo "  [INFO] snapshots: 0 (sem grupos OUT na sessão)"
 fi
@@ -211,7 +239,11 @@ if [ "$SS_INFO" != "absent" ]; then
   SS_COLS=$(echo "$SS_INFO" | grep cols | cut -d'=' -f2)
   SS_TERM=$(echo "$SS_INFO" | grep term | cut -d'=' -f2)
   SS_ENC=$(echo "$SS_INFO" | grep encoding | cut -d'=' -f2)
-  pass "session_start: ${SS_ROWS}x${SS_COLS} term=$SS_TERM enc=$SS_ENC"
+  if [ "$SS_ROWS" != "?" ] && [ "$SS_COLS" != "?" ] && [ -n "$SS_TERM" ] && [ "$SS_TERM" != "?" ] && [ -n "$SS_ENC" ] && [ "$SS_ENC" != "?" ]; then
+    pass "session_start: ${SS_ROWS}x${SS_COLS} term=$SS_TERM enc=$SS_ENC"
+  else
+    fail "session_start" "metadata incompleta: ${SS_ROWS}x${SS_COLS} term=$SS_TERM enc=$SS_ENC"
+  fi
 else
   fail "session_start" "ausente nos dados de replay"
 fi

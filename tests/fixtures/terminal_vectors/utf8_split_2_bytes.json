@@ -1,0 +1,26 @@
+{
+  "name": "UTF-8 split two bytes",
+  "rows": 1,
+  "cols": 5,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "Y2Fm",
+    "ww==",
+    "qQ=="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 0,
+      "col": 4,
+      "visible": true,
+      "wrap_pending": false
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "café ",
+    "text_sig": "sha256:1902352b9ff6d303af9f6f3c4abc403adafe645412718d085ca0afa2f4f70e5c",
+    "visual_sig": "sha256:319d74065f88a25fc6a8d5154de406e9389feee679ff0485a41e79ff3a892dea"
+  }
+}

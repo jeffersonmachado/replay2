@@ -66,6 +66,8 @@ REMOTE=0
 REMOTE_HOST="10.5.8.24"
 REMOTE_PORT="8080"
 HAS_ARGS=0  # rastreia se o usuario passou argumentos explicitos
+HAS_SUITE_ARGS=0  # rastreia se o usuario selecionou suites explicitamente
+DRY_RUN="${DAKOTA_TEST_SH_DRY_RUN:-0}"
 
 # ── Cores ───────────────────────────────────────────────────────────────────
 ESC_GREEN='\033[0;32m'
@@ -86,13 +88,23 @@ banner() {
 run_block() {
   local label="$1"
   shift
+  local start_ts
+  start_ts=$(date +%s)
   printf "${ESC_BOLD}--- %s ---${ESC_RESET}\n" "$label"
+  printf "  cmd:"
+  printf " %q" "$@"
+  printf "\n"
+  if [ "$DRY_RUN" = "1" ]; then
+    printf "  ${ESC_GREEN}[PASS]${ESC_RESET} %s (dry-run, %ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
+    PASS_COUNT=$((PASS_COUNT + 1))
+    return 0
+  fi
   if "$@"; then
-    printf "  ${ESC_GREEN}[PASS]${ESC_RESET} %s\n" "$label"
+    printf "  ${ESC_GREEN}[PASS]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
     PASS_COUNT=$((PASS_COUNT + 1))
     return 0
   else
-    printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s\n" "$label"
+    printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
     FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi
@@ -107,17 +119,17 @@ pytest_args() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --all)         FLAG_ALL=1; HAS_ARGS=1 ;;
-    --unit)        FLAG_UNIT=1; HAS_ARGS=1 ;;
-    --js)          FLAG_JS=1; HAS_ARGS=1 ;;
-    --python)      FLAG_PYTHON=1; HAS_ARGS=1 ;;
-    --tcl)         FLAG_TCL=1; HAS_ARGS=1 ;;
-    --smoke)       FLAG_SMOKE=1; HAS_ARGS=1 ;;
-    --capture)     FLAG_CAPTURE=1; HAS_ARGS=1 ;;
-    --replay)      FLAG_REPLAY=1; HAS_ARGS=1 ;;
-    --integration) FLAG_INTEGRATION=1; HAS_ARGS=1 ;;
-    --quick)       FLAG_QUICK=1; HAS_ARGS=1 ;;
-    --ci)          FLAG_CI=1; HAS_ARGS=1 ;;
+    --all)         FLAG_ALL=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --unit)        FLAG_UNIT=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --js)          FLAG_JS=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --python)      FLAG_PYTHON=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --tcl)         FLAG_TCL=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --smoke)       FLAG_SMOKE=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --capture)     FLAG_CAPTURE=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --replay)      FLAG_REPLAY=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --integration) FLAG_INTEGRATION=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --quick)       FLAG_QUICK=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
+    --ci)          FLAG_CI=1; HAS_ARGS=1; HAS_SUITE_ARGS=1 ;;
     --verbose)     VERBOSE="-v"; HAS_ARGS=1 ;;
     --fail-fast)   FAIL_FAST="-x"; HAS_ARGS=1 ;;
     --remote)      REMOTE=1; HAS_ARGS=1 ;;
@@ -181,8 +193,10 @@ if [ "$FLAG_CAPTURE" = "1" ] || [ "$FLAG_REPLAY" = "1" ] || [ "$FLAG_INTEGRATION
   FLAG_PYTHON=1
 fi
 
-# --all = tudo, ou default se nada foi passado
-if [ "$FLAG_ALL" = "1" ] || [ "$HAS_ARGS" = "0" ]; then
+# --all = tudo, ou default se nenhuma suite foi selecionada.
+# Modificadores como --verbose, --fail-fast e --remote nao podem deixar
+# a execucao com zero suites e falso sucesso.
+if [ "$FLAG_ALL" = "1" ] || [ "$HAS_SUITE_ARGS" = "0" ]; then
   FLAG_JS=1
   FLAG_PYTHON=1
   FLAG_TCL=1
@@ -304,6 +318,12 @@ fi
 banner "Resultado Final"
 printf "Suítes passaram: ${ESC_GREEN}%d${ESC_RESET}\n" "$PASS_COUNT"
 printf "Suítes falharam: ${ESC_RED}%d${ESC_RESET}\n" "$FAIL_COUNT"
+
+if [ "$PASS_COUNT" -eq 0 ] && [ "$FAIL_COUNT" -eq 0 ]; then
+  echo ""
+  printf "${ESC_RED}${ESC_BOLD}NENHUMA SUÍTE FOI EXECUTADA${ESC_RESET}\n"
+  exit 1
+fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   echo ""

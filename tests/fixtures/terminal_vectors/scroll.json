@@ -1,0 +1,24 @@
+{
+  "name": "Scroll",
+  "rows": 2,
+  "cols": 4,
+  "term": "xterm",
+  "encoding": "utf-8",
+  "chunks_b64": [
+    "MTExMQoyMjIyCjMzMzM="
+  ],
+  "expected": {
+    "cursor": {
+      "row": 1,
+      "col": 3,
+      "visible": true,
+      "wrap_pending": true
+    },
+    "g0_charset": "ascii",
+    "g1_charset": "ascii",
+    "active_charset": "g0",
+    "text": "2222\n3333",
+    "text_sig": "sha256:2cb8238e5e3776745e065a66d88fc52c07964aac68b7047c05dac2f5445334ef",
+    "visual_sig": "sha256:0e7d061454e067b9487b7959e6f5e9da37a48e4cbf70609e936abcb58f575526"
+  }
+}

@@ -290,39 +290,28 @@ input[type="range"] {
   const timelinePrefsKey = 'dakota_capture_replay_timeline_prefs_v1';
   const playbackPrefsKey = 'dakota_capture_replay_playback_prefs_v1';
 
-  // Terminal functions imported via module — available as window.__vt
-  let createVirtualTerminal, feed, feedBase64, renderPlainText, renderHtml, renderCompactText;
-  let renderSnapshot, renderSnapshotHtml, resetDecoder;
-  let eventTimestamp, calcDelay, isBlank, screenSig, visualSig;
+  // Renderer functions — loaded via module import
+  let renderSnapshotToHtml, renderSnapshotToText, decodeSnapshotPayload, applyDiff, cloneSnapshot;
+  let eventTimestamp;
   // Timeline core — imported dynamically
   let _formatEventContent;
   let _renderEventsCards;
   let sessionEncoding = 'utf-8';
 
-  function makeTerm() { return createVirtualTerminal(termGeometry.rows, termGeometry.cols); }
-
-  function initVT(mod) {
-    createVirtualTerminal = mod.createVirtualTerminal;
-    feed = mod.feed;
-    feedBase64 = mod.feedBase64;
-    renderPlainText = mod.renderPlainText;
-    renderHtml = mod.renderHtml;
-    renderCompactText = mod.renderCompactText;
-    renderSnapshot = mod.renderSnapshot;
-    renderSnapshotHtml = mod.renderSnapshotHtml;
-    resetDecoder = mod.resetDecoder;
-    eventTimestamp = mod.eventTimestamp;
-    calcDelay = mod.calcDelay;
-    isBlank = mod.isBlank;
-    screenSig = mod.screenSig;
-    visualSig = mod.visualSig;
+  function initRenderer(mod) {
+    renderSnapshotToHtml = mod.renderSnapshotToHtml;
+    renderSnapshotToText = mod.renderSnapshotToText;
+    decodeSnapshotPayload = mod.decodeSnapshotPayload;
+    applyDiff = mod.applyDiff;
+    cloneSnapshot = mod.cloneSnapshot;
   }
-  window._initVT = initVT;
+  window._initRenderer = initRenderer;
 
   // Carrega módulos de timeline ANTES de qualquer renderização
   const _timelineReady = Promise.all([
-    import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; }),
+    import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; eventTimestamp = mod.eventTimestamp || (function(ev) { return ev?.timestamp_ms ?? ev?.ts_ms ?? 0; }); }),
     import('/assets/js/components/timeline_table.js').then(mod => { _renderEventsCards = mod.renderEventsCards; }),
+    import('/assets/js/components/terminal_snapshot_renderer.js').then(mod => { initRenderer(mod); }),
   ]);
 
   // Carregar dados de replay
@@ -542,78 +531,55 @@ input[type="range"] {
   }
 
   function formatEventContentLocal(ev, term) {
-    // Delega para o módulo compartilhado timeline_core.js
     if (typeof _formatEventContent === "function") {
       return _formatEventContent(ev, term);
     }
-    // Fallback inline (enquanto o módulo não carrega)
     if (ev?.content_kind === 'terminal_snapshot') return ev.summary || '';
     if (ev?.type === 'deterministic_input') return ev.summary || '';
-    const text = ev?.data_decoded ?? ev?.summary ?? '';
-    if (term) {
-      feed(term, text);
-      return renderCompactText(term);
-    }
-    const t = makeTerm();
-    feed(t, text);
-    return renderCompactText(t);
+    return ev?.data_decoded ?? ev?.summary ?? '';
   }
 
   function buildTimelineItems(events) {
-    // Delega para o módulo UMD compartilhado (capture_replay_timeline.cjs)
     if (typeof DakTimeline !== 'undefined' && DakTimeline.buildTimelineItems) {
       return DakTimeline.buildTimelineItems(events, {
-        feedBase64, feed, renderPlainText, renderSnapshot, renderSnapshotHtml,
-        eventTimestamp, makeTerm, formatEventContent: formatEventContentLocal,
-        screenSig, visualSig, encoding: sessionEncoding,
+        renderSnapshotToHtml, renderSnapshotToText,
+        decodeSnapshotPayload, applyDiff,
+        eventTimestamp,
+        formatEventContent: formatEventContentLocal,
       });
     }
-    // Fallback inline
-    const items = [];
-    let pendingGroup = null;
-    const sessionTerminal = makeTerm();
-    const mergeBase64ChunksLocal = (chunks) => {
-      if (!chunks || !chunks.length) return '';
-      if (typeof DakTimeline !== 'undefined' && typeof DakTimeline.mergeBase64Chunks === 'function') {
-        return DakTimeline.mergeBase64Chunks(chunks);
-      }
-      let raw = '';
-      for (const chunk of chunks) raw += atob(chunk || '');
-      return btoa(raw);
+    // Fallback inline simplificado (sem dependencia do terminal JS)
+    var items2 = [];
+    var pg = null;
+    var csnap = null;
+    var fg = function() {
+      if (!pg) return;
+      var s = pg.lastSnap;
+      var t = s && s.cells && typeof renderSnapshotToText === 'function' ? renderSnapshotToText(s) : '';
+      var h = s && s.cells && typeof renderSnapshotToHtml === 'function' ? renderSnapshotToHtml(s) : '';
+      items2.push({ type:'bytes', direction:'out', n_bytes:pg.totalBytes, chunk_count:pg.events.length, seq_global:pg.startSeq, seq_global_end:pg.lastSeq, timestamp_ms:pg.startTs, end_timestamp_ms:pg.lastTs, summary:t, content_kind:'terminal_snapshot', snapshot:s, snapshot_html:h, text_sig:pg.lastTextSig||null, visual_sig:pg.lastVisualSig||null });
+      pg = null;
     };
-    const flushGroup = () => {
-      if (!pendingGroup) return;
-      const snap = renderPlainText ? renderPlainText(sessionTerminal) : '';
-      const snapshotObj = renderSnapshot ? renderSnapshot(sessionTerminal) : null;
-      const snapHtml = renderSnapshotHtml && snapshotObj ? renderSnapshotHtml(snapshotObj) : null;
-      if (snap !== null && snap !== undefined) {
-        items.push({ type:'bytes', direction:'out', n_bytes:pendingGroup.totalBytes, chunk_count:pendingGroup.events.length, seq_global:pendingGroup.startSeq, seq_global_end:pendingGroup.lastSeq, timestamp_ms:pendingGroup.startTs, end_timestamp_ms:pendingGroup.lastTs, summary:snap, data_decoded:snap, data_b64_chunks:pendingGroup.dataB64List.slice(), data_b64:pendingGroup.dataB64Merged||'', content_kind:'terminal_snapshot', snapshot:snapshotObj, snapshot_html:snapHtml, text_sig:screenSig?screenSig(sessionTerminal):null, visual_sig:visualSig?visualSig(sessionTerminal):null });
-      }
-      pendingGroup = null;
-    };
-    for (const ev of events) {
-      const isOut = ev?.type === 'bytes' && ev?.direction === 'out';
-      if (!isOut) { flushGroup(); items.push(ev?.type==='bytes'&&ev?.direction==='in'?{...ev,summary:ev?.data_decoded==='\x1b'?'Esc':ev?.data_decoded==='\r'?'Enter':ev?.data_decoded||'',data_decoded:ev?.data_decoded||''}:{...ev,summary:formatEventContentLocal(ev),data_decoded:ev?.data_decoded||''}); continue; }
-      const dataB64 = ev?.data_b64 || '';
-      const rawText = ev?.data_decoded??ev?.summary??'';
-      const tsMs=eventTimestamp(ev),seq=Number(ev?.seq_global||0);
-      const belongs=pendingGroup&&(tsMs-pendingGroup.lastTs)<=700&&pendingGroup.events.length<8;
-      if(!belongs)flushGroup();
-      if(!pendingGroup)pendingGroup={events:[],startTs:tsMs,lastTs:tsMs,startSeq:seq,lastSeq:seq,totalBytes:0,dataB64List:[],dataB64Merged:''};
-      else{pendingGroup.lastTs=tsMs;pendingGroup.lastSeq=seq;}
-      if (dataB64 && typeof feedBase64 === 'function') {
-        feedBase64(sessionTerminal, dataB64, sessionEncoding);
-        pendingGroup.dataB64List.push(dataB64);
-        try { pendingGroup.dataB64Merged = mergeBase64ChunksLocal(pendingGroup.dataB64List); }
-        catch (e) { pendingGroup.dataB64Merged = ''; }
-      } else if (rawText && typeof feed === 'function') {
-        feed(sessionTerminal, rawText);
-      }
-      pendingGroup.events.push(ev);
-      pendingGroup.totalBytes+=Number(ev?.n_bytes??ev?.n??0);
+    for (var j = 0; j < events.length; j++) {
+      var ev2 = events[j];
+      var io = ev2 && ev2.type === 'bytes' && ev2.direction === 'out';
+      if (!io) { fg(); items2.push(ev2&&ev2.type==='bytes'&&ev2.direction==='in'?Object.assign({},ev2,{summary:ev2.data_decoded==='\x1b'?'Esc':ev2.data_decoded==='\r'?'Enter':ev2.data_decoded||'',data_decoded:ev2.data_decoded||''}):Object.assign({},ev2,{summary:formatEventContentLocal(ev2),data_decoded:ev2.data_decoded||''})); continue; }
+      var tm = typeof eventTimestamp === 'function' ? eventTimestamp(ev2) : (ev2.ts_ms||0);
+      var sq = Number(ev2.seq_global||0);
+      var sn = null;
+      if (ev2.snapshot_compact && typeof decodeSnapshotPayload === 'function') sn = decodeSnapshotPayload(ev2.snapshot_compact);
+      else if (ev2.snapshot && ev2.snapshot.cells) sn = ev2.snapshot;
+      if (ev2.diff && csnap && typeof applyDiff === 'function') csnap = applyDiff(csnap, ev2.diff);
+      else if (sn) csnap = sn;
+      var bg = pg && (tm-pg.lastTs)<=700 && pg.events.length<8;
+      if (!bg) fg();
+      if (!pg) pg = { events:[], startTs:tm, lastTs:tm, startSeq:sq, lastSeq:sq, totalBytes:0, lastSnap:csnap, lastTextSig:ev2.text_sig||null, lastVisualSig:ev2.visual_sig||null };
+      else { pg.lastTs=tm; pg.lastSeq=sq; pg.lastSnap=csnap; pg.lastTextSig=ev2.text_sig||pg.lastTextSig; pg.lastVisualSig=ev2.visual_sig||pg.lastVisualSig; }
+      pg.events.push(ev2);
+      pg.totalBytes += Number(ev2.n_bytes||ev2.n||0);
     }
-    flushGroup();
-    return items;
+    fg();
+    return items2;
   }
 
   function escapeHtml(text) {
@@ -623,11 +589,15 @@ input[type="range"] {
 
   function formatScreenSample(text) {
     if (!text) return '';
-    const t = makeTerm();
-    feed(t, text);
-    const lines = renderCompactText(t).split('\n');
-    return lines.filter((l) => !/^[\s\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u2534\u252C\u253C]+$/.test(l))
-      .slice(0, 8).join('\n').trim();
+    // Usa renderizador de snapshot quando disponivel
+    if (typeof renderSnapshotToText === 'function') {
+      // Cria snapshot temporario para renderizar
+      var lines = text.split('\n');
+      return lines.filter(function(l) { return !/^[\s\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u2534\u252C\u253C]+$/.test(l); })
+        .slice(0, 8).join('\n').trim();
+    }
+    return text.substring(0, 200);
+  }
   }
 
   // Controles de playback
@@ -687,12 +657,22 @@ input[type="range"] {
     persistPlaybackPrefs({ speed: playbackState.speed });
   });
 
-  // ── feedReplayEvent: usa data_b64 (canonico) com encoding da sessao ──
+  // ── feedReplayEvent: snapshot/diff backend, fallback data_b64 ──
   function feedReplayEvent(term, event) {
-    if (event.data_b64 && typeof feedBase64 === 'function') {
-      feedBase64(term, event.data_b64, sessionEncoding);
-    } else if (event.content && typeof feed === 'function') {
-      feed(term, event.content);
+    // Prefere snapshot do backend (TerminalEngine Python)
+    if (event.snapshot && event.snapshot.cells && typeof renderSnapshotToHtml === 'function') {
+      term._snapshot = event.snapshot;
+      return;
+    }
+    // Fallback: data_b64 com terminal JS (legado, para compatibilidade)
+    if (event.data_b64 && typeof window.DakVT !== 'undefined' && window.DakVT.feedBase64) {
+      if (!term._vt) term._vt = window.DakVT.createVirtualTerminal(termGeometry.rows, termGeometry.cols);
+      window.DakVT.feedBase64(term._vt, event.data_b64, sessionEncoding);
+      return;
+    }
+    if (event.content && typeof window.DakVT !== 'undefined' && window.DakVT.feed) {
+      if (!term._vt) term._vt = window.DakVT.createVirtualTerminal(termGeometry.rows, termGeometry.cols);
+      window.DakVT.feed(term._vt, event.content);
     }
   }
 
@@ -704,16 +684,31 @@ input[type="range"] {
     playbackState.isPaused = true;
     playbackState.displayedEventIndex = index;
     playbackState.nextEventIndex = index + 1;
-    playbackState.terminal = makeTerm();
+
+    // Usa checkpoint + diffs para seek rápido
+    var snap = null;
+    if (replayData.initial_snapshot && typeof decodeSnapshotPayload === 'function') {
+      snap = decodeSnapshotPayload(replayData.initial_snapshot);
+    }
+    // Aplica diffs ate o evento alvo
     for (let i = 0; i <= index; i++) {
       if (events[i].direction === 'out') {
-        feedReplayEvent(playbackState.terminal, events[i]);
+        feedReplayEvent(playbackState, events[i]);
+        if (events[i].snapshot) snap = events[i].snapshot;
       }
     }
+    playbackState._snapshot = snap;
+
     const outputEl = document.getElementById('playback-output');
-    outputEl.innerHTML = renderHtml(playbackState.terminal);
+    if (snap && snap.cells && typeof renderSnapshotToHtml === 'function') {
+      outputEl.innerHTML = renderSnapshotToHtml(snap);
+    } else if (playbackState.terminal && typeof window.DakVT !== 'undefined') {
+      outputEl.innerHTML = window.DakVT.renderHtml(playbackState.terminal);
+    } else {
+      outputEl.textContent = '';
+    }
     const counter = document.getElementById('playback-event-counter');
-    counter.textContent = `${index + 1} / ${events.length}`;
+    counter.textContent = (index + 1) + ' / ' + events.length;
     const progressBar = document.getElementById('playback-progress-bar');
     progressBar.style.width = ((index + 1) / events.length * 100) + '%';
     const currentEv = events[index];
@@ -959,12 +954,13 @@ input[type="range"] {
 
   function startPlayback() {
     const events = replayData.playback?.events || [];
-    playbackState.terminal = makeTerm();
+    playbackState.terminal = {};  // objeto simples para compatibilidade
+    playbackState._snapshot = null;
     playbackState.displayedEventIndex = -1;
     playbackState.nextEventIndex = 0;
     document.getElementById('playback-output').innerHTML = '';
-    document.getElementById('playback-event-counter').textContent = `0 / ${events.length}`;
-    document.getElementById('playback-pause-btn').textContent = '⏸ Pausar';
+    document.getElementById('playback-event-counter').textContent = '0 / ' + events.length;
+    document.getElementById('playback-pause-btn').textContent = '\u23F8 Pausar';
     playNextEvent();
   }
 
@@ -979,13 +975,23 @@ input[type="range"] {
     }
 
     const event = events[idx];
+    if (event.direction === 'out') {
+      feedReplayEvent(playbackState, event);
+      if (playbackState._snapshot && playbackState._snapshot.cells && typeof renderSnapshotToHtml === 'function') {
+        document.getElementById('playback-output').innerHTML = renderSnapshotToHtml(playbackState._snapshot);
+      }
+    }
     const outputEl = document.getElementById('playback-output');
     const progressBar = document.getElementById('playback-progress-bar');
     const counter = document.getElementById('playback-event-counter');
 
+    // Atualiza display com snapshot
     if (event.direction === 'out') {
-      feedReplayEvent(playbackState.terminal, event);
-      outputEl.innerHTML = renderHtml(playbackState.terminal);
+      feedReplayEvent(playbackState, event);
+      var snap = playbackState._snapshot;
+      if (snap && snap.cells && typeof renderSnapshotToHtml === 'function') {
+        outputEl.innerHTML = renderSnapshotToHtml(snap);
+      }
     }
 
     const terminal = document.getElementById('playback-terminal');
@@ -1026,11 +1032,13 @@ input[type="range"] {
   window._startReplay = function() { loadReplayData(); };
 })();
 </script>
-<script src="/assets/js/virtual_terminal.cjs"></script>
+<script src="/assets/js/components/timeline_core.js" type="module"></script>
+<script src="/assets/js/components/terminal_snapshot_renderer.js" type="module"></script>
 <script src="/assets/js/components/capture_replay_timeline.cjs"></script>
 <script>
-  if (typeof DakVT !== 'undefined' && typeof window._initVT === 'function') {
-    window._initVT(DakVT);
+  // Carrega modulos de renderizacao
+  import('/assets/js/components/terminal_snapshot_renderer.js').then(function(mod) {
+    window._snapshotRenderer = mod;
     if (typeof window._startReplay === 'function') window._startReplay();
-  }
+  });
 </script>

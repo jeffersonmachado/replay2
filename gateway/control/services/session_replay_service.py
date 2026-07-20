@@ -21,6 +21,7 @@ from dakota_terminal import (
     TerminalEngine,
     snapshot_from_engine,
     encode_render_snapshot,
+    encode_snapshot_compact,
     create_diff,
     apply_diff,
     validate_diff,
@@ -57,7 +58,8 @@ def build_reference_payload(
 
 
 def _render_snapshot_payload(snapshot: dict) -> dict:
-    return encode_render_snapshot(snapshot)
+    """Usa formato compacto (run-length) para reduzir payload de transporte."""
+    return encode_snapshot_compact(snapshot)
 
 
 def _attach_render_snapshot(target: dict, snapshot: dict) -> None:

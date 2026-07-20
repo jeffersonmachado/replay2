@@ -450,7 +450,15 @@ class TerminalGateway:
         if batch_mode == "yes" and command and not self.cfg.source_host:
             return self._run_batch_pipe(gateway_endpoint)
 
-        master_fd, slave_fd = pty.openpty()
+        # ── PTY fallback: on systems where openpty() hangs (AIX), use batch pipe ──
+        try:
+            master_fd, slave_fd = pty.openpty()
+        except (OSError, Exception):
+            # PTY not available — fall back to batch pipe with shell
+            if not command:
+                command = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
+            self.cfg.source_command = command
+            return self._run_batch_pipe(gateway_endpoint)
         # Configurar geometria do terminal usando metadata da config
         _configure_pty(slave_fd, rows=self.cfg.rows, cols=self.cfg.cols)
         use_setsid = batch_mode == "yes"

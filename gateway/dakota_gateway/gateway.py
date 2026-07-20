@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import fcntl
 import os
 import pty
@@ -36,6 +38,125 @@ def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
     except Exception:
         pass
+
+
+def _open_pty_robust() -> tuple[int, int]:
+    """Abre um par PTY master/slave usando multiplas estrategias de fallback.
+
+    Tenta em sequencia:
+      1. os.openpty()          — chamada C de baixo nivel
+      2. pty.openpty()         — wrapper Python padrao
+      3. posix_openpt() (ctypes) — API POSIX direta (compativel AIX 7)
+      4. /dev/ptmx manual      — abertura manual do clone device
+      5. /dev/ptc (STREAMS)    — AIX STREAMS master clone
+
+    Returns:
+        (master_fd, slave_fd) em caso de sucesso.
+
+    Raises:
+        OSError: se nenhuma estrategia funcionar.
+    """
+    errors: list[str] = []
+
+    # Estrategia 1: os.openpty() — chamada C direta
+    if hasattr(os, "openpty"):
+        try:
+            master, slave = os.openpty()
+            return master, slave
+        except Exception as e:
+            errors.append(f"os.openpty: {e}")
+
+    # Estrategia 2: pty.openpty() — wrapper Python
+    try:
+        master, slave = pty.openpty()
+        return master, slave
+    except Exception as e:
+        errors.append(f"pty.openpty: {e}")
+
+    # Estrategia 3: posix_openpt() via ctypes — API POSIX direta
+    libc_name = None
+    try:
+        libc_name = ctypes.util.find_library("c") or "libc.so"
+    except Exception:
+        libc_name = "libc.so"
+    if libc_name:
+        try:
+            libc = ctypes.CDLL(libc_name)
+        except Exception as e:
+            errors.append(f"posix_openpt(ctypes) CDLL: {e}")
+            libc = None
+        if libc is not None:
+            try:
+                O_RDWR = 2
+                O_NOCTTY = getattr(os, "O_NOCTTY", 0x800)
+
+                libc.posix_openpt.argtypes = [ctypes.c_int]
+                libc.posix_openpt.restype = ctypes.c_int
+                master = libc.posix_openpt(O_RDWR | O_NOCTTY)
+                if master < 0:
+                    raise OSError(ctypes.get_errno(), "posix_openpt failed")
+
+                libc.grantpt.argtypes = [ctypes.c_int]
+                libc.grantpt.restype = ctypes.c_int
+                if libc.grantpt(master) != 0:
+                    os.close(master)
+                    raise OSError(ctypes.get_errno(), "grantpt failed")
+
+                libc.unlockpt.argtypes = [ctypes.c_int]
+                libc.unlockpt.restype = ctypes.c_int
+                if libc.unlockpt(master) != 0:
+                    os.close(master)
+                    raise OSError(ctypes.get_errno(), "unlockpt failed")
+
+                libc.ptsname.argtypes = [ctypes.c_int]
+                libc.ptsname.restype = ctypes.c_char_p
+                slave_name_b = libc.ptsname(master)
+                if slave_name_b is None:
+                    os.close(master)
+                    raise OSError(ctypes.get_errno() or 0, "ptsname failed")
+                slave_name = slave_name_b.decode("utf-8", errors="replace")
+
+                slave = os.open(slave_name, os.O_RDWR | O_NOCTTY)
+                return master, slave
+            except OSError:
+                raise
+            except Exception as e:
+                errors.append(f"posix_openpt(ctypes): {e}")
+
+    # Estrategia 4: abertura manual de /dev/ptmx
+    for ptmx_path in ("/dev/ptmx", "/dev/ptm"):
+        try:
+            master = os.open(ptmx_path, os.O_RDWR | getattr(os, "O_NOCTTY", 0x800))
+            try:
+                slave_name = os.ptsname(master) if hasattr(os, "ptsname") else None
+                if slave_name is None:
+                    raise OSError(0, "ptsname not available")
+                os.grantpt(master) if hasattr(os, "grantpt") else None
+                os.unlockpt(master) if hasattr(os, "unlockpt") else None
+                slave = os.open(slave_name, os.O_RDWR | getattr(os, "O_NOCTTY", 0x800))
+                return master, slave
+            except Exception:
+                os.close(master)
+                raise
+        except Exception as e:
+            errors.append(f"/dev/ptmx({ptmx_path}): {e}")
+
+    # Estrategia 5: AIX STREAMS /dev/ptc (master clone)
+    try:
+        master = os.open("/dev/ptc", os.O_RDWR)
+        # No AIX STREAMS, ptsname no master retorna o slave
+        if hasattr(os, "ptsname"):
+            slave_name = os.ptsname(master)
+            slave = os.open(slave_name, os.O_RDWR)
+            return master, slave
+        os.close(master)
+        raise OSError(0, "ptsname not available for /dev/ptc")
+    except OSError as e:
+        errors.append(f"/dev/ptc: {e}")
+    except Exception as e:
+        errors.append(f"/dev/ptc: {e}")
+
+    raise OSError(f"Nenhuma estrategia PTY funcionou: {'; '.join(errors)}")
 
 
 _CLEAR_PATTERNS = [
@@ -450,22 +571,11 @@ class TerminalGateway:
         if batch_mode == "yes" and command and not self.cfg.source_host:
             return self._run_batch_pipe(gateway_endpoint)
 
-        # ── PTY fallback: on systems where openpty() hangs (AIX), use batch pipe ──
-        _pty_available = True
+        # ── Abertura robusta de PTY com multiplos fallbacks ──
         try:
-            # AIX: openpty() hangs indefinitely; detect and skip
-            if hasattr(os, "uname") and os.uname().sysname == "AIX":
-                _pty_available = False
-        except Exception:
-            pass
-
-        if _pty_available:
-            try:
-                master_fd, slave_fd = pty.openpty()
-            except (OSError, Exception):
-                _pty_available = False
-
-        if not _pty_available:
+            master_fd, slave_fd = _open_pty_robust()
+        except OSError:
+            # Nenhuma estrategia PTY funcionou — fallback para batch pipe
             if not command:
                 command = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
             self.cfg.source_command = command

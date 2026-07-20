@@ -62,7 +62,6 @@ def _render_snapshot_payload(snapshot: dict) -> dict:
 
 def _attach_render_snapshot(target: dict, snapshot: dict) -> None:
     payload = _render_snapshot_payload(snapshot)
-    target["render_snapshot"] = payload
     target["snapshot_compact"] = payload
 
 

@@ -1,6 +1,0 @@
-[acceptance] START name=phase06-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_decoder_warning_contract.py tests/acceptance/test_raw_capture8_pipeline.py
-..                                                                       [100%]
-2 passed in 0.05s
-[acceptance] END name=phase06-pytest duration=0s exit_code=0 timeout=false
-[acceptance] GATE PASSED
-exit_code=0

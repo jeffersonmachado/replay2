@@ -1,8 +1,0 @@
-[acceptance] START name=phase01-pytest timeout=120s command=python -m pytest -q tests/acceptance/test_comparison_operational.py tests/test_comparison_modes.py
-...........................                                              [100%]
-27 passed in 0.09s
-[acceptance] END name=phase01-pytest duration=1s exit_code=0 timeout=false
-[acceptance] START name=phase01-structural timeout=30s command=bash -c ! rg -n "if not has_canonical and mode == .visual.|mode = .hybrid.  # fallback automatico|got == expected_sig|signature_now\\(\\).*==|== expected_sig" gateway/dakota_gateway/replay.py gateway/dakota_gateway/replay_control.py
-[acceptance] END name=phase01-structural duration=0s exit_code=0 timeout=false
-[acceptance] GATE PASSED
-exit_code=0

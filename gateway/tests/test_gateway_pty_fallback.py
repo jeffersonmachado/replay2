@@ -119,3 +119,38 @@ class TestGatewayPtyFallback:
                             except OSError as e:
                                 assert "Nenhuma estrategia PTY funcionou" in str(e)
 
+    def test_session_argv_no_l_flag_on_aix(self):
+        """No AIX, _session_argv nao deve usar flag -l (invalida no ksh/sh AIX)."""
+        from dakota_gateway.gateway import TerminalGateway, GatewayConfig
+
+        cfg = GatewayConfig(
+            log_dir="/tmp/test",
+            hmac_key=b"test",
+            source_command="",
+        )
+        gw = TerminalGateway(cfg)
+
+        # Simular AIX: sem SHELL no ambiente, os.uname diz AIX
+        with patch("os.uname") as mock_uname:
+            mock_uname.return_value.sysname = "AIX"
+            with patch.dict("os.environ", {}, clear=True):
+                argv = gw._session_argv()
+                # Deve ser ["/bin/sh"] sem -l
+                assert "-l" not in argv
+                assert argv == ["/bin/sh"]
+
+    def test_session_argv_uses_l_flag_on_linux(self):
+        """No Linux, _session_argv deve usar flag -l para login shell."""
+        from dakota_gateway.gateway import TerminalGateway, GatewayConfig
+
+        cfg = GatewayConfig(
+            log_dir="/tmp/test",
+            hmac_key=b"test",
+            source_command="",
+        )
+        gw = TerminalGateway(cfg)
+
+        with patch.dict("os.environ", {}, clear=True):
+            argv = gw._session_argv()
+            # Deve ser ["/bin/sh", "-l"]
+            assert "-l" in argv

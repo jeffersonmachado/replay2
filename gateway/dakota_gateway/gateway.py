@@ -524,6 +524,9 @@ class TerminalGateway:
             return ["/bin/sh", "-c", command]
 
         shell = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
+        # AIX: ksh/sh nao aceitam flag -l (login shell se invoca com argv[0]="-ksh")
+        if hasattr(os, "uname") and os.uname().sysname == "AIX":
+            return [shell]
         return [shell, "-l"]
 
     def _run_batch_pipe(self, gateway_endpoint: str) -> int:

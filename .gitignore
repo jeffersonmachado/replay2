@@ -57,3 +57,7 @@ id_ecdsa*
 # IDE
 .vscode/
 
+
+# Acceptance logs (runtime)
+artifacts/acceptance-logs/current/
+artifacts/acceptance-logs/results/

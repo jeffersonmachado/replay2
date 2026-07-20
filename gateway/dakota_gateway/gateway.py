@@ -451,14 +451,26 @@ class TerminalGateway:
             return self._run_batch_pipe(gateway_endpoint)
 
         # ── PTY fallback: on systems where openpty() hangs (AIX), use batch pipe ──
+        _pty_available = True
         try:
-            master_fd, slave_fd = pty.openpty()
-        except (OSError, Exception):
-            # PTY not available — fall back to batch pipe with shell
+            # AIX: openpty() hangs indefinitely; detect and skip
+            if hasattr(os, "uname") and os.uname().sysname == "AIX":
+                _pty_available = False
+        except Exception:
+            pass
+
+        if _pty_available:
+            try:
+                master_fd, slave_fd = pty.openpty()
+            except (OSError, Exception):
+                _pty_available = False
+
+        if not _pty_available:
             if not command:
                 command = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
             self.cfg.source_command = command
             return self._run_batch_pipe(gateway_endpoint)
+
         # Configurar geometria do terminal usando metadata da config
         _configure_pty(slave_fd, rows=self.cfg.rows, cols=self.cfg.cols)
         use_setsid = batch_mode == "yes"

@@ -63,3 +63,24 @@ class TestGatewayPtyFallback:
                 assert rc == 0
                 mock_batch.assert_called_once()
                 assert gw.cfg.source_command
+
+    def test_aix_detection_skips_pty(self):
+        """No AIX, deve pular openpty() e usar batch pipe diretamente."""
+        from dakota_gateway.gateway import TerminalGateway, GatewayConfig
+
+        cfg = GatewayConfig(
+            log_dir="/tmp/test",
+            hmac_key=b"test",
+            source_command="",
+        )
+        gw = TerminalGateway(cfg)
+
+        with patch("os.uname") as mock_uname:
+            mock_uname.return_value.sysname = "AIX"
+            with patch.object(gw, "_run_batch_pipe", return_value=0) as mock_batch:
+                # openpty NUNCA deve ser chamado no AIX
+                with patch("pty.openpty") as mock_openpty:
+                    rc = gw.run()
+                    assert rc == 0
+                    mock_batch.assert_called_once()
+                    mock_openpty.assert_not_called()

@@ -1051,6 +1051,18 @@ input[type="range"] {
     window.location = `/runs/${runId}`;
   }
 
+  function calcDelay(currentEvent, nextEvent, speed) {
+    var currentTs = (currentEvent && currentEvent.ts_ms) ? currentEvent.ts_ms : 0;
+    var nextTs = (nextEvent && nextEvent.ts_ms) ? nextEvent.ts_ms : 0;
+    var rawDelay = nextTs - currentTs;
+    // Delay minimo de 50ms para eventos sem timestamp ou muito proximos
+    if (!rawDelay || rawDelay <= 0) return 50;
+    // Ajusta pela velocidade (speed=1 → tempo real, speed=2 → metade do tempo)
+    var adjusted = rawDelay / (speed || 1);
+    // Limita entre 50ms e 5s para evitar pausas muito longas ou muito curtas
+    return Math.max(50, Math.min(adjusted, 5000));
+  }
+
   function startPlayback() {
     var events = playbackEvents();
 

@@ -4,6 +4,18 @@
  */
 import { escapeHtml, html, text } from "../core/dom.js";
 import { typeBadge, dirBadge, eventDetails, decodeEventForDisplay, resolveEventByteCount, sanitizeAnsiForDisplay } from "./timeline_core.js";
+import { decodeSnapshotPayload, renderSnapshotToHtml } from "./terminal_snapshot_renderer.js";
+
+// ── Visual test instrumentation ──────────────────────────────────────────
+if (typeof window !== "undefined") {
+  window.__DAKOTA_VISUAL_TEST__ = window.__DAKOTA_VISUAL_TEST__ || {
+    timelineModuleLoaded: true,
+    timelineRenderCalls: 0,
+    outRowsCreated: 0,
+    terminalRendererCalls: 0,
+    rendererCompleted: false,
+  };
+}
 
 export function renderEventsTable(events, targetId = "#gw_recent_events", countId = "#gw_events_count") {
   if (!events.length) {
@@ -39,8 +51,17 @@ function dirCardLabel(ev) {
 }
 
 function formatCardContent(ev) {
-  // terminal_snapshot: usar HTML com atributos quando disponivel
+  // terminal_snapshot: call the real renderer (not pre-rendered HTML)
   if (ev.content_kind === "terminal_snapshot") {
+    if (ev.terminal_snapshot) {
+      try {
+        var decoded = decodeSnapshotPayload(ev.terminal_snapshot);
+        return renderSnapshotToHtml(decoded);
+      } catch (e) {
+        return ev.snapshot_html || escapeHtml(ev.summary || "[render error]");
+      }
+    }
+    // Legacy: pre-rendered snapshot_html (backward compat)
     if (ev.snapshot_html) return ev.snapshot_html;
     return ev.summary || "";
   }
@@ -80,6 +101,9 @@ function cardDetDetails(ev) {
 }
 
 export function renderEventsCards(events, targetId, countId) {
+  if (typeof window !== "undefined" && window.__DAKOTA_VISUAL_TEST__) {
+    window.__DAKOTA_VISUAL_TEST__.timelineRenderCalls += 1;
+  }
   if (!events.length) {
     html(targetId, '<div class="text-stone-400 text-sm p-3">Nenhum evento.</div>');
     if (countId) text(countId, "0 eventos");
@@ -87,27 +111,16 @@ export function renderEventsCards(events, targetId, countId) {
   }
   if (countId) text(countId, `${events.length} eventos`);
   const cards = events.map((e) => {
-    const ts = e.timestamp_ms || e.ts_ms;
-    const displayTs = ts ? new Date(ts).toLocaleTimeString("pt-BR") : "";
-    const isSnapshot = e.content_kind === "terminal_snapshot";
-    // Para terminal_snapshot com snapshot_html, renderiza HTML diretamente
-    // (o snapshot_html ja tem caracteres escapados via escapeHtml)
-    const contentHtml = isSnapshot && e.snapshot_html
-      ? e.snapshot_html
-      : escapeHtml(formatCardContent(e));
-    return `<div class="r2ctl-event-card">
-      <div class="${dirCardClass(e)} r2ctl-event-dir">${dirCardLabel(e)}</div>
-      <div>
-        <div class="flex items-center justify-between gap-3 text-xs text-stone-400 mb-1">
-          <div>${typeBadge(e.type)} &middot; ${cardMetaLabel(e)} &middot; ${escapeHtml(displayTs)} &middot; ${escapeHtml(e.actor || "-")}</div>
-          ${e.type === "deterministic_input" ? '<button type="button" class="r2ctl-btn-soft text-xs r2ctl-det-toggle" data-det-toggle="' + escapeHtml(String(e.seq_global || "")) + '">Detalhes</button>' : ""}
-        </div>
-        <pre class="r2ctl-event-content${isSnapshot ? " terminal-snapshot" : ""}">${contentHtml}</pre>
-        ${cardDetDetails(e)}
-      </div>
-    </div>`;
+    return renderSingleEventCard(e);
   }).join("");
   html(targetId, cards);
+
+  // Count OUT rows after DOM insertion
+  if (typeof window !== "undefined" && window.__DAKOTA_VISUAL_TEST__) {
+    var outCards = document.querySelectorAll((targetId || "#cards") + " .r2ctl-event-card[data-event-dir='out']");
+    window.__DAKOTA_VISUAL_TEST__.outRowsCreated = outCards.length;
+    window.__DAKOTA_VISUAL_TEST__.rendererCompleted = true;
+  }
 
   // Bind DET detail toggles
   targetId && document.querySelectorAll(targetId + " .r2ctl-det-toggle").forEach((btn) => {
@@ -117,4 +130,35 @@ export function renderEventsCards(events, targetId, countId) {
       if (detail) detail.classList.toggle("hidden");
     });
   });
+}
+
+/**
+ * Render a single event card. Reusable by both the full list and individual tests.
+ */
+export function renderSingleEventCard(e) {
+  const ts = e.timestamp_ms || e.ts_ms;
+  const displayTs = ts ? new Date(ts).toLocaleTimeString("pt-BR") : "";
+  const isSnapshot = e.content_kind === "terminal_snapshot";
+  // For terminal snapshots WITHOUT pre-rendered HTML, call the real renderer
+  // (formatCardContent handles decodeSnapshotPayload → renderSnapshotToHtml).
+  // Only escape for non-snapshot content.
+  var contentHtml;
+  if (isSnapshot && e.snapshot_html) {
+    contentHtml = e.snapshot_html;
+  } else if (isSnapshot) {
+    contentHtml = formatCardContent(e);
+  } else {
+    contentHtml = escapeHtml(formatCardContent(e));
+  }
+  return `<div class="r2ctl-event-card" data-event-seq="${e.seq_global || ""}" data-event-dir="${e.direction || ""}">
+    <div class="${dirCardClass(e)} r2ctl-event-dir">${dirCardLabel(e)}</div>
+    <div>
+      <div class="flex items-center justify-between gap-3 text-xs text-stone-400 mb-1">
+        <div>${typeBadge(e.type)} &middot; ${cardMetaLabel(e)} &middot; ${escapeHtml(displayTs)} &middot; ${escapeHtml(e.actor || "-")}</div>
+        ${e.type === "deterministic_input" ? '<button type="button" class="r2ctl-btn-soft text-xs r2ctl-det-toggle" data-det-toggle="' + escapeHtml(String(e.seq_global || "")) + '">Detalhes</button>' : ""}
+      </div>
+      <pre class="r2ctl-event-content${isSnapshot ? " terminal-snapshot" : ""}">${contentHtml}</pre>
+      ${cardDetDetails(e)}
+    </div>
+  </div>`;
 }

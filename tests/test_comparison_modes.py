@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from dakota_terminal.comparison import select_signature, compare_signatures
+from dakota_terminal.comparison import select_signature, compare_signatures, resolve_comparison_mode
 
 
 def _snap(text_sig="sha256:text123", visual_sig="sha256:vis456", semantic_sig="sha256:sem789"):
@@ -155,3 +155,26 @@ class TestCompareSignatures:
         result2 = compare_signatures(expected2, observed2, "hybrid")
         assert result2["comparison_mode_used"] == "text"
         assert result2["matched"] is False  # text diferente, nao tenta outro nivel
+
+
+class TestResolveComparisonMode:
+    def test_precedence_event_session_replay_default(self):
+        assert resolve_comparison_mode(
+            event={"comparison_mode": "text"},
+            session={"comparison_mode": "semantic"},
+            replay={"comparison_mode": "hybrid"},
+        ) == {"comparison_mode": "text", "source": "event"}
+        assert resolve_comparison_mode(
+            event={},
+            session={"comparison_mode": "semantic"},
+            replay={"comparison_mode": "hybrid"},
+        ) == {"comparison_mode": "semantic", "source": "session"}
+        assert resolve_comparison_mode(
+            event={},
+            session={},
+            replay={"comparison_mode": "hybrid"},
+        ) == {"comparison_mode": "hybrid", "source": "replay"}
+        assert resolve_comparison_mode(event={}, session={}, replay={}) == {
+            "comparison_mode": "visual",
+            "source": "default",
+        }

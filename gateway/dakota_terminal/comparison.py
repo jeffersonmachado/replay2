@@ -9,6 +9,47 @@ from __future__ import annotations
 
 from .signatures import text_sig, visual_sig, semantic_sig
 
+VALID_COMPARISON_MODES = {"visual", "text", "semantic", "hybrid"}
+
+
+def normalize_comparison_mode(value: object, default: str = "visual") -> str:
+    mode = str(value or "").strip().lower()
+    fallback = str(default or "visual").strip().lower()
+    if default == "":
+        fallback = ""
+    if fallback not in VALID_COMPARISON_MODES:
+        fallback = "" if default == "" else "visual"
+    return mode if mode in VALID_COMPARISON_MODES else fallback
+
+
+def _mode_from_source(source: object) -> str:
+    if source is None:
+        return ""
+    if isinstance(source, str):
+        return source
+    if isinstance(source, dict):
+        return str(source.get("comparison_mode") or source.get("match_mode") or "")
+    return str(getattr(source, "comparison_mode", "") or "")
+
+
+def resolve_comparison_mode(
+    *,
+    event: object | None = None,
+    session: object | None = None,
+    replay: object | None = None,
+    default: str = "visual",
+) -> dict:
+    """Resolve o modo efetivo com precedencia unica.
+
+    Ordem: evento > sessao > replay global > padrao seguro.
+    """
+    for source_name, source in (("event", event), ("session", session), ("replay", replay)):
+        raw = _mode_from_source(source)
+        mode = normalize_comparison_mode(raw, default="")
+        if mode:
+            return {"comparison_mode": mode, "source": source_name}
+    return {"comparison_mode": normalize_comparison_mode(default), "source": "default"}
+
 
 def select_signature(
     snapshot: dict,

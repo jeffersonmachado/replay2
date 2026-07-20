@@ -378,6 +378,9 @@ export function applyDiff(snapshot, diff) {
  * Calcula effectiveFg/Bg considerando reverse.
  */
 export function renderSnapshotToHtml(snapshot) {
+  if (typeof window !== "undefined" && window.__DAKOTA_VISUAL_TEST__) {
+    window.__DAKOTA_VISUAL_TEST__.terminalRendererCalls += 1;
+  }
   if (!snapshot || !snapshot.cells) return "";
 
   const rows = snapshot.rows || 25;

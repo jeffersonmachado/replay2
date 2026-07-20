@@ -64,18 +64,37 @@ if [ -d "$ROOT_DIR/scripts" ]; then
 fi
 if [ -d "$ROOT_DIR/artifacts" ]; then
   mkdir -p "$STAGE_DIR/artifacts"
+  MISSING_ARTIFACTS=""
   for artifact in \
-    acceptance-matrix.json \
     acceptance-test-baseline.sha256 \
     final-acceptance-report.md \
     final-acceptance-results.json \
     manual-validation.json \
-    acceptance-log-summary.json
+    visual-test-result.json \
+    source-tree-manifest.sha256 \
+    source-tree-hash.json \
+    evidence-manifest.sha256
   do
     if [ -f "$ROOT_DIR/artifacts/$artifact" ]; then
       cp -f "$ROOT_DIR/artifacts/$artifact" "$STAGE_DIR/artifacts/"
+    else
+      MISSING_ARTIFACTS="$MISSING_ARTIFACTS $artifact"
     fi
   done
+  if [ -n "$MISSING_ARTIFACTS" ]; then
+    die "Artefatos obrigatórios ausentes:$MISSING_ARTIFACTS
+
+Execute primeiro:  bash scripts/final-acceptance.sh
+
+Esse comando gera todos os artefatos necessários (relatório, resultados JSON,
+evidência visual, manifestos e logs) e depois chama o build-tarball automaticamente.
+Não execute build-tarball.sh manualmente sem antes rodar o release completo."
+  fi
+  if [ -d "$ROOT_DIR/artifacts/acceptance-logs" ]; then
+    cp -R "$ROOT_DIR/artifacts/acceptance-logs" "$STAGE_DIR/artifacts/"
+  else
+    die "Missing artifacts/acceptance-logs/"
+  fi
 fi
 
 # Garante executáveis

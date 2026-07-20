@@ -1,409 +1,209 @@
 {
-  "completed_at": "2026-07-15T18:26:19-03:00",
+  "schema_version": "1.0",
+  "release_run_id": "release-20260720T130436Z-c8522105",
+  "run_id": "release-20260720T130436Z-c8522105-original",
+  "generated_at": "2026-07-20T10:27:34-03:00",
+  "tree_validation_passed": true,
   "no_pending_issues": true,
-  "final_result": "passed",
-  "git_head": "d8b3309cb1a4",
-  "source_tree_sha256": "fa34a3c7b00b8ad0da815748e6ead6d0de70a41482514d094b4be47a78419240",
-  "acceptance_baseline": [
-    {
-      "sha256": "958736ae906d50119242a867f2e6c2a06ce4f9728ef90158ce5ff6e47591baab",
-      "path": "tests/acceptance/test_comparison_operational.py"
-    },
-    {
-      "sha256": "a9a181441130410dfaa829d8848e08c6751d0ebd6c68e609754806cafeea3433",
-      "path": "tests/acceptance/test_decoder_warning_contract.py"
-    },
-    {
-      "sha256": "18332b2e9db62ec0c334489bcbb4cdc9070ddcc2fd9270cac7d36a67882a87b6",
-      "path": "tests/acceptance/test_diff_protocol_adversarial.py"
-    },
-    {
-      "sha256": "985725927049e54442aa8028ad2818c4dd12b2096dbfd9fb67f677761eb70a1c",
-      "path": "tests/acceptance/test_final_snapshot_seq_global.py"
-    },
-    {
-      "sha256": "152eab700e746d57b1b3736717dd7b1dcdf5ed2a289179789606a91a23d3b290",
-      "path": "tests/acceptance/test_gateway_persisted_out_event.py"
-    },
-    {
-      "sha256": "4936a9fa327a18559e571945e016fcf7a20ce227d94c2e7a40eeee2ae01fcf49",
-      "path": "tests/acceptance/test_payload_no_duplication.py"
-    },
-    {
-      "sha256": "21a9be2ed4398ed85a199c2da9845d9a93000586659090607ecd02e7d6128e2d",
-      "path": "tests/acceptance/test_public_api_and_engine_decoder_contract.py"
-    },
-    {
-      "sha256": "77893afccfde304dfa6adf2a5d94c850529f668049ed97c8de806e0cc302e58d",
-      "path": "tests/acceptance/test_raw_capture8_pipeline.py"
-    },
-    {
-      "sha256": "14ce06e5a5c066f4a6eb029d42a3b025cea3abb27ededd5de818ad2528fe082a",
-      "path": "tests/acceptance/test_replay_control_canonical_deterministic.py"
-    },
-    {
-      "sha256": "b0260bff48694d29607d0689227f114cc7f5b2de83e21f6e9cf35df266fd2ebd",
-      "path": "tests/acceptance/test_runner_contract.py"
-    },
-    {
-      "sha256": "4a497cb84c04ff96949832b97d6bddd12da99b01c852ceeb0d147af93a7f8104",
-      "path": "tests/acceptance/test_snapshot_contracts.py"
-    },
-    {
-      "sha256": "1574671614224749eb02623016124eb7cd3f505a560f0ef464070407ba98d5c1",
-      "path": "tests/acceptance/test_strict_global_session_isolation.py"
-    },
-    {
-      "sha256": "f198cd8d521e3eef32627f36f64b880d7ae89b9d7e158cc5e1eb850f7b21ad60",
-      "path": "tests/js/acceptance/playback_event_references.test.mjs"
-    },
-    {
-      "sha256": "ce414287e6e21b6785e1f858d10be0f6c4ba18846457f4de3a2d95efda66e072",
-      "path": "tests/js/acceptance/terminal_payload_adversarial.test.mjs"
-    }
-  ],
-  "working_tree_dirty": false,
-  "final_gate_log": "artifacts/acceptance-logs/final/run-phase-08-full.log",
-  "final_gate_log_sha256": "fbb84e84cf2c866bfb1a2450d7a717323d1bfd3abef3701e8d29d73bc49e3b7c",
-  "final_gate_steps": [
-    {
-      "name": "phase01-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
-      "name": "phase01-structural",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+  "source_tree_sha256_before": "9913ebf8e9ed02914c79092492e2a7f90c9b04f1c7015566df4012db19a0d13f",
+  "source_tree_sha256_after": "9913ebf8e9ed02914c79092492e2a7f90c9b04f1c7015566df4012db19a0d13f",
+  "source_tree_unchanged": true,
+  "baseline_verified": true,
+  "visual_test_verified": true,
+  "timeline_verified": true,
+  "contamination_regression_verified": true,
+  "full_python_suite_passed": true,
+  "gateway_suite_passed": true,
+  "javascript_suite_passed": true,
+  "tcl_suite_passed": true,
+  "test_all_passed": true,
+  "phase_08_passed": true,
+  "remaining_processes": 0,
+  "remaining_zombies": 0,
+  "commands": {
+    "phase-01-comparison": {
       "name": "phase-01-comparison",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 26.42,
+      "log_path": "artifacts/acceptance-logs/current/phase-01-comparison.log"
     },
-    {
-      "name": "phase02-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 2,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-02-diffs": {
       "name": "phase-02-diffs",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 2,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 11.17,
+      "log_path": "artifacts/acceptance-logs/current/phase-02-diffs.log"
     },
-    {
-      "name": "phase03-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-03-sessions": {
       "name": "phase-03-sessions",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 16.25,
+      "log_path": "artifacts/acceptance-logs/current/phase-03-sessions.log"
     },
-    {
-      "name": "phase04-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-04-snapshots-gateway": {
       "name": "phase-04-snapshots-gateway",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 11.15,
+      "log_path": "artifacts/acceptance-logs/current/phase-04-snapshots-gateway.log"
     },
-    {
-      "name": "phase05-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
-      "name": "phase05-node",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-05-payload-frontend": {
       "name": "phase-05-payload-frontend",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 16.37,
+      "log_path": "artifacts/acceptance-logs/current/phase-05-payload-frontend.log"
     },
-    {
-      "name": "phase06-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-06-decoder-fixture": {
       "name": "phase-06-decoder-fixture",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 11.21,
+      "log_path": "artifacts/acceptance-logs/current/phase-06-decoder-fixture.log"
     },
-    {
-      "name": "phase07-pytest",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 2,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
-      "name": "phase07-js",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
-    },
-    {
+    "phase-07-visual-runner": {
       "name": "phase-07-visual-runner",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 2,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 261.98,
+      "log_path": "artifacts/acceptance-logs/current/phase-07-visual-runner.log"
     },
-    {
-      "name": "acceptance-hash-check",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
+    "acceptance-baseline": {
+      "name": "acceptance-baseline",
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 6.05,
+      "log_path": "artifacts/acceptance-logs/current/acceptance-baseline.log"
     },
-    {
+    "python-acceptance": {
       "name": "python-acceptance",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
+      "duration_seconds": 190.33,
+      "log_path": "artifacts/acceptance-logs/current/python-acceptance.log",
+      "passed": 142,
       "failed": 0,
       "skipped": 0,
       "subtests": 0
     },
-    {
-      "name": "js-acceptance",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
+    "python-full": {
+      "name": "python-full",
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
+      "duration_seconds": 338.33,
+      "log_path": "artifacts/acceptance-logs/current/python-full.log",
+      "passed": 750,
       "failed": 0,
       "skipped": 0,
-      "subtests": 0
+      "subtests": 47
     },
-    {
-      "name": "scripts-test-all",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 150,
+    "gateway-tests": {
+      "name": "gateway-tests",
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
+      "duration_seconds": 31.58,
+      "log_path": "artifacts/acceptance-logs/current/gateway-tests.log",
+      "passed": 95,
       "failed": 0,
       "skipped": 0,
-      "subtests": 0
+      "subtests": 25
     },
-    {
-      "name": "packaging",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 1,
+    "javascript-tests": {
+      "name": "javascript-tests",
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 6.19,
+      "log_path": "artifacts/acceptance-logs/current/javascript-tests.log"
     },
-    {
-      "name": "tarball-inspection",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 0,
+    "tcl-tests": {
+      "name": "tcl-tests",
+      "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "passed": 0,
-      "failed": 0,
-      "skipped": 0,
-      "subtests": 0
+      "duration_seconds": 6.1,
+      "log_path": "artifacts/acceptance-logs/current/tcl-tests.log"
+    },
+    "test-all": {
+      "name": "test-all",
+      "success": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_seconds": 425.38,
+      "log_path": "artifacts/acceptance-logs/current/test-all.log"
+    },
+    "process-cleanup": {
+      "name": "process-cleanup",
+      "success": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_seconds": 6.06,
+      "log_path": "artifacts/acceptance-logs/current/process-cleanup.log"
+    },
+    "visual-evidence": {
+      "name": "visual-evidence-exists",
+      "success": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_seconds": 6.05,
+      "log_path": "artifacts/acceptance-logs/current/visual-evidence-exists.log"
+    },
+    "contamination-regression": {
+      "name": "phase07-contamination",
+      "success": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_seconds": 68.03,
+      "log_path": "artifacts/acceptance-logs/current/phase07-contamination.log",
+      "schema_version": "1.0",
+      "release_run_id": "",
+      "run_id": "",
+      "process_run_id": "proc-cf6f2e6a6b94",
+      "command": [
+        "env",
+        "-u",
+        "DAKOTA_PROCESS_RUN_ID",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/acceptance/test_contamination_regression.py"
+      ],
+      "pid": 212196,
+      "pgid": 212196,
+      "sid": 212196,
+      "started_at": "2026-07-20T10:06:36-0300",
+      "finished_at": "2026-07-20T10:07:44-0300",
+      "processes_seen": [],
+      "process_groups_seen": [],
+      "sessions_seen": [],
+      "escaped_processes": [],
+      "leaked_processes": [],
+      "terminated_processes": [],
+      "killed_processes": [],
+      "alive_after_cleanup": [],
+      "zombies_seen": [],
+      "zombies_after_cleanup": [],
+      "remaining_processes": 0,
+      "remaining_zombies": 0,
+      "stdout_path": "/home/jmachado/projetos/dakota/replay2/artifacts/acceptance-logs/current/phase07-contamination.log",
+      "stderr_path": "/tmp/pt-proc-cf6f2e6a6b94.stderr",
+      "stdout_sha256": "68716276f3d65f7b0bfe83a9b49b67ba773eed2b075dd134b32cf058004ca79d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reasons": []
     }
-  ],
-  "manual_validation": {
-    "passed": true,
-    "session_id": "val-001",
-    "initial_geometry": [
-      2,
-      3
-    ],
-    "final_geometry": [
-      3,
-      4
-    ],
-    "event_count": 13,
-    "timeline_item_count": 13,
-    "checkpoint_count": 5,
-    "diff_count": 13,
-    "playback_event_refs": 13,
-    "text_sig": "sha256:b6ececd1804231e3711c9fa3e6deec61518ca0177c1d93ea2cf39cd61c7d13c8",
-    "visual_sig": "sha256:7f005df41541478db0af459ef05ce1751741d6b3ecb2637063a2d5afffa496aa",
-    "semantic_sig": "sha256:17063525861bdbc6237b2867aff811b73ec3efcf16d468eedc6dd6a800950123",
-    "payload_bytes": 67351
-  },
-  "log_summary": "artifacts/acceptance-log-summary.json",
-  "tarball": null,
-  "commands": [
-    {
-      "name": "run-phase-08-full",
-      "command": null,
-      "started_at": null,
-      "finished_at": null,
-      "duration_seconds": 166,
-      "exit_code": 0,
-      "timed_out": false,
-      "passed": 30,
-      "failed": 0,
-      "skipped": 10,
-      "subtests": 2,
-      "log_path": "artifacts/acceptance-logs/final/run-phase-08-full.log",
-      "log_sha256": "fbb84e84cf2c866bfb1a2450d7a717323d1bfd3abef3701e8d29d73bc49e3b7c"
-    }
-  ]
+  }
 }

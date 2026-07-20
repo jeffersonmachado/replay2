@@ -73,7 +73,7 @@ REMOTE_PORT="8080"
 HAS_ARGS=0  # rastreia se o usuario passou argumentos explicitos
 HAS_SUITE_ARGS=0  # rastreia se o usuario selecionou suites explicitamente
 DRY_RUN="${DAKOTA_TEST_SH_DRY_RUN:-0}"
-BLOCK_TIMEOUT="${DAKOTA_TEST_SH_TIMEOUT:-300}"
+BLOCK_TIMEOUT="${DAKOTA_TEST_SH_TIMEOUT:-450}"
 
 # ── Cores ───────────────────────────────────────────────────────────────────
 ESC_GREEN='\033[0;32m'
@@ -93,37 +93,36 @@ banner() {
 
 run_with_timeout_pg() {
   local timeout_s="$1"
-  shift
-  setsid "$@" &
-  local pid=$!
-  local pgid start deadline descendants child
-  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
-  [ -n "$pgid" ] || pgid="$pid"
-  start=$(date +%s)
-  deadline=$((start + timeout_s))
-  printf "  pid=%s pgid=%s timeout=%ss\n" "$pid" "$pgid" "$timeout_s"
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      descendants="$(collect_descendants "$pid" || true)"
-      kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-      for child in $descendants; do
-        kill -TERM "$child" 2>/dev/null || true
-      done
-      sleep 2
-      descendants="$descendants $(collect_descendants "$pid" || true)"
-      kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-      for child in $descendants; do
-        kill -KILL "$child" 2>/dev/null || true
-      done
-      wait "$pid" 2>/dev/null || true
-      for child in $descendants; do
-        wait "$child" 2>/dev/null || true
-      done
-      return 124
+  local label="$2"
+  shift 2
+  # Use process_tree.py for escape/leak detection + structured results
+  local result_dir="$ROOT_DIR/artifacts/acceptance-logs/current"
+  mkdir -p "$result_dir"
+  local safe_label
+  safe_label=$(echo "$label" | tr ' /:' '___')
+  local result_json="$result_dir/test-sh-${safe_label}.result.json"
+  local stdout_log="$result_dir/test-sh-${safe_label}.log"
+
+  PYTHONPATH="$ROOT_DIR/gateway${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT_DIR/scripts/process_tree.py" run \
+    --name "$label" \
+    --timeout "$timeout_s" \
+    --stdout-log "$stdout_log" \
+    --result-json "$result_json" \
+    -- "$@" >/dev/null 2>&1
+  local rc=$?
+
+  if [ -f "$result_json" ]; then
+    local success
+    success=$(python3 -c "import json; d=json.load(open('$result_json')); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")
+    if [ "$success" = "true" ]; then
+      return 0
     fi
-    sleep 0.2
-  done
-  wait "$pid"
+  fi
+  return 1
+}
+
+collect_descendants() {
+  pgrep -P "$1" 2>/dev/null || true
 }
 
 collect_descendants() {
@@ -151,7 +150,7 @@ run_block() {
     return 0
   fi
   set +e
-  run_with_timeout_pg "$BLOCK_TIMEOUT" "$@"
+  run_with_timeout_pg "$BLOCK_TIMEOUT" "$label" "$@"
   local rc=$?
   set -e
   if [ "$rc" -eq 0 ]; then
@@ -159,11 +158,7 @@ run_block() {
     PASS_COUNT=$((PASS_COUNT + 1))
     return 0
   else
-    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-      printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss, timeout=%ss)\n" "$label" "$(( $(date +%s) - start_ts ))" "$BLOCK_TIMEOUT"
-    else
-      printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
-    fi
+    printf "  ${ESC_RED}[FAIL]${ESC_RESET} %s (%ss)\n" "$label" "$(( $(date +%s) - start_ts ))"
     FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi

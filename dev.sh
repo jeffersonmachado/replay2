@@ -173,6 +173,7 @@ cmd = [
     os.environ["HMAC_KEY_FILE"],
     "--bootstrap-admin",
     os.environ["BOOTSTRAP_ADMIN"],
+    "--gateway-auto-activate",
 ]
 
 
@@ -230,7 +231,8 @@ else
     --db "$DB_PATH" \
     --cookie-secret-file "$COOKIE_SECRET_FILE" \
     --hmac-key-file "$HMAC_KEY_FILE" \
-    --bootstrap-admin "$BOOTSTRAP_ADMIN" &
+    --bootstrap-admin "$BOOTSTRAP_ADMIN" \
+    --gateway-auto-activate &
 fi
 
 SERVER_PID=$!

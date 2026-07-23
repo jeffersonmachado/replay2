@@ -9,7 +9,7 @@
 ########################################################################
 
 namespace eval ::events {
-    namespace export configure register_sink unregister_sink emit now_ms
+    namespace export register_sink emit now_ms
 
     # Lista de procs: cada sink recebe 1 argumento (dict do evento)
     variable sinks
@@ -20,20 +20,6 @@ namespace eval ::events {
     set cfg [dict create enabled 1]
 }
 
-proc ::events::configure {args} {
-    variable cfg
-    if {[llength $args] % 2 != 0} {
-        error "events::configure espera pares chave/valor"
-    }
-    foreach {k v} $args {
-        switch -exact -- $k {
-            -enabled { dict set cfg enabled [expr {int($v) != 0}] }
-            default  { error "events::configure: opção desconhecida: $k" }
-        }
-    }
-    return $cfg
-}
-
 proc ::events::register_sink {sinkProc} {
     variable sinks
     if {$sinkProc eq ""} { error "events::register_sink: sinkProc vazio" }
@@ -41,13 +27,6 @@ proc ::events::register_sink {sinkProc} {
         return
     }
     lappend sinks $sinkProc
-}
-
-proc ::events::unregister_sink {sinkProc} {
-    variable sinks
-    set idx [lsearch -exact $sinks $sinkProc]
-    if {$idx < 0} { return }
-    set sinks [lreplace $sinks $idx $idx]
 }
 
 proc ::events::now_ms {} {
@@ -64,11 +43,9 @@ proc ::events::emit {type payload} {
     # Normaliza payload
     if {$payload eq ""} {
         set payload [dict create]
-    } elseif {![string match "dict *" [tcl::unsupported::representation $payload]]} {
-        # Tenta aceitar qualquer coisa que "pareça" dict; se falhar, encapsula.
-        if {[catch {dict size $payload}]} {
-            set payload [dict create value $payload]
-        }
+    } elseif {[catch {dict size $payload}]} {
+        # Não é um dict parseável: encapsula para manter o evento estruturado.
+        set payload [dict create value $payload]
     }
 
     set ev [dict create \

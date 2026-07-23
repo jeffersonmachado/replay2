@@ -10,7 +10,7 @@
 ########################################################################
 
 namespace eval ::capture {
-    namespace export snapshot
+    namespace export snapshot drain session_eof
 
     # Tamanho máximo de bytes a ler em uma captura simples.
     variable maxBytes 65535
@@ -18,6 +18,10 @@ namespace eval ::capture {
     # Buffer por spawn_id (tela atual bruta)
     variable buffers
     array set buffers {}
+
+    # Flag de EOF por spawn_id (sessão encerrada detectada durante a leitura)
+    variable eofSeen
+    array set eofSeen {}
 }
 
 proc ::capture::apply_screen_boundaries {text} {
@@ -48,23 +52,27 @@ proc ::capture::snapshot {spawn_id args} {
     # Atualiza um buffer por spawn_id e retorna a tela bruta atual completa.
     #
     # Parâmetros opcionais:
-    #   -timeout <segundos>   (default: 1.0)  pode ser fracionário
+    #   -timeout <segundos>   (default: 2.0 — alinhado a config.tcl)  pode ser fracionário
     #   -quiet_ms <ms>        (default: 200)
     #
     # Retorna:
     #   String com o buffer bruto da tela atual.
 
     array set opts {
-        -timeout 1.0
+        -timeout 2.0
         -quiet_ms 200
     }
     array set opts $args
 
     variable maxBytes
     variable buffers
+    variable eofSeen
 
     if {![info exists buffers($spawn_id)]} {
         set buffers($spawn_id) ""
+    }
+    if {![info exists eofSeen($spawn_id)]} {
+        set eofSeen($spawn_id) 0
     }
 
     set timeout_ms [expr {int(double($opts(-timeout)) * 1000.0)}]
@@ -80,6 +88,7 @@ proc ::capture::snapshot {spawn_id args} {
     while {1} {
         set chunk ""
         set matched 0
+        set gotEof 0
 
         set rc [catch {
             expect -i $spawn_id -timeout 0 {
@@ -92,12 +101,24 @@ proc ::capture::snapshot {spawn_id args} {
                 }
                 eof {
                     # sessão terminou
+                    set gotEof 1
                 }
             }
         } err]
 
         if {$rc != 0} {
-            puts stderr "capture::snapshot erro em expect: $err"
+            if {[string match "*spawn id*not open*" $err]} {
+                # Canal já encerrado pelo Expect (processo morreu): trata como EOF.
+                set eofSeen($spawn_id) 1
+            } else {
+                puts stderr "capture::snapshot erro em expect: $err"
+            }
+            break
+        }
+
+        if {$gotEof} {
+            # Marca EOF para que o chamador encerre a sessão de forma limpa.
+            set eofSeen($spawn_id) 1
             break
         }
 
@@ -132,6 +153,85 @@ proc ::capture::snapshot {spawn_id args} {
 
     set buffers($spawn_id) $buf
     return $buf
+}
+
+proc ::capture::session_eof {spawn_id} {
+    # Retorna 1 se um EOF já foi detectado para este spawn_id.
+    variable eofSeen
+    if {![info exists eofSeen($spawn_id)]} { return 0 }
+    return $eofSeen($spawn_id)
+}
+
+proc ::capture::drain {spawn_id} {
+    # Drena (sem bloquear) qualquer saída pendente do canal, anexando ao
+    # buffer por spawn_id. Usado quando a engine está pausada, para não
+    # acumular dados no PTY e ainda assim detectar EOF.
+    #
+    # Retorna:
+    #   Quantidade de bytes drenados nesta chamada.
+
+    variable maxBytes
+    variable buffers
+    variable eofSeen
+
+    if {![info exists buffers($spawn_id)]} {
+        set buffers($spawn_id) ""
+    }
+    if {![info exists eofSeen($spawn_id)]} {
+        set eofSeen($spawn_id) 0
+    }
+
+    set drained ""
+    while {1} {
+        set chunk ""
+        set matched 0
+        set gotEof 0
+
+        set rc [catch {
+            expect -i $spawn_id -timeout 0 {
+                -re {.+} {
+                    set chunk $expect_out(0,string)
+                    set matched 1
+                }
+                timeout {
+                    # nada disponível agora
+                }
+                eof {
+                    set gotEof 1
+                }
+            }
+        } err]
+
+        if {$rc != 0} {
+            if {[string match "*spawn id*not open*" $err]} {
+                # Canal já encerrado pelo Expect (processo morreu): trata como EOF.
+                set eofSeen($spawn_id) 1
+            } else {
+                puts stderr "capture::drain erro em expect: $err"
+            }
+            break
+        }
+        if {$gotEof} {
+            set eofSeen($spawn_id) 1
+            break
+        }
+        if {!$matched} { break }
+
+        append drained $chunk
+        if {[string length $drained] >= $maxBytes} { break }
+    }
+
+    if {$drained ne ""} {
+        set buf $buffers($spawn_id)
+        append buf $drained
+        set buf [::capture::apply_screen_boundaries $buf]
+        if {[string length $buf] > $maxBytes} {
+            set buf [string range $buf end-[expr {$maxBytes - 1}] end]
+        }
+        set buffers($spawn_id) $buf
+    }
+
+    return [string length $drained]
 }
 
 

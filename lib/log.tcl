@@ -84,30 +84,25 @@ proc ::log::_escape_json {s} {
     regsub -all {\n} $out {\\n} out
     regsub -all {\r} $out {\\r} out
     regsub -all {\t} $out {\\t} out
-    return $out
+    # Demais caracteres de controle (< 0x20) viram \u00XX (JSON exige escape).
+    set res ""
+    foreach ch [split $out ""] {
+        scan $ch %c code
+        if {$code < 32} {
+            append res [format {\u%04x} $code]
+        } else {
+            append res $ch
+        }
+    }
+    return $res
 }
 
-proc ::log::_to_json_value {v {depth 0}} {
-    # Converte escalar/list/dict para JSON (recursivo, com limite).
-    if {$depth > 6} {
-        return "\"<max_depth>\""
-    }
-
-    # dict -> object
-    if {![catch {dict size $v}]} {
-        return [::log::_dict_to_json $v [expr {$depth + 1}]]
-    }
-
-    # lista -> array (heurística: se for lista parseável com len>1)
-    if {![catch {set n [llength $v]}] && $n > 1} {
-        set arrParts {}
-        foreach item $v {
-            lappend arrParts [::log::_to_json_value $item [expr {$depth + 1}]]
-        }
-        return "\[[join $arrParts ,]\]"
-    }
-
-    # Decide entre número/bool e string.
+proc ::log::_to_json_value {v} {
+    # Serializa um escalar como JSON. Não tenta adivinhar dict/list pelo
+    # conteúdo (uma string com número par de palavras não é um objeto):
+    # apenas inteiros/decimais estritos e booleanos saem sem aspas; todo o
+    # resto é tratado como string. Estruturas compostas devem ser
+    # serializadas explicitamente com _dict_to_json.
     if {[string is integer -strict $v] || [string is double -strict $v]} {
         return $v
     }
@@ -117,11 +112,11 @@ proc ::log::_to_json_value {v {depth 0}} {
     return "\"[::log::_escape_json $v]\""
 }
 
-proc ::log::_dict_to_json {d {depth 0}} {
+proc ::log::_dict_to_json {d} {
     set parts {}
     foreach {k v} $d {
         set key "\"[::log::_escape_json $k]\""
-        set val [::log::_to_json_value $v $depth]
+        set val [::log::_to_json_value $v]
         lappend parts "${key}:${val}"
     }
     return "\{[join $parts ,]\}"

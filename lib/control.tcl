@@ -19,7 +19,7 @@
 ########################################################################
 
 namespace eval ::control {
-    namespace export start stop poll update_status should_dispatch drain_actions drain_dump_request should_stop port
+    namespace export start stop update_status should_dispatch drain_actions drain_dump_request should_stop port set_last_screen get_last_screen
 
     variable cfg
     set cfg [dict create bind "127.0.0.1" port 0 enabled 0]
@@ -64,6 +64,15 @@ proc ::control::start {bind port} {
     dict set cfg bind $bind
     dict set cfg port $p
     dict set cfg enabled 1
+
+    # A ControlAPI não tem autenticação: bind fora de loopback expõe o
+    # controle da engine na rede — avisa em runtime.
+    if {$bind ni {"127.0.0.1" "::1" "localhost"}} {
+        puts stderr "Aviso: ControlAPI sem autenticação com bind em '$bind' (não-loopback). Prefira 127.0.0.1 ou proteja a porta (firewall/túnel)."
+        if {[llength [info procs ::events::emit]]} {
+            ::events::emit "control_bind_non_loopback" [dict create level "warn" bind $bind]
+        }
+    }
 
     set serverSock [socket -server ::control::_on_accept -myaddr $bind $p]
     set actualPort [lindex [fconfigure $serverSock -sockname] 2]
@@ -219,9 +228,11 @@ proc ::control::set_last_screen {raw norm sig state} {
     set last_state $state
 }
 
-proc ::control::poll {} {
-    # Nada a fazer: o processamento é por fileevent.
-    return
+proc ::control::get_last_screen {} {
+    # Retorna {raw norm} da última tela conhecida (para dumps manuais/TUI).
+    variable last_raw
+    variable last_norm
+    return [list $last_raw $last_norm]
 }
 
 proc ::control::should_dispatch {} {

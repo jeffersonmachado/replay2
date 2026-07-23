@@ -16,9 +16,6 @@ if {[catch {package require Expect} err]} {
 }
 
 set ::APP_ROOT [file dirname [file dirname [file normalize [info script]]]]
-set ::AUTO_PATH [linsert $::auto_path 0 \
-    [file join $::APP_ROOT lib] \
-    [file join $::APP_ROOT screens]]
 
 source [file join $::APP_ROOT lib/config.tcl]
 source [file join $::APP_ROOT lib/normalize.tcl]
@@ -38,7 +35,9 @@ Cmds:
   inspect dump <dir>              Inspeciona um dump gerado
   plugins list|validate|enable|disable [args]
   record --out <file> -- [run args...]   Grava eventos (via --record-file)
-  replay --legacy-cmd <tcl_list> --record <file> [--encoding <enc>] [--rows <n>] [--cols <n>] [--term <name>] [--translation <t>]
+  replay-keys --legacy-cmd <tcl_list> --record <file> [--speed <f>] [--encoding <enc>] [--rows <n>] [--cols <n>] [--term <name>] [--translation <t>]
+                             Replay LOCAL de teclas gravadas (action_sent), com pacing por ts_ms.
+                             ('replay' segue como alias depreciado)
   control attach --host <h> --port <p>   Conecta ao ControlAPI
   tui --port <p> [--host <h>]            TUI de debug (precisa ControlAPI)
 }]\n
@@ -217,8 +216,10 @@ proc cmd_record {args} {
     cmd_run {*}[concat [list --record-file $out] $rest]
 }
 
-proc cmd_replay {args} {
-    # Reproduz apenas ações gravadas como action_sent(keys) (MVP).
+proc cmd_replay_keys {args} {
+    # Replay LOCAL de teclas: reproduz apenas ações gravadas como
+    # action_sent(keys), respeitando o pacing dos ts_ms gravados.
+    # NÃO é o replay oficial de migração (esse vive no gateway Python).
     set legacy_raw ""
     set recordFile ""
     set encoding "utf-8"
@@ -226,6 +227,7 @@ proc cmd_replay {args} {
     set rows 25
     set cols 80
     set term "xterm"
+    set speed 1.0
 
     set i 0
     while {$i < [llength $args]} {
@@ -238,6 +240,10 @@ proc cmd_replay {args} {
             --record {
                 incr i
                 set recordFile [lindex $args $i]
+            }
+            --speed {
+                incr i
+                set speed [lindex $args $i]
             }
             --encoding {
                 incr i
@@ -260,15 +266,21 @@ proc cmd_replay {args} {
                 set translation [lindex $args $i]
             }
             default {
-                die "replay: argumento desconhecido: $a"
+                die "replay-keys: argumento desconhecido: $a"
             }
         }
         incr i
     }
-    if {$legacy_raw eq ""} { die "replay: falta --legacy-cmd" }
-    if {$recordFile eq ""} { die "replay: falta --record <arquivo>" }
-    if {![file exists $recordFile]} { die "replay: record não existe: $recordFile" }
-    lassign [::config::validate_geometry $rows $cols] rows cols
+    if {$legacy_raw eq ""} { die "replay-keys: falta --legacy-cmd" }
+    if {$recordFile eq ""} { die "replay-keys: falta --record <arquivo>" }
+    if {![file exists $recordFile]} { die "replay-keys: record não existe: $recordFile" }
+    if {![string is double -strict $speed] || $speed <= 0.0} {
+        die "replay-keys: --speed inválido (use número > 0; 1.0=tempo real, 2.0=2x mais rápido)"
+    }
+    if {[catch {::config::validate_geometry $rows $cols} geom]} {
+        die "replay-keys: $geom"
+    }
+    lassign $geom rows cols
 
     # Parse legacy cmd como lista Tcl
     set legacy_cmd [lrange $legacy_raw 0 end]
@@ -289,6 +301,7 @@ proc cmd_replay {args} {
 
     set f [open $recordFile r]
     set sent 0
+    set prevTs ""
     while {[gets $f line] >= 0} {
         set line [string trim $line]
         if {$line eq ""} { continue }
@@ -298,11 +311,23 @@ proc cmd_replay {args} {
         if {[dict get $ev type] ne "action_sent"} { continue }
         if {![dict exists $ev keys]} { continue }
         set keys [dict get $ev keys]
+
+        # Pacing pelo ts_ms gravado (speed > 1 acelera, < 1 desacelera).
+        if {[dict exists $ev ts_ms] && [string is integer -strict [dict get $ev ts_ms]]} {
+            set ts [dict get $ev ts_ms]
+            if {$prevTs ne ""} {
+                set delay [expr {int((double($ts) - double($prevTs)) / $speed)}]
+                if {$delay > 60000} { set delay 60000 }  ;# teto de segurança
+                if {$delay > 0} { after $delay }
+            }
+            set prevTs $ts
+        }
+
         ::action::send_keys $spawn_id $keys
         incr sent
     }
     close $f
-    puts "Replayed action_sent count=$sent"
+    puts "Replayed action_sent count=$sent (speed=$speed)"
 }
 
 proc cmd_control_attach {args} {
@@ -362,11 +387,13 @@ proc cmd_tui {args} {
     if {$mode ni {"norm" "raw" "status"}} { die "tui: --mode inválido (norm|raw|status)" }
 
     proc _tui_unescape {s} {
+        # Inverso de control::_escape_oneline: o servidor escapa '\' primeiro,
+        # então o cliente desescapa na ordem inversa — \n/\r/\t antes e '\\' por último.
         set out $s
-        regsub -all {\\\\} $out {\\} out
         regsub -all {\\n}  $out "\n" out
         regsub -all {\\r}  $out "\r" out
         regsub -all {\\t}  $out "\t" out
+        regsub -all {\\\\} $out {\\} out
         return $out
     }
 
@@ -517,8 +544,12 @@ switch -exact -- $cmd {
     record {
         cmd_record {*}$args
     }
+    replay-keys {
+        cmd_replay_keys {*}$args
+    }
     replay {
-        cmd_replay {*}$args
+        puts stderr "Aviso: subcomando 'replay' está depreciado; use 'replay-keys' (replay local de teclas)."
+        cmd_replay_keys {*}$args
     }
     control {
         if {[llength $args] < 1} { die "control: subcomando requerido" }

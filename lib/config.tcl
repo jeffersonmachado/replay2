@@ -68,6 +68,7 @@ Opções:
   --capture-quiet-ms <ms>     Silêncio para considerar captura estável (default: 200)
   --stable-required <n>       Iterações estáveis antes de despachar (default: 1)
   --max-bytes <n>             Limite de bytes por snapshot (default: 65535)
+  --match-max <n>             Buffer de casamento do Expect por spawn (default: 65536)
   --screens-dir <path>        Diretório de handlers (default: <app_root>/screens)
   --plugins-file <path>       Arquivo dict de enable/disable de plugins
                              (default: <screens-dir>/plugins.tcldict.txt)
@@ -84,7 +85,7 @@ Opções:
 Env vars (alternativas):
   DAKOTA_LEGACY_CMD, DAKOTA_ENCODING, DAKOTA_LOG_LEVEL, DAKOTA_LOG_FORMAT,
   DAKOTA_ROWS, DAKOTA_COLS, DAKOTA_TERM, DAKOTA_LOG_STREAM, DAKOTA_DUMP_DIR, DAKOTA_SCREENS_DIR, DAKOTA_PLUGINS_FILE,
-  DAKOTA_RECORD_FILE, DAKOTA_CONTROL_PORT, DAKOTA_CONTROL_BIND
+  DAKOTA_RECORD_FILE, DAKOTA_CONTROL_PORT, DAKOTA_CONTROL_BIND, DAKOTA_MATCH_MAX
 }]\n
 }
 
@@ -118,6 +119,7 @@ proc ::config::parse_argv {argv app_root} {
         capture_quiet_ms 200 \
         stable_required 1 \
         max_bytes 65535 \
+        match_max 65536 \
         screens_dir $default_screens_dir \
         plugins_file $default_plugins_file \
         dump_dir "" \
@@ -182,6 +184,9 @@ proc ::config::parse_argv {argv app_root} {
     if {[info exists ::env(DAKOTA_CONTROL_BIND)] && $::env(DAKOTA_CONTROL_BIND) ne ""} {
         dict set cfg control_bind $::env(DAKOTA_CONTROL_BIND)
     }
+    if {[info exists ::env(DAKOTA_MATCH_MAX)] && $::env(DAKOTA_MATCH_MAX) ne ""} {
+        dict set cfg match_max [expr {int($::env(DAKOTA_MATCH_MAX))}]
+    }
 
     # Parse de argv
     set i 0
@@ -241,6 +246,10 @@ proc ::config::parse_argv {argv app_root} {
             --max-bytes {
                 incr i
                 dict set cfg max_bytes [expr {int([lindex $argv $i])}]
+            }
+            --match-max {
+                incr i
+                dict set cfg match_max [expr {int([lindex $argv $i])}]
             }
             --screens-dir {
                 incr i

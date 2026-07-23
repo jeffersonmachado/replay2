@@ -4,6 +4,12 @@
 # Demonstração executável da engine usando o simulador em examples/.
 #
 
+########################################################################
+## Configuração inicial — CRÍTICO: encoding antes de qualquer source
+########################################################################
+
+encoding system utf-8
+
 if {[catch {package require Expect} err]} {
     puts stderr "Erro: pacote Expect não encontrado: $err"
     exit 1
@@ -27,11 +33,17 @@ proc start_demo_session {cfg app_root} {
     set cmd [list $tclsh $sim]
     eval [linsert $cmd 0 spawn -nottycopy -nottyinit]
     fconfigure $spawn_id -encoding [dict get $cfg encoding] -translation [dict get $cfg translation]
+    # match_max: evita truncamento silencioso do Expect em telas grandes.
+    match_max -i $spawn_id [dict get $cfg match_max]
     return $spawn_id
 }
 
 proc main {} {
-    set cfg [::config::parse_argv $::argv $::APP_ROOT]
+    # Erros de CLI viram mensagem limpa, sem stack trace.
+    if {[catch {::config::parse_argv $::argv $::APP_ROOT} cfg]} {
+        puts stderr "Erro: $cfg"
+        exit 2
+    }
     encoding system [dict get $cfg encoding]
     set ::capture::maxBytes [dict get $cfg max_bytes]
 

@@ -8,17 +8,12 @@
 ########################################################################
 
 namespace eval ::record {
-    namespace export start stop enabled event_sink
+    namespace export start stop event_sink
 
     variable fh ""
     variable path ""
     variable types
     set types {signature_computed route_decision handler_called action_sent action_sleep unknown_screen}
-}
-
-proc ::record::enabled {} {
-    variable fh
-    expr {$fh ne ""}
 }
 
 proc ::record::start {filePath} {
@@ -31,6 +26,8 @@ proc ::record::start {filePath} {
     set fh [open $filePath a]
     fconfigure $fh -translation lf -buffering line
     set path $filePath
+    # Marca de início de sessão no próprio arquivo (aberto em append).
+    ::record::_write_marker "record_started" $filePath
     if {[llength [info procs ::events::emit]]} {
         ::events::emit "record_started" [dict create level "info" path $filePath]
     }
@@ -40,13 +37,27 @@ proc ::record::stop {} {
     variable fh
     variable path
     if {$fh eq ""} { return }
+    set old $path
+    # Marca de fim de sessão antes de fechar.
+    ::record::_write_marker "record_stopped" $old
     catch {close $fh}
     set fh ""
-    set old $path
     set path ""
     if {[llength [info procs ::events::emit]]} {
         ::events::emit "record_stopped" [dict create level "info" path $old]
     }
+}
+
+proc ::record::_write_marker {markerType filePath} {
+    # Grava uma linha de marcação de sessão (mesmo formato: list com 1 dict).
+    variable fh
+    if {$fh eq ""} { return }
+    puts $fh [list [dict create \
+        type $markerType \
+        ts_ms [clock milliseconds] \
+        pid [pid] \
+        path $filePath \
+    ]]
 }
 
 proc ::record::event_sink {ev} {

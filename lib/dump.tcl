@@ -63,14 +63,9 @@ proc ::dump::_safe_filename {s} {
     return $out
 }
 
-proc ::dump::_write_file {path content {binary 0}} {
-    if {$binary} {
-        set f [open $path "wb"]
-        fconfigure $f -translation binary
-    } else {
-        set f [open $path "w"]
-        fconfigure $f -translation lf
-    }
+proc ::dump::_write_file {path content} {
+    set f [open $path "w"]
+    fconfigure $f -translation lf
     puts -nonewline $f $content
     close $f
 }
@@ -124,7 +119,9 @@ proc ::dump::event_sink {ev} {
     # Sink para ::events::register_sink.
     set type [dict get $ev type]
     if {$type eq "unknown_screen"} {
-        catch { ::dump::dump_unknown $ev }
+        if {[catch {::dump::dump_unknown $ev} err]} {
+            puts stderr "dump::event_sink: falha ao gravar dump: $err"
+        }
     }
 }
 

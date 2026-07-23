@@ -214,9 +214,7 @@ proc ::state_machine::dispatch {spawn_id signature norm_screen} {
     set state   [dict get $chosen set_state]
     set handler [dict get $chosen handler]
 
-    # Atualiza o estado atual para o estado associado a esta assinatura.
-    set_current_state $state
-
+    # Valida o handler ANTES de alterar o estado atual.
     if {![llength [info procs $handler]]} {
         puts stderr "Aviso: handler '$handler' não existe (assinatura: $signature)"
         if {[llength [info procs ::events::emit]]} {
@@ -230,6 +228,9 @@ proc ::state_machine::dispatch {spawn_id signature norm_screen} {
         }
         return 0
     }
+
+    # Atualiza o estado atual para o estado associado a esta assinatura.
+    set_current_state $state
 
     if {[llength [info procs ::events::emit]]} {
         ::events::emit "route_decision" [dict create \
@@ -260,7 +261,22 @@ proc ::state_machine::dispatch {spawn_id signature norm_screen} {
     #   state       - estado lógico atual
     #   signature   - assinatura de tela detectada
     #   norm_screen - tela normalizada completa
-    $handler $spawn_id $state $signature $norm_screen
+    # Erros do handler são isolados (catch) para não derrubar a engine,
+    # na mesma linha do isolamento de sinks em events.tcl.
+    if {[catch { $handler $spawn_id $state $signature $norm_screen } err]} {
+        puts stderr "Erro: handler '$handler' falhou (assinatura: $signature): $err"
+        if {[llength [info procs ::events::emit]]} {
+            ::events::emit "handler_error" [dict create \
+                level "error" \
+                signature $signature \
+                state $currentState \
+                handler $handler \
+                rule_id [dict get $chosen id] \
+                error $err \
+            ]
+        }
+        return 0
+    }
 
     return 1
 }

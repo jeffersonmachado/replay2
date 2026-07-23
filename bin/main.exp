@@ -25,10 +25,6 @@ if {[catch {package require Expect} err]} {
 # Diretório base do projeto (assume que este script está em bin/)
 set ::APP_ROOT [file dirname [file dirname [file normalize [info script]]]]
 
-set ::AUTO_PATH [linsert $::auto_path 0 \
-    [file join $::APP_ROOT lib] \
-    [file join $::APP_ROOT screens]]
-
 ########################################################################
 ## Carregamento dos módulos
 ########################################################################
@@ -54,7 +50,7 @@ source [file join $::APP_ROOT lib/state_machine.tcl]
 # para permitir controle via config (screens_dir/plugins_file).
 
 ########################################################################
-## Conexão com o sistema legado (simulado neste exemplo)
+## Conexão com o sistema legado
 ########################################################################
 
 proc start_legacy_session {cfg} {
@@ -90,6 +86,10 @@ proc start_legacy_session {cfg} {
     fconfigure $spawn_id \
         -encoding [dict get $cfg encoding] \
         -translation [dict get $cfg translation]
+
+    # match_max: o default do Expect (~2000 bytes) trunca silenciosamente
+    # telas grandes; configuramos um limite generoso e configurável.
+    match_max -i $spawn_id [dict get $cfg match_max]
     return $spawn_id
 }
 
@@ -98,7 +98,11 @@ proc start_legacy_session {cfg} {
 ########################################################################
 
 proc main {} {
-    set cfg [::config::parse_argv $::argv $::APP_ROOT]
+    # Erros de CLI (ex.: --capture-timeout abc) viram mensagem limpa, sem stack trace.
+    if {[catch {::config::parse_argv $::argv $::APP_ROOT} cfg]} {
+        puts stderr "Erro: $cfg"
+        exit 2
+    }
 
     # Encoding padrão da aplicação (desde o início)
     encoding system [dict get $cfg encoding]
@@ -157,18 +161,26 @@ proc main {} {
             }
         }
         if {[::control::drain_dump_request]} {
+            # Inclui a última tela conhecida (registrada via set_last_screen).
+            lassign [::control::get_last_screen] lastRaw lastNorm
             ::events::emit "unknown_screen" [dict create \
                 level "info" \
                 signature $last_sig \
                 state [::state_machine::get_current_state] \
-                raw_screen "" \
-                norm_screen "" \
+                raw_screen $lastRaw \
+                norm_screen $lastNorm \
                 dump_reason "manual_dump_request" \
             ]
         }
 
-        # Se pausado, não despacha automaticamente
+        # Se pausado, não despacha automaticamente — mas drena o canal para
+        # não acumular saída no PTY e para detectar encerramento da sessão.
         if {![::control::should_dispatch]} {
+            ::capture::drain $spawn_id
+            if {[::capture::session_eof $spawn_id]} {
+                ::events::emit "session_eof" [dict create level "info" spawn_id $spawn_id]
+                break
+            }
             after 100
             continue
         }
@@ -177,6 +189,17 @@ proc main {} {
         set raw_screen [::capture::snapshot $spawn_id \
             -timeout [dict get $cfg capture_timeout] \
             -quiet_ms [dict get $cfg capture_quiet_ms]]
+
+        # EOF: sessão legada encerrada — cleanup limpo (record/control) ao sair do loop.
+        if {[::capture::session_eof $spawn_id]} {
+            puts stderr "Sessão legada encerrada (EOF). Finalizando engine."
+            ::events::emit "session_eof" [dict create \
+                level "info" \
+                spawn_id $spawn_id \
+                state [::state_machine::get_current_state] \
+            ]
+            break
+        }
 
         ::events::emit "screen_captured" [dict create \
             spawn_id $spawn_id \

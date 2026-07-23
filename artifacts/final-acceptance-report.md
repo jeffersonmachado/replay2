@@ -1,5 +1,5 @@
-# Final Acceptance Report — release-20260720T130436Z-c8522105
-## Tree: 9913ebf8e9ed02914c79092492e2a7f90c9b04f1c7015566df4012db19a0d13f
+# Final Acceptance Report — release-20260723T194816Z-0ac06937
+## Tree: 2e6e95880628f26c78e84a94155f95e1a3722a819d854f53acf79ace0ef35a74
 ## Tree Gate: PASSED
 ## Baseline: VERIFIED
 ## Visual: bytes=78732 timeline=1
@@ -24,8 +24,8 @@
 - **python-acceptance**: exit=0 success=True
 - **python-full**: exit=0 success=True
 - **gateway-tests**: exit=0 success=True
-- **javascript-tests**: exit=0 success=True
 - **tcl-tests**: exit=0 success=True
+- **javascript-tests**: exit=0 success=True
 - **test-all**: exit=0 success=True
 - **process-cleanup**: exit=0 success=True
 - **visual-evidence**: exit=0 success=True

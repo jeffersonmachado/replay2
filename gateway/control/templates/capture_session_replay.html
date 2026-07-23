@@ -30,6 +30,26 @@
       </div>
     </div>
 
+    <!-- Ambiente da captura -->
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Ambiente</p>
+        <p id="session-env-name" class="text-sm font-semibold text-stone-200 font-mono">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Plataforma</p>
+        <p id="session-platform" class="text-sm font-semibold text-stone-200 font-mono">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Origem</p>
+        <p id="session-source" class="text-sm text-stone-200 font-mono">-</p>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
+        <p class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-1">Modo</p>
+        <p id="session-entry-mode" class="text-sm font-semibold text-stone-200">-</p>
+      </div>
+    </div>
+
     <!-- Info de entrada/saída -->
     <div class="grid gap-3 sm:grid-cols-2 mb-4">
       <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
@@ -298,6 +318,9 @@ input[type="range"] {
   // Timeline core — imported dynamically
   let _formatEventContent;
   let _renderEventsCards;
+  let _buildTimelineItems;
+  let _findBestCheckpoint;
+  let _createReplayState;
   let sessionEncoding = 'utf-8';
 
   function initRenderer(mod) {
@@ -311,9 +334,12 @@ input[type="range"] {
 
   // Carrega módulos de timeline ANTES de qualquer renderização
   const _timelineReady = Promise.all([
-    import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; eventTimestamp = mod.eventTimestamp || (function(ev) { return ev?.timestamp_ms ?? ev?.ts_ms ?? 0; }); }),
+    import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; eventTimestamp = mod.eventTimestamp; }),
     import('/assets/js/components/timeline_table.js').then(mod => { _renderEventsCards = mod.renderEventsCards; }),
     import('/assets/js/components/terminal_snapshot_renderer.js').then(mod => { initRenderer(mod); }),
+    import('/assets/js/components/capture_replay_timeline.js').then(mod => { _buildTimelineItems = mod.buildTimelineItems; }),
+    import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
+    import('/assets/js/components/replay_snapshot_state.js').then(mod => { _createReplayState = mod.createReplayState; }),
   ]);
 
   // Carregar dados de replay
@@ -411,6 +437,16 @@ input[type="range"] {
     document.getElementById('session-bytes-total').textContent = `${totalIn + totalOut} bytes`;
     document.getElementById('session-bytes-in').textContent = `${totalIn} bytes`;
     document.getElementById('session-bytes-out').textContent = `${totalOut} bytes • det=${deterministicCount}`;
+
+    // Ambiente da captura
+    const capEnv = capture.environment || {};
+    document.getElementById('session-env-name').textContent = capEnv.env_name || capEnv.hostname || session.source_host || '-';
+    document.getElementById('session-platform').textContent = capEnv.platform || '-';
+    const sourceParts = [];
+    if (session.source_host) sourceParts.push(session.source_host);
+    if (session.source_user) sourceParts.push(session.source_user);
+    document.getElementById('session-source').textContent = sourceParts.length ? sourceParts.join('@') : '-';
+    document.getElementById('session-entry-mode').textContent = session.entry_mode || '-';
 
     const startBtn = document.getElementById('playback-start-btn');
     const statusMsg = document.getElementById('playback-status-message');
@@ -576,51 +612,20 @@ input[type="range"] {
   }
 
   function buildTimelineItems(events) {
-    if (typeof DakTimeline !== 'undefined' && DakTimeline.buildTimelineItems) {
-      return DakTimeline.buildTimelineItems(events, {
+    if (typeof _buildTimelineItems === 'function') {
+      return _buildTimelineItems(events, {
         renderSnapshotToHtml, renderSnapshotToText,
         decodeSnapshotPayload, applyDiff,
         eventTimestamp,
         formatEventContent: formatEventContentLocal,
       });
     }
-    // Fallback inline simplificado (sem dependencia do terminal JS)
-    var items2 = [];
-    var pg = null;
-    var csnap = null;
-    var fg = function() {
-      if (!pg) return;
-      var s = pg.lastSnap;
-      var t = s && s.cells && typeof renderSnapshotToText === 'function' ? renderSnapshotToText(s) : '';
-      var h = s && s.cells && typeof renderSnapshotToHtml === 'function' ? renderSnapshotToHtml(s) : '';
-      items2.push({ type:'bytes', direction:'out', n_bytes:pg.totalBytes, chunk_count:pg.events.length, seq_global:pg.startSeq, seq_global_end:pg.lastSeq, timestamp_ms:pg.startTs, end_timestamp_ms:pg.lastTs, summary:t, content_kind:'terminal_snapshot', snapshot:s, snapshot_html:h, text_sig:pg.lastTextSig||null, visual_sig:pg.lastVisualSig||null });
-      pg = null;
-    };
-    for (var j = 0; j < events.length; j++) {
-      var ev2 = events[j];
-      var io = ev2 && ev2.type === 'bytes' && ev2.direction === 'out';
-      if (!io) { fg(); items2.push(ev2&&ev2.type==='bytes'&&ev2.direction==='in'?Object.assign({},ev2,{summary:ev2.data_decoded==='\x1b'?'Esc':ev2.data_decoded==='\r'?'Enter':ev2.data_decoded||'',data_decoded:ev2.data_decoded||''}):Object.assign({},ev2,{summary:formatEventContentLocal(ev2),data_decoded:ev2.data_decoded||''})); continue; }
-      var tm = typeof eventTimestamp === 'function' ? eventTimestamp(ev2) : (ev2.ts_ms||0);
-      var sq = Number(ev2.seq_global||0);
-      var sn = null;
-      var ev2SnapshotPayload = ev2.render_snapshot || ev2.snapshot_compact;
-      if (ev2SnapshotPayload && typeof decodeSnapshotPayload === 'function') sn = decodeSnapshotPayload(ev2SnapshotPayload);
-      else if (ev2.snapshot && ev2.snapshot.cells) sn = ev2.snapshot;
-      if (ev2.diff && csnap && typeof applyDiff === 'function') csnap = applyDiff(csnap, ev2.diff);
-      else if (sn) csnap = sn;
-      var bg = pg && (tm-pg.lastTs)<=700 && pg.events.length<8;
-      if (!bg) fg();
-      if (!pg) pg = { events:[], startTs:tm, lastTs:tm, startSeq:sq, lastSeq:sq, totalBytes:0, lastSnap:csnap, lastTextSig:ev2.text_sig||null, lastVisualSig:ev2.visual_sig||null };
-      else { pg.lastTs=tm; pg.lastSeq=sq; pg.lastSnap=csnap; pg.lastTextSig=ev2.text_sig||pg.lastTextSig; pg.lastVisualSig=ev2.visual_sig||pg.lastVisualSig; }
-      pg.events.push(ev2);
-      pg.totalBytes += Number(ev2.n_bytes||ev2.n||0);
-    }
-    fg();
-    return items2;
+    // Fallback mínimo enquanto o módulo não carrega: sem agrupamento
+    return (events || []).map((ev) => ({ ...ev, summary: formatEventContentLocal(ev), data_decoded: ev?.data_decoded || '' }));
   }
 
   function escapeHtml(text) {
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
     return String(text || '').replace(/[&<>"']/g, (m) => map[m]);
   }
 
@@ -695,48 +700,60 @@ input[type="range"] {
 
   // ── feedReplayEvent: somente snapshot/diff (TerminalEngine Python) ──
   // NÃO usa mais DakVT, virtual_terminal, parser ANSI JS.
+  // Estado e validação delegados ao módulo replay_snapshot_state.js.
+  function resetReplayState() {
+    playbackState._replay = typeof _createReplayState === 'function' ? _createReplayState() : null;
+  }
+
   function feedReplayEvent(state, event) {
-    // 1. render_snapshot → decodifica e substitui
+    if (!state._replay && typeof _createReplayState === 'function') {
+      state._replay = _createReplayState();
+    }
+    var replay = state._replay;
+    if (!replay) {
+      console.error('feedReplayEvent: módulo replay_snapshot_state não carregado');
+      return;
+    }
+    var seqGlobal = event.seq_global || event.seq || 0;
+
+    // 1. render_snapshot → decodifica, valida e substitui
     var renderPayload = event.render_snapshot || event.snapshot_compact;
-    if (renderPayload && typeof decodeSnapshotPayload === 'function') {
-      var snap = decodeSnapshotPayload(renderPayload);
-      if (snap && snap.cells) {
-        if (typeof validateSnapshotPayload === 'function' && !validateSnapshotPayload(snap)) {
-          console.error('feedReplayEvent: render_snapshot inválido, seq=' + event.seq);
-          return;
-        }
-        state._snapshot = snap;
-        state._currentSeqGlobal = event.seq_global || event.seq || 0;
-        if (event.text_sig) state._snapshot.text_sig = event.text_sig;
-        if (event.visual_sig) state._snapshot.visual_sig = event.visual_sig;
+    if (renderPayload) {
+      if (!replay.applyCheckpoint(renderPayload, seqGlobal)) {
+        console.error('feedReplayEvent: render_snapshot inválido, seq=' + event.seq);
         return;
       }
+      if (event.text_sig) replay.snapshot.text_sig = event.text_sig;
+      if (event.visual_sig) replay.snapshot.visual_sig = event.visual_sig;
+      state._snapshot = replay.snapshot;
+      state._currentSeqGlobal = replay.currentSeqGlobal;
+      return;
     }
 
     // 2. snapshot completo → valida e substitui
     if (event.snapshot && event.snapshot.cells) {
-      if (typeof validateSnapshotPayload === 'function' && !validateSnapshotPayload(event.snapshot)) {
+      if (!replay.applyCheckpoint(event.snapshot, seqGlobal)) {
         console.error('feedReplayEvent: snapshot inválido, seq=' + event.seq);
         return;
       }
-      state._snapshot = typeof cloneSnapshot === 'function' ? cloneSnapshot(event.snapshot) : event.snapshot;
-      state._currentSeqGlobal = event.seq_global || event.seq || 0;
+      state._snapshot = replay.snapshot;
+      state._currentSeqGlobal = replay.currentSeqGlobal;
       return;
     }
 
-    // 3. diff → valida e aplica
-    if (event.diff && state._snapshot && state._snapshot.cells && typeof applyDiff === 'function') {
-      if (typeof validateDiffPayload === 'function' && !validateDiffPayload(event.diff)) {
-        console.error('feedReplayEvent: diff inválido, seq=' + event.seq);
+    // 3. diff → valida (estrutura, base_seq_global, assinaturas) e aplica
+    if (event.diff && state._snapshot && state._snapshot.cells) {
+      try {
+        if (!replay.applyEventDiff(event.diff, seqGlobal)) {
+          console.error('feedReplayEvent: diff inválido, seq=' + event.seq);
+          return;
+        }
+      } catch (err) {
+        console.error('feedReplayEvent: falha ao aplicar diff, seq=' + event.seq + ' — ' + ((err && err.message) || err));
         return;
       }
-      // Valida base_seq_global se disponivel
-      if (event.diff.base_seq_global != null && state._currentSeqGlobal != null && event.diff.base_seq_global !== state._currentSeqGlobal) {
-        console.error('feedReplayEvent: diff base_seq_global mismatch, esperado=' + state._currentSeqGlobal + ', recebido=' + event.diff.base_seq_global);
-        return;
-      }
-      state._snapshot = applyDiff(state._snapshot, event.diff);
-      state._currentSeqGlobal = event.seq_global || event.seq || 0;
+      state._snapshot = replay.snapshot;
+      state._currentSeqGlobal = replay.currentSeqGlobal;
       return;
     }
 
@@ -756,15 +773,8 @@ input[type="range"] {
     var targetSeqGlobal = events[index].seq_global || events[index].seq || 0;
 
     // 1. Localiza melhor checkpoint (maior seq_global <= targetSeqGlobal)
-    var bestCp = null;
     var checkpoints = replayData.checkpoints || [];
-    for (var ci = 0; ci < checkpoints.length; ci++) {
-      var cp = checkpoints[ci];
-      var cpSeq = cp.seq_global || 0;
-      if (cpSeq <= targetSeqGlobal && (!bestCp || cpSeq > (bestCp.seq_global || 0))) {
-        bestCp = cp;
-      }
-    }
+    var bestCp = typeof _findBestCheckpoint === 'function' ? _findBestCheckpoint(checkpoints, targetSeqGlobal) : null;
 
     // 2. Se nao tem checkpoint, usa initial_snapshot
     var snap = null;
@@ -778,8 +788,12 @@ input[type="range"] {
       startSeq = 0;
     }
 
-    playbackState._snapshot = snap;
-    playbackState._currentSeqGlobal = startSeq;
+    resetReplayState();
+    if (playbackState._replay && snap) {
+      playbackState._replay.applyCheckpoint(snap, startSeq);
+    }
+    playbackState._snapshot = playbackState._replay ? playbackState._replay.snapshot : snap;
+    playbackState._currentSeqGlobal = playbackState._replay ? playbackState._replay.currentSeqGlobal : startSeq;
 
     // 3. Aplica diffs do checkpoint ate o evento alvo
     for (var i = 0; i <= index; i++) {
@@ -1069,8 +1083,10 @@ input[type="range"] {
     // Inicializa snapshot a partir do initial_snapshot
     playbackState._snapshot = null;
     playbackState._currentSeqGlobal = 0;
-    if (replayData.initial_snapshot && typeof decodeSnapshotPayload === 'function') {
-      playbackState._snapshot = decodeSnapshotPayload(replayData.initial_snapshot);
+    resetReplayState();
+    if (replayData.initial_snapshot && playbackState._replay) {
+      playbackState._replay.loadInitialSnapshot(replayData.initial_snapshot);
+      playbackState._snapshot = playbackState._replay.snapshot;
     }
 
     playbackState.displayedEventIndex = -1;
@@ -1132,11 +1148,7 @@ input[type="range"] {
     playbackTimeout = setTimeout(playNextEvent, delay);
   }
 
-  // Voltar à página de capturas
-  document.querySelector('[data-tab-link="back"]')?.addEventListener('click', (e) => {
-    const backUrl = `/captures?capture_id=${captureId}`;
-    window.history.back();
-  });
+  // Voltar à página de capturas: o <a href="/captures"> já navega nativamente.
 
   document.getElementById('run-raw-btn')?.addEventListener('click', () => createAndStartOperationalReplay('raw'));
   document.getElementById('run-deterministic-btn')?.addEventListener('click', () => createAndStartOperationalReplay('deterministic'));
@@ -1145,17 +1157,7 @@ input[type="range"] {
   loadTimelinePrefs();
   updateViewButtons(eventsViewMode);
   updateFilterButtons(eventsFilterMode);
-  // Deferred: called after VT module loads via bridge script
-  window._startReplay = function() { loadReplayData(); };
+  // Inicia carregamento apos modulos carregarem
+  _timelineReady.then(function() { loadReplayData(); });
 })();
-</script>
-<script src="/assets/js/components/timeline_core.js" type="module"></script>
-<script src="/assets/js/components/terminal_snapshot_renderer.js" type="module"></script>
-<script src="/assets/js/components/capture_replay_timeline.cjs"></script>
-<script>
-  // Carrega modulos de renderizacao
-  import('/assets/js/components/terminal_snapshot_renderer.js').then(function(mod) {
-    window._snapshotRenderer = mod;
-    if (typeof window._startReplay === 'function') window._startReplay();
-  });
 </script>

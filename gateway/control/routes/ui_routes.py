@@ -43,6 +43,8 @@ def _serve_static_asset(handler, asset_path: str) -> bool:
         content_type = "text/css; charset=utf-8"
     elif fs_path.suffix in (".js", ".cjs", ".mjs"):
         content_type = "application/javascript; charset=utf-8"
+    elif fs_path.suffix == ".svg":
+        content_type = "image/svg+xml"
     handler.send_response(200)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Cache-Control", "no-cache")

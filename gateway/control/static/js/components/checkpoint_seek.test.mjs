@@ -1,9 +1,15 @@
 /**
  * checkpoint_seek.test.mjs — tests for checkpoint-based seek logic
  * Run: node --test gateway/control/static/js/components/checkpoint_seek.test.mjs
+ *
+ * Importa o MÓDULO REAL de produção (checkpoint_seek.js), usado por
+ * capture_session_replay.html no seekToEvent, e o applyDiff real de
+ * terminal_snapshot_renderer.js.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { findBestCheckpoint } from './checkpoint_seek.js';
+import { applyDiff } from './terminal_snapshot_renderer.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -30,6 +36,8 @@ function makeCompact(snap) {
     text_sig: snap.text_sig, visual_sig: snap.visual_sig };
 }
 
+// Diff não-canônico (sem sigs/seqs): o applyDiff real valida bounds das
+// mudanças contra o snapshot corrente e não exige assinaturas.
 function makeDiff(baseSnap, currSnap, baseSeq, seq) {
   const changes = [];
   for (let i = 0; i < Math.min(baseSnap.cells.length, currSnap.cells.length); i++) {
@@ -43,25 +51,9 @@ function makeDiff(baseSnap, currSnap, baseSeq, seq) {
       });
     }
   }
-  return {
-    version: 1, changes: changes,
-    base_seq_global: baseSeq, seq_global: seq,
-    base_text_sig: baseSnap.text_sig, base_visual_sig: baseSnap.visual_sig,
-    text_sig: currSnap.text_sig, visual_sig: currSnap.visual_sig,
-    rows: currSnap.rows, cols: currSnap.cols,
+  return { version: 1, rows: currSnap.rows, cols: currSnap.cols,
     geometry_changed: baseSnap.rows !== currSnap.rows || baseSnap.cols !== currSnap.cols,
-  };
-}
-
-function findBestCheckpoint(checkpoints, targetSeqGlobal) {
-  let best = null;
-  for (const cp of checkpoints) {
-    const cpSeq = cp.seq_global || 0;
-    if (cpSeq <= targetSeqGlobal && (!best || cpSeq > (best.seq_global || 0))) {
-      best = cp;
-    }
-  }
-  return best;
+    changes: changes };
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -135,27 +127,14 @@ test('seek from checkpoint + apply diffs reaches target', () => {
   let currentSnap = JSON.parse(JSON.stringify(bestCp.snapshot_compact));
   assert.equal(currentSnap.cells[0].ch, 'A');
 
-  // Apply diffs up to target
+  // Apply diffs up to target (applyDiff real)
   for (const ev of events) {
     if (ev.seq_global <= targetSeqGlobal) {
-      // Apply diff manually
-      for (const chg of (ev.diff.changes || [])) {
-        const idx = chg.row * ev.diff.cols + chg.col;
-        if (idx < currentSnap.cells.length) {
-          currentSnap.cells[idx] = {
-            ch: chg.ch, fg: chg.fg, bg: chg.bg,
-            bold: chg.bold, dim: chg.dim, underline: chg.underline,
-            blink: chg.blink, reverse: chg.reverse, hidden: chg.hidden,
-          };
-        }
-      }
-      currentSnap.text_sig = ev.diff.text_sig;
-      currentSnap.visual_sig = ev.diff.visual_sig;
+      currentSnap = applyDiff(currentSnap, ev.diff);
     }
   }
 
   assert.equal(currentSnap.cells[0].ch, 'D');
-  assert.equal(currentSnap.text_sig, 'sha256:t3');
 });
 
 test('seek with multiple checkpoints uses closest', () => {
@@ -186,23 +165,12 @@ test('seek does not apply event beyond target', () => {
 
   for (const ev of events) {
     if (ev.seq_global <= target) {
-      for (const chg of (ev.diff.changes || [])) {
-        const idx = chg.row * ev.diff.cols + chg.col;
-        if (idx < currentSnap.cells.length) {
-          currentSnap.cells[idx] = {
-            ch: chg.ch, fg: chg.fg, bg: chg.bg,
-            bold: chg.bold, dim: chg.dim, underline: chg.underline,
-            blink: chg.blink, reverse: chg.reverse, hidden: chg.hidden,
-          };
-        }
-      }
-      currentSnap.text_sig = ev.diff.text_sig;
+      currentSnap = applyDiff(currentSnap, ev.diff);
     }
   }
 
   // Only applied seq 1, not seq 2
   assert.equal(currentSnap.cells[0].ch, 'B');
-  assert.equal(currentSnap.text_sig, 'sha256:t1');
 });
 
 test('seek to non-existent seq returns null checkpoint', () => {

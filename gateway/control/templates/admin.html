@@ -1,13 +1,13 @@
-<div class="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+<div class="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]" data-page-group="admin">
   <section class="space-y-6">
-    <section id="admin-session" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <section id="admin-session" data-section="session" class="hidden r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
       <div class="mb-4">
         <h2 class="r2ctl-section-title text-lg font-semibold">Sessão atual</h2>
         <p class="r2ctl-section-copy text-sm">Identidade atual e status do gateway para o operador conectado.</p>
       </div>
       <div id="admin_session_card" class="space-y-3"></div>
     </section>
-    <section id="admin-settings" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <section id="admin-settings" data-section="settings" class="hidden r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
       <div class="mb-4">
         <h2 class="r2ctl-section-title text-lg font-semibold">Parâmetros globais</h2>
         <p class="r2ctl-section-copy text-sm">Resumo mínimo das configurações operacionais disponíveis nesta instância.</p>
@@ -15,7 +15,7 @@
       <div id="admin_settings_card" class="space-y-3"></div>
     </section>
   </section>
-  <section id="admin-users" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+  <section id="admin-users" data-section="users" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h2 class="r2ctl-section-title text-lg font-semibold">Usuários</h2>

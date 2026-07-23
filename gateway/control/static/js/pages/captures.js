@@ -93,6 +93,10 @@ function renderCaptureSessionCard(captureId, session, preferredSessionId) {
             <span>saída: <span class="text-stone-100">${formatCount(bytesOut)} bytes</span></span>
             <span>det: <span class="text-stone-100">${formatCount(detCount)}</span></span>
           </div>
+          <div class="mt-1 text-xs text-stone-400">
+            <span>início: <span class="text-stone-300">${fmt(session.started_at_ms)}</span></span>
+            ${session.ended_at_ms ? `<span class="ml-3">fim: <span class="text-stone-300">${fmt(session.ended_at_ms)}</span></span>` : ""}
+          </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <a href="${buildReplayViewHref(captureId, sessionId)}" class="r2ctl-btn-soft text-xs">View</a>
@@ -125,10 +129,10 @@ function renderCaptureCard(cap) {
           <span class="text-xs text-stone-400">#${cap.id} · ${fmt(cap.started_at_ms)}</span>
         </div>
         <div class="text-xs text-stone-400 space-x-2">
-          <span>criada por <span class="text-stone-300">${cap.created_by_username || "-"}</span></span>
+          <span>criada por <span class="text-stone-300">${escapeHtml(cap.created_by_username || "-")}</span></span>
           <span>·</span>
-          <span>env: <span class="text-stone-300 font-mono">${envName}</span></span>
-          ${cap.connection_profile_name ? `<span>·</span><span>perfil: <span class="text-stone-300">${cap.connection_profile_name}</span></span>` : ""}
+          <span>env: <span class="text-stone-300 font-mono">${escapeHtml(envName)}</span></span>
+          ${cap.connection_profile_name ? `<span>·</span><span>perfil: <span class="text-stone-300">${escapeHtml(cap.connection_profile_name)}</span></span>` : ""}
           <span>·</span>
           <span>sessões: <span class="text-stone-300">${sessionCount}</span></span>
           ${eventCount !== "-" ? `<span>·</span><span>eventos: <span class="text-stone-300">${eventCount}</span></span>` : ""}
@@ -187,7 +191,7 @@ async function loadCaptures() {
     "#captures_list_content",
     items.length
       ? items.map(renderCaptureCard).join("")
-      : '<div class="text-sm text-stone-400">Nenhuma captura ' + (search ? 'para "' + search + '"' : 'registrada ainda.') + '</div>',
+      : '<div class="text-sm text-stone-400">Nenhuma captura ' + (search ? 'para "' + escapeHtml(search) + '"' : 'registrada ainda.') + '</div>',
   );
 
   // Atualiza controles de paginação
@@ -214,95 +218,18 @@ async function loadCaptures() {
   }
 }
 
-// ── Estado do gateway para nova captura ───────────────────────────────────
+// ── Estado do gateway (banners da lista de capturas) ───────────────────────
 
 let _gatewayActive = false;
 
 async function loadGatewayState() {
   const result = await apiJson("/api/gateway/state");
   if (!result?.data) return;
-  const state = result.data;
-  const env = state.environment || {};
-  _gatewayActive = Boolean(state.active);
+  _gatewayActive = Boolean(result.data.active);
 
-  text("#cap_env_name", env.env_name || env.hostname || "não identificado");
-  text("#cap_env_hostname", env.hostname || env.fqdn || "-");
-  const gwEl = document.getElementById("cap_gw_status");
-  if (gwEl) {
-    gwEl.textContent = _gatewayActive ? "ATIVO" : "INATIVO";
-    gwEl.className = `text-sm font-semibold ${_gatewayActive ? "text-emerald-300" : "text-amber-300"}`;
-  }
-
-  const startBtn = document.getElementById("cap_start_btn");
-  const inactiveMsg = document.getElementById("cap_gw_inactive_msg");
   const alertBanner = document.getElementById("captures_gateway_alert");
-  const infoBanner = document.getElementById("captures_gateway_info");
-
-  if (startBtn) startBtn.disabled = !_gatewayActive;
-  if (inactiveMsg) inactiveMsg.classList.toggle("hidden", _gatewayActive);
   if (alertBanner) alertBanner.classList.toggle("hidden", _gatewayActive);
   // Info banner controlado pelo loadCaptures (mostra só se não houver capturas)
-}
-
-// ── Seleções avancadas ─────────────────────────────────────────────────────
-
-async function loadSelections() {
-  const [profilesRes, usersRes, envsRes] = await Promise.all([
-    apiJson("/api/connection-profiles"),
-    apiJson("/api/users"),
-    apiJson("/api/targets"),
-  ]);
-  const profileSel = document.getElementById("cap_profile_select");
-  if (profileSel && (profilesRes?.data?.connection_profiles || profilesRes?.data?.profiles)) {
-    (profilesRes.data.connection_profiles || profilesRes.data.profiles).forEach((p) => {
-      const opt = document.createElement("option"); opt.value = p.id; opt.textContent = p.name || p.profile_id; profileSel.appendChild(opt);
-    });
-  }
-  const opUserSel = document.getElementById("cap_opuser_select");
-  if (opUserSel && usersRes?.data?.users) {
-    usersRes.data.users.filter((u) => ["operator", "admin"].includes(u.role)).forEach((u) => {
-      const opt = document.createElement("option"); opt.value = u.id; opt.textContent = u.username; opUserSel.appendChild(opt);
-    });
-  }
-  const envSel = document.getElementById("cap_target_env_select");
-  if (envSel && (envsRes?.data?.targets || envsRes?.data?.environments)) {
-    (envsRes.data.targets || envsRes.data.environments).forEach((e) => {
-      const opt = document.createElement("option"); opt.value = e.id; opt.textContent = e.name || e.env_id; envSel.appendChild(opt);
-    });
-  }
-}
-
-// ── Iniciar captura ────────────────────────────────────────────────────────
-
-async function startCapture() {
-  if (!_gatewayActive) {
-    text("#cap_start_feedback", "Ative o gateway para iniciar captura.", "text-amber-300");
-    return;
-  }
-  const btn = document.getElementById("cap_start_btn");
-  if (btn) { btn.disabled = true; btn.textContent = "Iniciando..."; }
-  const profileId = document.getElementById("cap_profile_select")?.value || "";
-  const opUserId = document.getElementById("cap_opuser_select")?.value || "";
-  const targetEnvId = document.getElementById("cap_target_env_select")?.value || "";
-  const notes = document.getElementById("cap_notes")?.value || "";
-  const body = {
-    connection_profile_id: profileId ? parseInt(profileId, 10) : null,
-    operational_user_id: opUserId ? parseInt(opUserId, 10) : null,
-    target_env_id: targetEnvId ? parseInt(targetEnvId, 10) : null,
-    notes: notes || null,
-  };
-  const result = await apiJson("/api/captures/start", jsonRequest("POST", body));
-  if (btn) { btn.disabled = !_gatewayActive; btn.textContent = "Iniciar Captura"; }
-  if (!result) return;
-  if (result.ok) {
-    const capture = result.data;
-    const feedbackEl = document.getElementById("cap_start_feedback");
-    if (feedbackEl) { feedbackEl.className = "text-sm text-emerald-300 mb-3"; feedbackEl.textContent = `Captura #${capture.id} iniciada.`; }
-    setTimeout(() => { window.location.href = `/captures/${capture.id}`; }, 600);
-  } else {
-    const feedbackEl = document.getElementById("cap_start_feedback");
-    if (feedbackEl) { feedbackEl.className = "text-sm text-rose-300 mb-3"; feedbackEl.textContent = result.data?.error || "Falha ao iniciar captura."; }
-  }
 }
 
 // ── Detalhe de captura ─────────────────────────────────────────────────────
@@ -511,7 +438,7 @@ function renderCaptureSessions(captureId, capture, sessions, preferredSessionId)
 async function loadCaptureEvents(captureId) {
   const result = await apiJson(`/api/captures/${captureId}/events?limit=300`);
   if (!result?.data) return;
-  html("#cap_events_content", JSON.stringify(result.data, null, 2));
+  text("#cap_events_content", JSON.stringify(result.data, null, 2));
 }
 
 async function stopCapture(captureId) {
@@ -559,6 +486,5 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("captures_status")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
     document.getElementById("captures_ts_from")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
     document.getElementById("captures_ts_to")?.addEventListener("change", () => { _capturesPage = 0; loadCaptures(); });
-    document.getElementById("cap_start_btn")?.addEventListener("click", startCapture);
   }
 });

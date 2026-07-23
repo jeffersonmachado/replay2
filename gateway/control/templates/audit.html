@@ -68,7 +68,7 @@ function renderAuditEntities(entities) {
   if (rn && !rn.error) {
     remoteNavHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
       '<span class="r2ctl-badge-warning" style="margin-right:6px">remoto</span>' +
-      'Navegacao — Producao (' + (rn.source || '10.5.8.25:/dakota1') + ')</summary>' +
+      'Navegacao — Producao (' + escapeHtml(rn.source || '10.5.8.25:/dakota1') + ')</summary>' +
       '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;">';
 
     // Card: MENUSIG
@@ -146,7 +146,7 @@ function renderAuditEntities(entities) {
   var sis = _d.local_sistema;
   if (sis) {
     localSistemaHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
-      '<span class="r2ctl-badge-accent" style="margin-right:6px">' + (sis.base_path || '/opt/dados/sistema') + '</span>' +
+      '<span class="r2ctl-badge-accent" style="margin-right:6px">' + escapeHtml(sis.base_path || '/opt/dados/sistema') + '</span>' +
       'Estrutura do diretorio local</summary>';
 
     // ── Menu Analysis Cards (INFERENCIA) — ANTES do grid ──
@@ -522,5 +522,5 @@ function renderAuditEntities(entities) {
     });
 })();
 
-function escapeHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escapeHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 </script>

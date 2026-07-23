@@ -199,6 +199,10 @@ export function sanitizeAnsiForDisplay(text) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ''); // other control chars (keep \t \n \r)
 }
 
+export function eventTimestamp(ev) {
+  return ev?.timestamp_ms ?? ev?.ts_ms ?? 0;
+}
+
 export function resolveEventByteCount(ev) {
   const count = Number(ev?.n_bytes ?? ev?.n ?? 0);
   return Number.isFinite(count) ? count : 0;

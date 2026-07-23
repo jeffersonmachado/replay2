@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { html, text } from "../core/dom.js";
+import { escapeHtml, html, text } from "../core/dom.js";
 import { runTableRow } from "../components/run_views.js";
 import { emptyTableRow } from "../components/tables.js";
 import { activatePageSections } from "../components/page_sections.js";
@@ -86,16 +86,16 @@ async function compareRuns() {
     `<div class="grid gap-4 lg:grid-cols-2">
       <div class="r2ctl-detail-surface rounded-2xl p-4">
         <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run A — #${a.id}</div>
-        <div class="text-sm text-stone-200">Status: ${a.status || "-"}</div>
-        <div class="mt-1 text-sm text-stone-200">Compliance: ${a.compliance_status || "-"}</div>
-        <div class="mt-1 text-sm text-stone-200">Destino: ${a.target_user || "-"}@${a.target_host || "-"}</div>
+        <div class="text-sm text-stone-200">Status: ${escapeHtml(a.status || "-")}</div>
+        <div class="mt-1 text-sm text-stone-200">Compliance: ${escapeHtml(a.compliance_status || "-")}</div>
+        <div class="mt-1 text-sm text-stone-200">Destino: ${escapeHtml(a.target_user || "-")}@${escapeHtml(a.target_host || "-")}</div>
         <div class="mt-1 text-xs text-stone-400">Progresso: ${a.last_seq_global_applied || 0} eventos</div>
       </div>
       <div class="r2ctl-detail-surface rounded-2xl p-4">
         <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run B — #${b.id}</div>
-        <div class="text-sm text-stone-200">Status: ${b.status || "-"}</div>
-        <div class="mt-1 text-sm text-stone-200">Compliance: ${b.compliance_status || "-"}</div>
-        <div class="mt-1 text-sm text-stone-200">Destino: ${b.target_user || "-"}@${b.target_host || "-"}</div>
+        <div class="text-sm text-stone-200">Status: ${escapeHtml(b.status || "-")}</div>
+        <div class="mt-1 text-sm text-stone-200">Compliance: ${escapeHtml(b.compliance_status || "-")}</div>
+        <div class="mt-1 text-sm text-stone-200">Destino: ${escapeHtml(b.target_user || "-")}@${escapeHtml(b.target_host || "-")}</div>
         <div class="mt-1 text-xs text-stone-400">Progresso: ${b.last_seq_global_applied || 0} eventos</div>
       </div>
     </div>`,

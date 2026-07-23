@@ -1,5 +1,6 @@
 import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, formatDate, html, text } from "../core/dom.js";
+import { activatePageSections } from "../components/page_sections.js";
 
 async function loadSessionCard() {
   const [me, gateway] = await Promise.all([apiJson("/api/me"), apiJson("/api/gateway/status")]);
@@ -56,11 +57,15 @@ async function createUser() {
     document.getElementById("new_user_username").value = "";
     document.getElementById("new_user_password").value = "";
     document.getElementById("new_user_role").value = "viewer";
+    text("#admin_users_status", "usuário criado com sucesso");
     loadUsers();
+  } else {
+    text("#admin_users_status", result?.data?.error || "falha ao criar usuário");
   }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  activatePageSections("admin", "users");
   loadSessionCard();
   loadUsers();
   document.getElementById("load_users_btn")?.addEventListener("click", loadUsers);

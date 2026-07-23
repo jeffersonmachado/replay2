@@ -51,6 +51,7 @@
 </div>
 
 <script>
+function escapeHtml(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");}
 async function runAssess() {
   const btn = document.getElementById('assess_run_btn');
   const status = document.getElementById('assess_status');
@@ -80,27 +81,27 @@ async function runAssess() {
       document.getElementById('assess_summary').textContent = data.summary || '';
 
       document.getElementById('assess_garbage').innerHTML = (data.garbage||[]).slice(0,10).map(g =>
-        `<div class="mb-1"><span class="text-${g.severity==='high'?'red':'amber'}-300">${g.type}</span> ${g.name}: ${g.reason}</div>`
+        `<div class="mb-1"><span class="text-${g.severity==='high'?'red':'amber'}-300">${escapeHtml(g.type)}</span> ${escapeHtml(g.name)}: ${escapeHtml(g.reason)}</div>`
       ).join('') || 'Nenhum item encontrado';
 
       document.getElementById('assess_risks').innerHTML = (data.risks||[]).slice(0,10).map(r =>
         `<div class="mb-2 p-2 border-l-2 ${r.severity==='high'?'border-red-500':'border-amber-500'}">
-          <span class="text-${r.severity==='high'?'red':'amber'}-300 text-xs">${r.severity.toUpperCase()}</span>
-          <div class="text-xs text-stone-400">${(r.factors||[]).join('; ')}</div>
-          <div class="text-xs text-stone-300 mt-1">→ ${r.recommendation}</div>
+          <span class="text-${r.severity==='high'?'red':'amber'}-300 text-xs">${escapeHtml(String(r.severity||'').toUpperCase())}</span>
+          <div class="text-xs text-stone-400">${escapeHtml((r.factors||[]).join('; '))}</div>
+          <div class="text-xs text-stone-300 mt-1">→ ${escapeHtml(r.recommendation)}</div>
         </div>`
       ).join('') || 'Nenhum risco detectado';
 
       document.getElementById('assess_bottlenecks').innerHTML = (data.bottlenecks||[]).map(b =>
-        `<div class="mb-1 text-xs"><span class="text-amber-300">${b.type}</span> ${b.entity}: ${b.metric}=${b.value} → ${b.recommendation}</div>`
+        `<div class="mb-1 text-xs"><span class="text-amber-300">${escapeHtml(b.type)}</span> ${escapeHtml(b.entity)}: ${escapeHtml(b.metric)}=${escapeHtml(b.value)} → ${escapeHtml(b.recommendation)}</div>`
       ).join('') || 'Nenhum gargalo';
 
       document.getElementById('assess_recs').innerHTML = (data.recommendations||[]).map(r =>
         `<div class="mb-2 p-2 border border-stone-700/40 rounded">
-          <span class="text-xs px-1 rounded ${r.priority==='high'?'bg-red-900/40 text-red-300':'bg-amber-900/40 text-amber-300'}">${r.priority}</span>
-          <span class="text-xs text-stone-400 ml-1">${r.category}</span>
-          <div class="text-sm text-stone-200">${r.title}</div>
-          <div class="text-xs text-stone-400">Esforco: ${r.effort} | Impacto: ${r.impact}</div>
+          <span class="text-xs px-1 rounded ${r.priority==='high'?'bg-red-900/40 text-red-300':'bg-amber-900/40 text-amber-300'}">${escapeHtml(r.priority)}</span>
+          <span class="text-xs text-stone-400 ml-1">${escapeHtml(r.category)}</span>
+          <div class="text-sm text-stone-200">${escapeHtml(r.title)}</div>
+          <div class="text-xs text-stone-400">Esforco: ${escapeHtml(r.effort)} | Impacto: ${escapeHtml(r.impact)}</div>
         </div>`
       ).join('') || 'Nenhuma recomendacao';
 

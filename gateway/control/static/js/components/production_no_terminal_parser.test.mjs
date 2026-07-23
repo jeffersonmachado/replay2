@@ -1,6 +1,11 @@
 /**
  * production_no_terminal_parser.test.mjs — garante ausência de VT em produção
  * Run: node --test gateway/control/static/js/components/production_no_terminal_parser.test.mjs
+ *
+ * Aplica de fato os FORBIDDEN_PATTERNS em todos os diretórios de produção
+ * (templates/, components/, pages/, core/). renderHtml/visualSig NÃO são
+ * padrões proibidos: são API legítima de replay_snapshot_state.js (renderização
+ * de snapshot canônico, não parser de terminal).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,26 +17,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../../../../..');
 
 const FORBIDDEN_PATTERNS = [
-  /require\(['"].*virtual_terminal\.cjs['"]\)/,
-  /window\.DakVT\b/,
-  /createVirtualTerminal\b/,
-  /feedBase64\b/,
-  /\.feed\(/,
-  /renderHtml\b/,
-  /screenSig\b/,
-  /visualSig\b/,
+  { re: /require\(['"][^'"]*virtual_terminal\.cjs['"]\)/, label: "require('virtual_terminal.cjs')" },
+  { re: /import\(['"][^'"]*virtual_terminal\.cjs['"]\)/, label: "import('virtual_terminal.cjs')" },
+  { re: /\bwindow\.DakVT\b/, label: 'window.DakVT' },
+  { re: /\bcreateVirtualTerminal\b/, label: 'createVirtualTerminal' },
+  { re: /\bfeedBase64\b/, label: 'feedBase64' },
 ];
 
 const PRODUCTION_DIRS = [
   'gateway/control/templates',
   'gateway/control/static/js/components',
+  'gateway/control/static/js/pages',
+  'gateway/control/static/js/core',
 ];
 
-const ALLOWED_IN_PRODUCTION = [
-  // Comentários/documentação que mencionam que NÃO usam
+// Marcadores de comentário/documentação que mencionam que NÃO usam o VT
+const ALLOWED_LINE_MARKERS = [
   'NÃO usa mais DakVT',
   'NÃO usando fallback DakVT',
 ];
+
+function isAllowedLine(line) {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return true;
+  return ALLOWED_LINE_MARKERS.some((marker) => trimmed.includes(marker));
+}
 
 function scanDir(dirPath) {
   const results = [];
@@ -54,50 +64,29 @@ function scanDir(dirPath) {
   return results;
 }
 
-test('production files do not reference virtual_terminal.cjs', () => {
+test('production files do not use terminal parser patterns', () => {
+  const violations = [];
   for (const dir of PRODUCTION_DIRS) {
     const absDir = path.resolve(projectRoot, dir);
-    const files = scanDir(absDir);
-    for (const file of files) {
-      const content = readFileSync(file, 'utf8');
-      // Check for require('virtual_terminal.cjs')
-      const hasRequire = /require\(['"].*virtual_terminal\.cjs['"]\)/.test(content);
-      if (hasRequire) {
-        // Check if it's only in allowed comments
-        const lines = content.split('\n');
+    for (const file of scanDir(absDir)) {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      for (const { re, label } of FORBIDDEN_PATTERNS) {
         for (const line of lines) {
-          if (/require\(['"].*virtual_terminal\.cjs['"]\)/.test(line)) {
-            const isComment = line.trim().startsWith('//') || line.trim().startsWith('*');
-            if (!isComment) {
-              assert.fail(`${file}: forbidden require('virtual_terminal.cjs') in production`);
-            }
+          if (re.test(line) && !isAllowedLine(line)) {
+            violations.push(`${file}: forbidden ${label}: ${line.trim().substring(0, 80)}`);
           }
         }
       }
     }
   }
+  assert.deepEqual(violations, [], violations.join('\n'));
 });
 
-test('production files do not reference window.DakVT', () => {
-  for (const dir of PRODUCTION_DIRS) {
-    const absDir = path.resolve(projectRoot, dir);
-    const files = scanDir(absDir);
-    for (const file of files) {
-      const content = readFileSync(file, 'utf8');
-      if (/\bwindow\.DakVT\b/.test(content)) {
-        // Check if it's only in allowed comments
-        const lines = content.split('\n');
-        for (const line of lines) {
-          if (/\bwindow\.DakVT\b/.test(line)) {
-            const trimmed = line.trim();
-            const isCommentOrError = trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.includes('NÃO usa') || trimmed.includes('NÃO usando');
-            if (!isCommentOrError) {
-              assert.fail(`${file}: forbidden window.DakVT reference in production`);
-            }
-          }
-        }
-      }
-    }
+test('production scan covers pages/ and core/ directories', () => {
+  // Garante que os diretórios adicionados existem e têm arquivos escaneáveis
+  for (const dir of ['gateway/control/static/js/pages', 'gateway/control/static/js/core']) {
+    const files = scanDir(path.resolve(projectRoot, dir));
+    assert.ok(files.length > 0, `${dir} deve conter arquivos de produção escaneáveis`);
   }
 });
 

@@ -102,7 +102,7 @@ async function loadOverview() {
   renderList("#obs_gateway_types", (gw.summary || {}).top_types || [], "type");
   renderList("#obs_run_status", ops.run_status || [], "status");
   renderList("#obs_failure_types", ops.failure_types || [], "failure_type");
-  html("#obs_failures", JSON.stringify(ops.recent_failures || [], null, 2));
+  text("#obs_failures", JSON.stringify(ops.recent_failures || [], null, 2));
   html("#obs_runs", (ops.recent_runs || []).length ? (ops.recent_runs || []).map(runCompactCard).join("") : '<div class="text-sm text-stone-400">Sem runs recentes.</div>');
   html("#obs_regressions", (ops.recent_regressions || []).length ? (ops.recent_regressions || []).map(regressionCard).join("") : '<div class="text-sm text-stone-400">Nenhuma regressão relevante.</div>');
   html("#obs_active_filters", Object.entries((trend.summary || {}).filters || currentScenarioFilters()).map(([key, value]) => `<div class="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/40 px-3 py-2"><span class="text-xs uppercase tracking-[0.14em] text-stone-400">${escapeHtml(key)}</span><span class="font-mono text-xs text-stone-200">${escapeHtml(value || "-")}</span></div>`).join(""));

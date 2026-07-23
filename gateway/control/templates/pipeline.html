@@ -95,6 +95,8 @@
 // Dados injetados pelo servidor (ultima execucao persistida)
 var _d = window.__R2CTL_PAGE_STATE__ || {};
 
+function escapeHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
 // Exibe ultima execucao se disponivel
 if (_d.last_execution) {
   var le = _d.last_execution;
@@ -237,7 +239,7 @@ async function runPipeline() {
 
         var warnings = data.warnings || [];
         document.getElementById('pipeline_warnings').innerHTML = warnings.length
-          ? '<span class=\"font-medium\">Warnings</span><br>' + warnings.map(function(w) { return '⚠ ' + w; }).join('<br>')
+          ? '<span class=\"font-medium\">Warnings</span><br>' + warnings.map(function(w) { return '⚠ ' + escapeHtml(w); }).join('<br>')
           : '<span class=\"font-medium\">Warnings</span><br><span class=\"text-emerald-400\">✓ Nenhum warning</span>';
 
         result.classList.remove('hidden');

@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { html } from "../core/dom.js";
+import { html, text } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 
 async function reprocessFromFailure(runId, failureId, scope) {
@@ -56,7 +56,7 @@ async function loadDetail(id) {
   ]);
   if (!detail?.data?.run) return;
   renderDetail(detail.data.run, report?.data?.report || {}, comparison?.data?.comparison || {}, failures?.data?.failures || []);
-  html("#events", JSON.stringify({ failures: failures?.data?.failures || [], events: events?.data?.events || [] }, null, 2));
+  text("#events", JSON.stringify({ failures: failures?.data?.failures || [], events: events?.data?.events || [] }, null, 2));
 }
 
 window.addEventListener("DOMContentLoaded", () => {

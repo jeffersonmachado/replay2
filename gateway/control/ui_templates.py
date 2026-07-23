@@ -86,6 +86,7 @@ _MENU_CONFIG = [
         "key": "engineering",
         "children": [
             {"label": "Pipeline", "href": "/pipeline", "key": "engineering_pipeline"},
+            {"label": "Synthetic", "href": "/synthetic", "key": "engineering_synthetic"},
             {"label": "Benchmark", "href": "/benchmark", "key": "engineering_benchmark"},
             {"label": "AI Assessment", "href": "/assess", "key": "engineering_assess"},
             {"label": "Auditoria IA", "href": "/audit", "key": "engineering_audit"},
@@ -195,8 +196,10 @@ def build_layout_context(
     statusbar = _load_template("partials/statusbar.html")
     scripts = []
     if page_state:
+        # Neutraliza "</" para evitar fechamento prematuro de <script> (ex.: "</script>" nos dados)
+        safe_state = json.dumps(page_state, ensure_ascii=True, separators=(',', ':')).replace('</', '<\\/')
         scripts.append(
-            f"<script>window.__R2CTL_PAGE_STATE__ = {json.dumps(page_state, ensure_ascii=True, separators=(',', ':'))};</script>"
+            f"<script>window.__R2CTL_PAGE_STATE__ = {safe_state};</script>"
         )
     scripts.extend(f'<script type="module" src="{path}"></script>' for path in (page_scripts or []))
     return {
@@ -667,7 +670,8 @@ ROUTES_CONFIG = [
         "page_title": "Synthetic Control",
         "page_description": "Geração de massa sintética, jornadas, stress e homologação.",
         "page_kicker": "Qualidade & Homologação",
-        "menu": "synthetic",
+        "menu": "engineering",
+        "submenu": "engineering_synthetic",
         "script": None,  # Script integrado no template
     },
     {

@@ -17,6 +17,141 @@ function setFeedback(message, tone = "neutral") {
   el.textContent = String(message || "");
 }
 
+// ── Escopo de captura ─────────────────────────────────────────────────────
+
+let _systemUsers = [];
+let _systemGroups = [];
+let _currentScope = { users: "*", groups: "*" };
+
+async function loadCaptureScopeOptions() {
+  try {
+    const result = await apiJson("/api/gateway/system-users");
+    _systemUsers = result.data?.users || [];
+    _systemGroups = result.data?.groups || [];
+    renderScopeCheckboxes();
+  } catch (_) {
+    _systemUsers = [];
+    _systemGroups = [];
+  }
+}
+
+function renderScopeCheckboxes() {
+  // Usuários
+  const usersList = document.getElementById("gw_scope_users_list");
+  const usersCount = document.getElementById("gw_scope_users_count");
+  if (usersList && usersCount) {
+    const selectedUsers = _currentScope.users === "*" ? _systemUsers.map(u => u.name) : (_currentScope.users || "*").split(",").map(s => s.trim()).filter(Boolean);
+    const isAllUsers = _currentScope.users === "*";
+    usersCount.textContent = isAllUsers ? "todos" : `${selectedUsers.length} selecionados`;
+    const userChecks = _systemUsers.map(u => `
+      <label class="flex items-center gap-2 text-xs text-stone-300 hover:text-stone-100 cursor-pointer py-0.5">
+        <input type="checkbox" class="gw-scope-user" value="${escapeHtml(u.name)}" ${isAllUsers || selectedUsers.includes(u.name) ? "checked" : ""} />
+        <span class="font-mono">${escapeHtml(u.name)}</span>
+        <span class="text-stone-500">(${u.uid})</span>
+      </label>
+    `).join("");
+    usersList.innerHTML = `
+      <label class="flex items-center gap-2 text-xs text-stone-100 hover:text-white cursor-pointer py-0.5 border-b border-stone-700/50 pb-1 mb-1 font-semibold">
+        <input type="checkbox" class="gw-scope-toggle-all" data-target="gw-scope-user" ${isAllUsers ? "checked" : ""} />
+        <span>Todos</span>
+      </label>
+      ${userChecks}
+    `;
+  }
+
+  // Grupos
+  const groupsList = document.getElementById("gw_scope_groups_list");
+  const groupsCount = document.getElementById("gw_scope_groups_count");
+  if (groupsList && groupsCount) {
+    const selectedGroups = _currentScope.groups === "*" ? _systemGroups.map(g => g.name) : (_currentScope.groups || "*").split(",").map(s => s.trim()).filter(Boolean);
+    const isAllGroups = _currentScope.groups === "*";
+    groupsCount.textContent = isAllGroups ? "todos" : `${selectedGroups.length} selecionados`;
+    const groupChecks = _systemGroups.map(g => `
+      <label class="flex items-center gap-2 text-xs text-stone-300 hover:text-stone-100 cursor-pointer py-0.5">
+        <input type="checkbox" class="gw-scope-group" value="${escapeHtml(g.name)}" ${isAllGroups || selectedGroups.includes(g.name) ? "checked" : ""} />
+        <span class="font-mono">${escapeHtml(g.name)}</span>
+        <span class="text-stone-500">(${g.gid})</span>
+      </label>
+    `).join("");
+    groupsList.innerHTML = `
+      <label class="flex items-center gap-2 text-xs text-stone-100 hover:text-white cursor-pointer py-0.5 border-b border-stone-700/50 pb-1 mb-1 font-semibold">
+        <input type="checkbox" class="gw-scope-toggle-all" data-target="gw-scope-group" ${isAllGroups ? "checked" : ""} />
+        <span>Todos</span>
+      </label>
+      ${groupChecks}
+    `;
+  }
+
+  // Event listeners para "Todos"
+  document.querySelectorAll(".gw-scope-toggle-all").forEach((toggle) => {
+    toggle.onchange = () => {
+      const target = toggle.dataset.target;
+      document.querySelectorAll(`.${target}`).forEach((cb) => { cb.checked = toggle.checked; });
+      _updateScopeCounts();
+    };
+  });
+
+  // Event listeners para checkboxes individuais (sincroniza "Todos")
+  document.querySelectorAll(".gw-scope-user, .gw-scope-group").forEach((cb) => {
+    cb.onchange = () => {
+      const all = cb.className.startsWith("gw-scope-user") ? "gw-scope-user" : "gw-scope-group";
+      const total = document.querySelectorAll(`.${all}`).length;
+      const checked = document.querySelectorAll(`.${all}:checked`).length;
+      const toggleAll = document.querySelector(`.gw-scope-toggle-all[data-target="${all}"]`);
+      if (toggleAll) { toggleAll.checked = checked === total; }
+      _updateScopeCounts();
+    };
+  });
+}
+
+function _updateScopeCounts() {
+  const usersTotal = document.querySelectorAll(".gw-scope-user").length;
+  const usersChecked = document.querySelectorAll(".gw-scope-user:checked").length;
+  const usersCount = document.getElementById("gw_scope_users_count");
+  if (usersCount) { usersCount.textContent = usersChecked === usersTotal ? "todos" : `${usersChecked} selecionados`; }
+
+  const groupsTotal = document.querySelectorAll(".gw-scope-group").length;
+  const groupsChecked = document.querySelectorAll(".gw-scope-group:checked").length;
+  const groupsCount = document.getElementById("gw_scope_groups_count");
+  if (groupsCount) { groupsCount.textContent = groupsChecked === groupsTotal ? "todos" : `${groupsChecked} selecionados`; }
+}
+
+function getSelectedScopeValues(className) {
+  const all = document.querySelectorAll(`.${className}`);
+  const checks = document.querySelectorAll(`.${className}:checked`);
+  if (checks.length === all.length && all.length > 0) return "*";
+  if (checks.length === 0) return "";
+  return Array.from(checks).map(c => c.value).join(",");
+}
+
+async function saveCaptureScope() {
+  const users = getSelectedScopeValues("gw-scope-user");
+  const groups = getSelectedScopeValues("gw-scope-group");
+  const fb = document.getElementById("gw_scope_feedback");
+  const btn = document.getElementById("gw_scope_save_btn");
+
+  if (btn) { btn.disabled = true; btn.textContent = "Salvando..."; }
+  try {
+    const result = await apiJson("/api/gateway/capture-scope", jsonRequest("POST", { users: users || "*", groups: groups || "*" }));
+    _currentScope = result.data.capture_scope || result.data;
+    if (fb) {
+      fb.classList.remove("hidden");
+      fb.className = "text-xs text-emerald-300 mt-2";
+      fb.textContent = "Escopo salvo.";
+    }
+    _updateScopeCounts();
+  } catch (err) {
+    if (fb) {
+      fb.classList.remove("hidden");
+      fb.className = "text-xs text-rose-300 mt-2";
+      fb.textContent = `Erro ao salvar: ${err.message}`;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Salvar"; }
+    setTimeout(() => { if (fb) fb.classList.add("hidden"); }, 3000);
+  }
+}
+
 // ── Renderizar estado do gateway ───────────────────────────────────────────
 
 function formatTs(ms) {
@@ -62,6 +197,20 @@ function renderGatewayState(state) {
   if (activateBtn) { activateBtn.classList.toggle("hidden", active); }
   if (deactivateBtn) { deactivateBtn.classList.toggle("hidden", !active); }
   if (capturePanel) { capturePanel.classList.toggle("hidden", !active); }
+
+  // Escopo de captura
+  const scopeSection = document.getElementById("gw_capture_scope_section");
+  if (scopeSection) {
+    scopeSection.classList.toggle("hidden", !active);
+    if (active) {
+      _currentScope = state.capture_scope || { users: "*", groups: "*" };
+      if (_systemUsers.length === 0) {
+        loadCaptureScopeOptions();
+      } else {
+        renderScopeCheckboxes();
+      }
+    }
+  }
 
   const statusMsg = policy.reason && policy.reason !== "ok"
     ? `${active ? "Gateway ativo" : "Gateway inativo"}: ${policy.reason}`
@@ -205,6 +354,9 @@ function setViewPref(view) {
   localStorage.setItem(VIEW_PREF_KEY, view);
 }
 
+// Botões já com listener registrado (evita acúmulo de listeners em chamadas recursivas)
+const _viewToggleWired = new WeakSet();
+
 function applyViewToggle(tableContainerId, cardsContainerId, toggleBtnId, countId) {
   const view = getViewPref();
   const tableEl = document.getElementById(tableContainerId);
@@ -220,7 +372,8 @@ function applyViewToggle(tableContainerId, cardsContainerId, toggleBtnId, countI
     cardsEl.classList.add("hidden");
     if (btn) btn.textContent = "🃏 Cards";
   }
-  if (btn) {
+  if (btn && !_viewToggleWired.has(btn)) {
+    _viewToggleWired.add(btn);
     btn.addEventListener("click", () => {
       const current = getViewPref();
       const next = current === "cards" ? "table" : "cards";
@@ -472,6 +625,7 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("gateway_deactivate_btn")?.addEventListener("click", () => deactivateGateway(false));
   document.getElementById("load_gateway_monitor_btn")?.addEventListener("click", loadGatewayMonitor);
   document.getElementById("load_gateway_sessions_btn")?.addEventListener("click", loadGatewaySessions);
+  document.getElementById("gw_scope_save_btn")?.addEventListener("click", saveCaptureScope);
 
   ["gw_session_event_type", "gw_session_actor_output", "gw_session_logname_output", "gw_session_id_filter_output", "gw_session_uid_select", "gw_session_gid_select"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", loadGatewaySessions);

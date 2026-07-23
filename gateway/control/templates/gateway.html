@@ -69,6 +69,35 @@
     <!-- Feedback de operações -->
     <div id="gateway_feedback" class="text-sm text-stone-400 mb-4">verificando estado do gateway...</div>
 
+    <!-- Escopo de captura -->
+    <div id="gw_capture_scope_section" class="r2ctl-detail-surface rounded-2xl p-4 mb-4 hidden">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs uppercase tracking-[0.18em] text-stone-400">Escopo de captura</p>
+        <button id="gw_scope_save_btn" class="r2ctl-btn-soft text-xs">Salvar</button>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs text-stone-400">Usuários</label>
+            <span id="gw_scope_users_count" class="text-xs text-stone-500"></span>
+          </div>
+          <div id="gw_scope_users_list" class="max-h-48 overflow-y-auto rounded-xl border border-stone-700/50 p-2 space-y-1">
+            <span class="text-xs text-stone-500">carregando...</span>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs text-stone-400">Grupos</label>
+            <span id="gw_scope_groups_count" class="text-xs text-stone-500"></span>
+          </div>
+          <div id="gw_scope_groups_list" class="max-h-48 overflow-y-auto rounded-xl border border-stone-700/50 p-2 space-y-1">
+            <span class="text-xs text-stone-500">carregando...</span>
+          </div>
+        </div>
+      </div>
+      <p id="gw_scope_feedback" class="text-xs text-stone-500 mt-2 hidden"></p>
+    </div>
+
     <!-- Serviço do sistema (tempo real via WebSocket) -->
     <div id="gw_service_section" class="r2ctl-detail-surface rounded-2xl p-4 mb-4">
       <div class="flex items-center justify-between mb-3">

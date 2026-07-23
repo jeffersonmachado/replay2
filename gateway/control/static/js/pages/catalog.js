@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { html, text } from "../core/dom.js";
+import { escapeHtml, html, text } from "../core/dom.js";
 import { operationalScenarioCard, policyCard, profileCard, targetCard } from "../components/catalog_views.js";
 import { clearScenarioEditor, collectOperationalRoutingPayload, collectProfilePayload, collectRunLikePayload, collectScenarioMetaPayload, collectTargetPayload, fillScenarioEditor } from "../core/form_helpers.js";
 import { buildQuery } from "../components/filters.js";
@@ -11,7 +11,7 @@ function populateSelect(id, items, mapFn, emptyLabel) {
   const options = [`<option value="">${emptyLabel}</option>`]
     .concat((items || []).map((item) => {
       const mapped = mapFn(item) || {};
-      return `<option value="${mapped.value || ""}">${mapped.label || ""}</option>`;
+      return `<option value="${escapeHtml(mapped.value || "")}">${escapeHtml(mapped.label || "")}</option>`;
     }));
   sel.innerHTML = options.join("");
 }

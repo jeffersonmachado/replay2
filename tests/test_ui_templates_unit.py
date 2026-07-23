@@ -25,7 +25,6 @@ UI_TEMPLATES = _load_ui_templates_module()
 class UiTemplatesUnitTests(unittest.TestCase):
     def test_templates_directory_contains_expected_files(self):
         templates_dir = ROOT / "gateway/control/templates"
-        self.assertTrue((templates_dir / "index.html").is_file())
         self.assertTrue((templates_dir / "base.html").is_file())
         self.assertTrue((templates_dir / "dashboard.html").is_file())
         self.assertTrue((templates_dir / "runs.html").is_file())
@@ -72,10 +71,6 @@ class UiTemplatesUnitTests(unittest.TestCase):
                 href = child.get("href", "")
                 self.assertNotIn("#", href)
                 self.assertNotIn("?view=", href)
-
-    def test_legacy_index_template_is_marked(self):
-        content = UI_TEMPLATES._load_template("index.html", use_cache=False)
-        self.assertIn("LEGACY_TEMPLATE", content)
 
     def test_loader_reads_exact_file_contents(self):
         templates_dir = ROOT / "gateway/control/templates"

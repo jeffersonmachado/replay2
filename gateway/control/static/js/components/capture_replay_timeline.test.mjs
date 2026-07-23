@@ -2,88 +2,30 @@
  * capture_replay_timeline.test.mjs — tests for timeline grouping (seção 25)
  * v0.3.19+: Testa arquitetura snapshot/diff, não VT.
  * Run: node --test gateway/control/static/js/components/capture_replay_timeline.test.mjs
+ *
+ * Importa o MÓDULO REAL de produção (capture_replay_timeline.js), o mesmo
+ * carregado dinamicamente por capture_session_replay.html, com os renderers
+ * reais de terminal_snapshot_renderer.js como dependências injetadas.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { decodeEventForDisplay, normalizeDisplayEncoding } from './timeline_core.js';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const tl = require('./capture_replay_timeline.cjs');
-
-const { buildTimelineItems } = tl;
-
-// Renderer functions inline (simplified for testing)
-function renderSnapshotToText(snap) {
-  if (!snap || !snap.cells) return "";
-  var rows = snap.rows || 1;
-  var cols = snap.cols || 1;
-  var lines = [];
-  for (var r = 0; r < rows; r++) {
-    var line = "";
-    for (var c = 0; c < cols; c++) {
-      var idx = r * cols + c;
-      line += (idx < snap.cells.length) ? (snap.cells[idx].ch || " ") : " ";
-    }
-    lines.push(line);
-  }
-  return lines.join("\n");
-}
-
-function renderSnapshotToHtml(snap) {
-  if (!snap || !snap.cells) return "";
-  var rows = snap.rows || 1;
-  var cols = snap.cols || 1;
-  var lines = [];
-  for (var r = 0; r < rows; r++) {
-    var line = "";
-    for (var c = 0; c < cols; c++) {
-      var idx = r * cols + c;
-      var cell = (idx < snap.cells.length) ? snap.cells[idx] : { ch: " " };
-      var cls = [];
-      if (cell.reverse) cls.push("vt-reverse");
-      line += '<span class="' + cls.join(" ") + '">' + (cell.ch || " ") + '</span>';
-    }
-    lines.push(line);
-  }
-  return lines.join("\n");
-}
-
-function decodeSnapshotPayload(payload) {
-  if (payload && payload.cells) return payload;
-  return null;
-}
-
-function applyDiff(snap, diff) {
-  if (!snap || !snap.cells) return snap;
-  var result = JSON.parse(JSON.stringify(snap));
-  for (var i = 0; i < (diff.changes || []).length; i++) {
-    var chg = diff.changes[i];
-    var idx = chg.row * (diff.cols || result.cols) + chg.col;
-    if (idx < result.cells.length) {
-      result.cells[idx] = {
-        ch: chg.ch || " ", fg: chg.fg || "default", bg: chg.bg || "default",
-        bold: !!chg.bold, dim: !!chg.dim, underline: !!chg.underline,
-        blink: !!chg.blink, reverse: !!chg.reverse, hidden: !!chg.hidden,
-      };
-    }
-  }
-  if (diff.text_sig) result.text_sig = diff.text_sig;
-  if (diff.visual_sig) result.visual_sig = diff.visual_sig;
-  return result;
-}
+import { buildTimelineItems } from './capture_replay_timeline.js';
+import {
+  decodeSnapshotPayload,
+  applyDiff,
+  renderSnapshotToHtml,
+  renderSnapshotToText,
+} from './terminal_snapshot_renderer.js';
+import { decodeEventForDisplay, normalizeDisplayEncoding, eventTimestamp } from './timeline_core.js';
 
 function makeDeps() {
   return {
-    renderSnapshotToHtml: renderSnapshotToHtml,
-    renderSnapshotToText: renderSnapshotToText,
-    decodeSnapshotPayload: decodeSnapshotPayload,
-    applyDiff: applyDiff,
-    eventTimestamp: function(ev) { return ev.ts_ms || 0; },
-    formatEventContent: function(ev) { return ev.summary || ev.data_decoded || ''; },
+    renderSnapshotToHtml,
+    renderSnapshotToText,
+    decodeSnapshotPayload,
+    applyDiff,
+    eventTimestamp,
+    formatEventContent: (ev) => ev.summary || ev.data_decoded || '',
   };
 }
 
@@ -110,6 +52,8 @@ function makeCompactSnapshot(snap) {
     text_sig: snap.text_sig, visual_sig: snap.visual_sig };
 }
 
+// Diff não-canônico (sem sigs/seqs): o applyDiff real valida bounds das
+// mudanças contra o snapshot corrente e não exige assinaturas.
 function makeDiff(baseSnap, currSnap, seqBase, seqCurr) {
   var changes = [];
   for (var i = 0; i < Math.min(baseSnap.cells.length, currSnap.cells.length); i++) {
@@ -124,10 +68,7 @@ function makeDiff(baseSnap, currSnap, seqBase, seqCurr) {
       });
     }
   }
-  return { version: 1, base_text_sig: baseSnap.text_sig, text_sig: currSnap.text_sig,
-    base_visual_sig: baseSnap.visual_sig, visual_sig: currSnap.visual_sig,
-    base_seq_global: seqBase || 0, seq_global: seqCurr || 0,
-    rows: currSnap.rows, cols: currSnap.cols,
+  return { version: 1, rows: currSnap.rows, cols: currSnap.cols,
     geometry_changed: baseSnap.rows !== currSnap.rows || baseSnap.cols !== currSnap.cols,
     changes: changes };
 }

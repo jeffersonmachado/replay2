@@ -75,12 +75,12 @@ try:
     resp = opener.open(req, timeout=10)
     cookie_jar.save(cookie_file, ignore_discard=True, ignore_expires=True)
     print(resp.status)
-    body = resp.read().decode()[:2000]
+    body = resp.read().decode()[:500000]
     print(body if body.strip() else '{}')
 except urllib.error.HTTPError as e:
     cookie_jar.save(cookie_file, ignore_discard=True, ignore_expires=True)
     print(e.code)
-    body = e.read().decode()[:1000]
+    body = e.read().decode()[:500000]
     print(body if body.strip() else '{}')
 except Exception as e:
     print('0')
@@ -120,11 +120,11 @@ echo ""
 echo "--- 3. Listagem ---"
 CAPTURES_RESP=$(http GET /api/captures 2>/dev/null)
 CAPTURES_STATUS=$(echo "$CAPTURES_RESP" | head -1)
-CAPTURES_BODY=$(echo "$CAPTURES_RESP" | tail -n +2)
+CAPTURES_BODY=$(printf '%s' "$CAPTURES_RESP" | tail -n +2)
 
 if [ "$CAPTURES_STATUS" = "200" ]; then
   pass "GET /api/captures → 200"
-  TOTAL=$(echo "$CAPTURES_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('total',0))" 2>/dev/null || echo "?")
+  TOTAL=$(printf '%s' "$CAPTURES_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('total',0))" 2>/dev/null || echo "?")
   echo "         total de capturas: $TOTAL"
 else
   fail "GET /api/captures" "status=$CAPTURES_STATUS"
@@ -133,11 +133,13 @@ echo ""
 
 # ── 4. Detalhe da primeira captura ──────────────────────────────────────────
 echo "--- 4. Detalhe ---"
-FIRST_ID=$(echo "$CAPTURES_BODY" | python3 -c "
+FIRST_ID=$(printf '%s' "$CAPTURES_BODY" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
 caps=d.get('captures',[])
-print(caps[0]['id'] if caps else '')
+com_sessao=[c for c in caps if c.get('session_count',0)>0]
+escolhida=(com_sessao or caps)
+print(escolhida[0]['id'] if escolhida else '')
 " 2>/dev/null)
 
 if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" != "" ]; then
@@ -145,10 +147,10 @@ if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" != "" ]; then
   DETAIL_STATUS=$(echo "$DETAIL_RESP" | head -1)
   if [ "$DETAIL_STATUS" = "200" ]; then
     pass "GET /api/captures/${FIRST_ID} → 200"
-    DETAIL_BODY=$(echo "$DETAIL_RESP" | tail -n +2)
-    CAP_STATUS=$(echo "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('status','?'))" 2>/dev/null)
-    CAP_SESSIONS=$(echo "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('session_count','?'))" 2>/dev/null)
-    CAP_EVENTS=$(echo "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('event_count','?'))" 2>/dev/null)
+    DETAIL_BODY=$(printf '%s' "$DETAIL_RESP" | tail -n +2)
+    CAP_STATUS=$(printf '%s' "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('status','?'))" 2>/dev/null)
+    CAP_SESSIONS=$(printf '%s' "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('session_count','?'))" 2>/dev/null)
+    CAP_EVENTS=$(printf '%s' "$DETAIL_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('event_count','?'))" 2>/dev/null)
     echo "         status=$CAP_STATUS sessions=$CAP_SESSIONS events=$CAP_EVENTS"
   else
     fail "GET /api/captures/${FIRST_ID}" "status=$DETAIL_STATUS"
@@ -160,12 +162,12 @@ if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" != "" ]; then
   SESSIONS_STATUS=$(echo "$SESSIONS_RESP" | head -1)
   if [ "$SESSIONS_STATUS" = "200" ]; then
     pass "GET /api/captures/${FIRST_ID}/sessions → 200"
-    SESSIONS_BODY=$(echo "$SESSIONS_RESP" | tail -n +2)
-    SESSION_COUNT=$(echo "$SESSIONS_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); s=d.get('sessions',[]); print(len(s))" 2>/dev/null)
+    SESSIONS_BODY=$(printf '%s' "$SESSIONS_RESP" | tail -n +2)
+    SESSION_COUNT=$(printf '%s' "$SESSIONS_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); s=d.get('sessions',[]); print(len(s))" 2>/dev/null)
     echo "         total de sessões: $SESSION_COUNT"
 
     # ── 6. Replay da primeira sessão ────────────────────────────────────────
-    FIRST_SESSION=$(echo "$SESSIONS_BODY" | python3 -c "
+    FIRST_SESSION=$(printf '%s' "$SESSIONS_BODY" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
 s=d.get('sessions',[])
@@ -177,10 +179,10 @@ print(s[0].get('session_id','') if s else '')
       REPLAY_STATUS=$(echo "$REPLAY_RESP" | head -1)
       if [ "$REPLAY_STATUS" = "200" ]; then
         pass "GET /api/captures/${FIRST_ID}/replay?session_id=... → 200"
-        REPLAY_BODY=$(echo "$REPLAY_RESP" | tail -n +2)
-        HAS_GEOMETRY=$(echo "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); g=d.get('geometry',{}); print('yes' if g.get('rows') else 'no')" 2>/dev/null)
-        HAS_TIMELINE=$(echo "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); t=d.get('timeline',[]); print(len(t))" 2>/dev/null)
-        HAS_PLAYBACK=$(echo "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); p=d.get('playback',{}); print(p.get('event_count',0))" 2>/dev/null)
+        REPLAY_BODY=$(printf '%s' "$REPLAY_RESP" | tail -n +2)
+        HAS_GEOMETRY=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); g=d.get('geometry',{}); print('yes' if g.get('rows') else 'no')" 2>/dev/null)
+        HAS_TIMELINE=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); t=d.get('timeline_items') or []; print(len(t))" 2>/dev/null)
+        HAS_PLAYBACK=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); p=d.get('playback',{}); print(p.get('event_count',0))" 2>/dev/null)
         echo "         geometry=$HAS_GEOMETRY timeline_events=$HAS_TIMELINE playback_events=$HAS_PLAYBACK"
       else
         fail "GET replay" "status=$REPLAY_STATUS"
@@ -198,8 +200,8 @@ print(s[0].get('session_id','') if s else '')
   EVENTS_STATUS=$(echo "$EVENTS_RESP" | head -1)
   if [ "$EVENTS_STATUS" = "200" ]; then
     pass "GET /api/captures/${FIRST_ID}/events → 200"
-    EVENTS_BODY=$(echo "$EVENTS_RESP" | tail -n +2)
-    EVENT_COUNT=$(echo "$EVENTS_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); e=d.get('events',[]); print(len(e))" 2>/dev/null)
+    EVENTS_BODY=$(printf '%s' "$EVENTS_RESP" | tail -n +2)
+    EVENT_COUNT=$(printf '%s' "$EVENTS_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); e=d.get('events',[]); print(len(e))" 2>/dev/null)
     echo "         eventos retornados: $EVENT_COUNT"
   else
     fail "GET events" "status=$EVENTS_STATUS"

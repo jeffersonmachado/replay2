@@ -6,7 +6,7 @@
 #  1. Dados de replay contêm geometria (rows, cols, geometry_source)
 #  2. Timeline contém eventos com timestamp_ms
 #  3. Playback contém data_b64 em cada evento
-#  4. Snapshot tem content_kind = "terminal_snapshot"
+#  4. Snapshot compacto presente nos eventos (snapshot_compact)
 #  5. Encoding está presente na geometria
 #  6. text_sig e visual_sig nos snapshots (se disponível)
 #
@@ -48,19 +48,31 @@ echo ""
 echo "--- Buscando sessão com dados de replay ---"
 
 SESSION_INFO=$(python3 -c "
-import urllib.request, json, sys, base64
+import urllib.request, urllib.error, json, sys, http.cookiejar
 
 url = '${BASE_URL}'
-auth = base64.b64encode(b'${ADMIN_USER}:${ADMIN_PASS}').decode()
+
+jar = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+def login():
+    body = json.dumps({'username': '${ADMIN_USER}', 'password': '${ADMIN_PASS}'}).encode()
+    r = urllib.request.Request(url + '/api/login', data=body, method='POST')
+    r.add_header('Content-Type', 'application/json')
+    opener.open(r, timeout=10).read()
 
 def req(path):
-    r = urllib.request.Request(url + path)
-    r.add_header('Authorization', f'Basic {auth}')
     try:
-        resp = urllib.request.urlopen(r, timeout=10)
+        resp = opener.open(url + path, timeout=10)
         return json.loads(resp.read())
-    except Exception as e:
+    except Exception:
         return None
+
+try:
+    login()
+except Exception:
+    print('NO_CAPTURES')
+    sys.exit(0)
 
 caps = req('/api/captures')
 if not caps or not caps.get('captures'):
@@ -91,18 +103,21 @@ fi
 
 CAPTURE_ID=$(echo "$SESSION_INFO" | cut -d'|' -f1)
 SESSION_ID=$(echo "$SESSION_INFO" | cut -d'|' -f2)
-echo "         capture_id=$CAPTURE_ID session_id=${SESSION_ID:0:20}..."
+echo "         capture_id=$CAPTURE_ID session_id=$(echo "$SESSION_ID" | cut -c1-20)..."
 echo ""
 
 # ── Busca dados de replay ───────────────────────────────────────────────────
 REPLAY_DATA=$(python3 -c "
-import urllib.request, json, base64
+import urllib.request, json, http.cookiejar
 
 url = '${BASE_URL}'
-auth = base64.b64encode(b'${ADMIN_USER}:${ADMIN_PASS}').decode()
-r = urllib.request.Request(f'{url}/api/captures/${CAPTURE_ID}/replay?session_id=${SESSION_ID}')
-r.add_header('Authorization', f'Basic {auth}')
-resp = urllib.request.urlopen(r, timeout=10)
+jar = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+body = json.dumps({'username': '${ADMIN_USER}', 'password': '${ADMIN_PASS}'}).encode()
+r = urllib.request.Request(url + '/api/login', data=body, method='POST')
+r.add_header('Content-Type', 'application/json')
+opener.open(r, timeout=10).read()
+resp = opener.open(f'{url}/api/captures/${CAPTURE_ID}/replay?session_id=${SESSION_ID}', timeout=10)
 data = json.loads(resp.read())
 print(json.dumps(data))
 " 2>/dev/null)
@@ -114,9 +129,9 @@ fi
 
 # ── 1. Geometria ────────────────────────────────────────────────────────────
 echo "--- 1. Geometria ---"
-GEOM_ROWS=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('rows','?'))" 2>/dev/null)
-GEOM_COLS=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('cols','?'))" 2>/dev/null)
-GEOM_SRC=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('geometry_source','?'))" 2>/dev/null)
+GEOM_ROWS=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('rows','?'))" 2>/dev/null)
+GEOM_COLS=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('cols','?'))" 2>/dev/null)
+GEOM_SRC=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('geometry_source','?'))" 2>/dev/null)
 
 if [ "$GEOM_ROWS" != "?" ] && [ "$GEOM_COLS" != "?" ]; then
   pass "geometry: ${GEOM_ROWS}x${GEOM_COLS} (source=$GEOM_SRC)"
@@ -134,7 +149,7 @@ esac
 
 # ── 2. Encoding ─────────────────────────────────────────────────────────────
 echo "--- 2. Encoding ---"
-ENCODING=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('encoding','?'))" 2>/dev/null)
+ENCODING=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('geometry',{}).get('encoding','?'))" 2>/dev/null)
 if [ "$ENCODING" != "?" ] && [ "$ENCODING" != "" ]; then
   pass "encoding: $ENCODING"
 else
@@ -143,11 +158,11 @@ fi
 
 # ── 3. Timeline ─────────────────────────────────────────────────────────────
 echo "--- 3. Timeline ---"
-TIMELINE_COUNT=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(len(d.get('timeline',[])))" 2>/dev/null)
-HAS_TS=$(echo "$REPLAY_DATA" | python3 -c "
+TIMELINE_COUNT=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(len(d.get('timeline_items') or []))" 2>/dev/null)
+HAS_TS=$(printf '%s' "$REPLAY_DATA" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
-tl=d.get('timeline',[])
+tl=d.get('timeline_items') or []
 ok=all(e.get('timestamp_ms') is not None for e in tl) if tl else True
 print('yes' if ok else 'no')
 " 2>/dev/null)
@@ -165,11 +180,11 @@ fi
 
 # ── 4. Playback ─────────────────────────────────────────────────────────────
 echo "--- 4. Playback ---"
-PLAYBACK_COUNT=$(echo "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('playback',{}).get('event_count',0))" 2>/dev/null)
-HAS_DATA_B64=$(echo "$REPLAY_DATA" | python3 -c "
+PLAYBACK_COUNT=$(printf '%s' "$REPLAY_DATA" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('playback',{}).get('event_count',0))" 2>/dev/null)
+HAS_DATA_B64=$(printf '%s' "$REPLAY_DATA" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
-evs=d.get('playback',{}).get('events',[])
+evs=d.get('events') or []
 ok=all(e.get('data_b64') for e in evs) if evs else True
 print('yes' if ok else 'no')
 " 2>/dev/null)
@@ -187,11 +202,11 @@ fi
 
 # ── 5. Snapshots ────────────────────────────────────────────────────────────
 echo "--- 5. Snapshots ---"
-SNAPSHOT_INFO=$(echo "$REPLAY_DATA" | python3 -c "
+SNAPSHOT_INFO=$(printf '%s' "$REPLAY_DATA" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
-tl=d.get('timeline',[])
-snaps=[e for e in tl if e.get('content_kind')=='terminal_snapshot']
+evs=d.get('events') or []
+snaps=[e for e in evs if e.get('snapshot_compact')]
 print(f'{len(snaps)}')
 has_text_sig=any(e.get('text_sig') for e in snaps)
 has_visual_sig=any(e.get('visual_sig') for e in snaps)
@@ -204,7 +219,7 @@ TEXT_SIG=$(echo "$SNAPSHOT_INFO" | sed -n '2p' | cut -d'=' -f2)
 VISUAL_SIG=$(echo "$SNAPSHOT_INFO" | sed -n '3p' | cut -d'=' -f2)
 
 if [ "$SNAP_COUNT" -gt 0 ]; then
-  pass "snapshots: $SNAP_COUNT (terminal_snapshot), text_sig=$TEXT_SIG visual_sig=$VISUAL_SIG"
+  pass "snapshots: $SNAP_COUNT (snapshot_compact), text_sig=$TEXT_SIG visual_sig=$VISUAL_SIG"
   if [ "$TEXT_SIG" = "yes" ]; then
     pass "text_sig presente"
   else
@@ -221,7 +236,7 @@ fi
 
 # ── 6. Estrutura do session_start ───────────────────────────────────────────
 echo "--- 6. Session Start ---"
-SS_INFO=$(echo "$REPLAY_DATA" | python3 -c "
+SS_INFO=$(printf '%s' "$REPLAY_DATA" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
 ss=d.get('session_start')

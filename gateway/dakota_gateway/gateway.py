@@ -29,6 +29,14 @@ from .screen import (
 from .terminal_config import normalize_encoding, validate_terminal_geometry
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """Escreve o buffer inteiro no descritor (os.write pode gravar parcial)."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
 def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
     """Apply TIOCSWINSZ to set terminal window size on the PTY."""
     if termios is None:
@@ -219,12 +227,33 @@ class _StableScreenState:
     source: str = "fallback"
 
 
+class GatewayCaptureError(RuntimeError):
+    """Erro que aborta o login quando o gateway nao consegue capturar."""
+    pass
+
+
 class TerminalGateway:
     def __init__(self, cfg: GatewayConfig):
         self.cfg = cfg
-        self.writer = AuditWriter(cfg.log_dir, cfg.hmac_key, rotate_bytes=cfg.rotate_bytes)
 
-        self.session_id = str(uuid.uuid4())
+        # Pre-flight: verifica se conseguimos escrever no diretorio de captura
+        # antes mesmo de iniciar a sessao. Se falhar, aborta o login.
+        try:
+            self.writer = AuditWriter(cfg.log_dir, cfg.hmac_key, rotate_bytes=cfg.rotate_bytes)
+        except PermissionError as exc:
+            raise GatewayCaptureError(
+                f"Gateway ativo mas sem permissao de escrita em {cfg.log_dir}: {exc}\n"
+                f"Contate o administrador. Login abortado."
+            ) from exc
+        except OSError as exc:
+            raise GatewayCaptureError(
+                f"Gateway ativo mas diretorio de captura inacessivel ({cfg.log_dir}): {exc}\n"
+                f"Contate o administrador. Login abortado."
+            ) from exc
+
+        # Usa o capture_session_uuid como session_id para unificar a identidade.
+        # So gera UUID novo se nao houver capture_session_uuid (modo standalone).
+        self.session_id = str(cfg.capture_session_uuid or "").strip() or str(uuid.uuid4())
         self.actor = os.environ.get("SUDO_USER") or os.environ.get("LOGNAME") or os.environ.get("USER") or "unknown"
         self.logname = os.environ.get("LOGNAME") or os.environ.get("USER") or "unknown"
         
@@ -508,7 +537,7 @@ class TerminalGateway:
             batch_mode = "no"
         argv = ["ssh", "-tt", "-o", f"BatchMode={batch_mode}", dest]
         if self.cfg.source_command:
-            argv += ["--", self.cfg.source_command]
+            argv.append(self.cfg.source_command)
         return argv
 
     def _session_argv(self) -> list[str]:
@@ -547,14 +576,22 @@ class TerminalGateway:
                 stderr=subprocess.STDOUT,
                 close_fds=True,
             )
-            out, _ = proc.communicate(timeout=300)
-            if out:
-                os.write(1, out)
-                self._append_out_bytes_event(data=out, screen_state=screen_state)
-            rc = proc.returncode
+            try:
+                out, _ = proc.communicate(timeout=300)
+            except subprocess.TimeoutExpired:
+                # timeout: matar o filho para não deixar processo órfão
+                proc.kill()
+                proc.wait()
+                os.write(2, b"batch command timeout (300s)\n")
+                rc = 1
+            else:
+                if out:
+                    _write_all(1, out)
+                    self._append_out_bytes_event(data=out, screen_state=screen_state)
+                rc = proc.returncode
         except Exception as e:
-            out = str(e).encode()
-            os.write(1, out)
+            # erro vai para stderr para não misturar com a saída capturada
+            os.write(2, f"batch pipe error: {e}\n".encode("utf-8", errors="replace"))
             rc = 1
         self._append_session_end()
         self.writer.close()
@@ -698,7 +735,7 @@ class TerminalGateway:
                             now_ms=event_ts_ms,
                         ):
                             self._append(ev)
-                        os.write(master_fd, data)
+                        _write_all(master_fd, data)
                     elif key.data == "pty":
                         try:
                             data = os.read(master_fd, 8192)
@@ -707,7 +744,7 @@ class TerminalGateway:
                         if not data:
                             proc.terminate()
                             break
-                        os.write(1, data)
+                        _write_all(1, data)
                         last_out_ms = self._ts_ms()
                         out_seq_session = self._next_seq_session()
                         screen_dirty = True
@@ -731,8 +768,19 @@ class TerminalGateway:
                 os.close(master_fd)
             except Exception:
                 pass
-            rc = proc.wait(timeout=2) if proc.poll() is None else proc.returncode
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    rc = proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # fallback: garantir que o filho não fique órfão
+                    proc.kill()
+                    rc = proc.wait()
+            else:
+                rc = proc.returncode
 
             self._append_session_end()
             self.writer.close()
-            return int(rc or 0)
+        # return fora do finally: exceções em voo (ex.: falha no AuditWriter)
+        # propagam em vez de serem suprimidas
+        return int(rc or 0)

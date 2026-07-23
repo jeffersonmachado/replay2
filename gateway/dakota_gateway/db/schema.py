@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS gateway_state (
   connection_profile_id INTEGER REFERENCES connection_profiles(id),
   operational_user_id INTEGER REFERENCES users(id),
   capture_enabled INTEGER NOT NULL DEFAULT 0,
+  capture_scope_json TEXT,
   updated_at_ms INTEGER NOT NULL DEFAULT 0
 );
 

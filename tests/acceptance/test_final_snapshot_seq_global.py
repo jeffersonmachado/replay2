@@ -32,4 +32,4 @@ def test_final_snapshot_seq_global_tracks_last_processed_out_not_in_or_session_e
     out_diffs = [ev["diff"] for ev in replay["events"] if ev.get("direction") == "out" and ev.get("diff")]
     assert [(d["base_seq_global"], d["seq_global"]) for d in out_diffs] == [(0, 2), (2, 10)]
     assert replay["checkpoints"][-1]["seq_global"] == 11
-    assert replay["checkpoints"][-1]["render_snapshot"]["seq_global"] == 10
+    assert replay["checkpoints"][-1]["snapshot_compact"]["seq_global"] == 10

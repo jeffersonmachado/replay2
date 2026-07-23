@@ -17,6 +17,35 @@ def init_db(con: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO gateway_state(id, active, updated_at_ms) VALUES(1, 0, ?)",
         (_now_ms(),),
     )
+    # Migration: add capture_scope_json column if missing (v0.6.1)
+    _add_column_if_missing(con, "gateway_state", "capture_scope_json", "TEXT")
+    # Set default scope: all users, all groups
+    _ensure_default_capture_scope(con)
+
+
+def _add_column_if_missing(con: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
+    """Adiciona coluna se nao existir (SQLite nao suporta IF NOT EXISTS para ALTER TABLE)."""
+    try:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    except sqlite3.OperationalError:
+        pass  # coluna ja existe
+
+
+def _ensure_default_capture_scope(con: sqlite3.Connection) -> None:
+    """Garante que o escopo padrao (todos usuarios, todos grupos) esta definido."""
+    import json
+    row = con.execute("SELECT capture_scope_json FROM gateway_state WHERE id=1").fetchone()
+    if row and row["capture_scope_json"]:
+        try:
+            json.loads(row["capture_scope_json"])
+            return  # ja tem escopo valido
+        except Exception:
+            pass
+    default_scope = json.dumps({"users": "*", "groups": "*"})
+    con.execute(
+        "UPDATE gateway_state SET capture_scope_json=? WHERE id=1",
+        (default_scope,),
+    )
 
     cols = {row["name"] for row in con.execute("PRAGMA table_info(replay_runs)").fetchall()}
     if "target_env_id" not in cols:

@@ -27,27 +27,44 @@ class ConnectionPool:
         self._q: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.max_size)
         self._lock = threading.Lock()
         self._created = 0
+        self._in_use: set[int] = set()
 
         for _ in range(self.min_size):
             self._q.put(self._new_connection())
 
     def _new_connection(self) -> sqlite3.Connection:
-        con = connect(self.db_path)
-        with self._lock:
-            self._created += 1
-        return con
+        # o slot em _created já foi reservado pelo chamador sob _lock
+        return connect(self.db_path)
 
     def acquire(self, timeout: float = 30.0) -> sqlite3.Connection:
         try:
-            return self._q.get_nowait()
+            con = self._q.get_nowait()
         except queue.Empty:
+            # reserva o slot sob lock para não ultrapassar max_size em corrida
             with self._lock:
-                can_create = self._created < self.max_size
+                if self._created < self.max_size:
+                    self._created += 1
+                    can_create = True
+                else:
+                    can_create = False
             if can_create:
-                return self._new_connection()
-            return self._q.get(timeout=timeout)
+                try:
+                    con = self._new_connection()
+                except Exception:
+                    with self._lock:
+                        self._created = max(0, self._created - 1)
+                    raise
+            else:
+                con = self._q.get(timeout=timeout)
+        with self._lock:
+            self._in_use.add(id(con))
+        return con
 
     def release(self, con: sqlite3.Connection) -> None:
+        with self._lock:
+            if id(con) not in self._in_use:
+                raise ValueError("conexão não pertence ao pool ou já foi liberada (double-release)")
+            self._in_use.discard(id(con))
         try:
             self._q.put_nowait(con)
         except queue.Full:

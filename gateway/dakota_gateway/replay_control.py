@@ -2,30 +2,34 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import random
+import selectors
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock, Semaphore, Thread
 
 from .state_db import exec1, init_db, now_ms, query_all, query_one
+from .db.connection import connect as db_connect
 from .verifier import verify_log, VerificationError
 from .replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _decode_replay_input, _session_config_from_event  # type: ignore
+from .replay_compare import (
+    event_requires_comparison,
+    expected_snapshot_from_event,
+    observed_snapshot_from_session,
+    wait_for_signature_match,
+)
 from .compliance import compliance_blocks_execution
 from .replay_failures import (
     add_run_failure,
     build_failure_record,
     classify_checkpoint_failure,
+    evaluate_checkpoint_match,
 )
 from .replay_run_state import add_run_event, get_run, set_run_status, update_progress
 from .terminal_config import TerminalGeometry, normalize_encoding, validate_terminal_geometry
 from dakota_terminal.comparison import compare_signatures, resolve_comparison_mode
-
-import base64
-import selectors
-import random
-from dataclasses import dataclass
-from threading import Lock, Semaphore, Thread
 
 def compute_last_hash_hint(log_dir: str) -> str:
     """
@@ -292,13 +296,9 @@ def _legacy_checkpoint_expected(sig: str) -> dict:
     return {"screen_sig": str(sig or "")}
 
 
-def _expected_snapshot_from_event(ev: dict, *, legacy_sig: str = "") -> dict:
-    return {
-        "text_sig": str(ev.get("expected_text_sig") or ev.get("text_sig") or ""),
-        "visual_sig": str(ev.get("expected_visual_sig") or ev.get("visual_sig") or ""),
-        "semantic_sig": str(ev.get("expected_semantic_sig") or ev.get("semantic_sig") or ""),
-        "screen_sig": str(legacy_sig or ev.get("screen_sig") or ev.get("sig") or ""),
-    }
+# Helpers compartilhados com replay (dakota_gateway.replay_compare).
+_expected_snapshot_from_event = expected_snapshot_from_event
+_observed_snapshot_from_session = observed_snapshot_from_session
 
 
 def _event_requires_deterministic_comparison(
@@ -308,33 +308,14 @@ def _event_requires_deterministic_comparison(
     session_config: ReplayConfig | SessionReplayState | dict | None = None,
     replay_config: ReplayConfig | dict | None = None,
 ) -> bool:
-    expected = _expected_snapshot_from_event(ev)
     mode = resolve_comparison_mode(event=ev, session=session_config, replay=replay_config or params)["comparison_mode"]
-    if mode == "visual":
-        has_canonical = bool(expected.get("visual_sig"))
-    elif mode == "text":
-        has_canonical = bool(expected.get("text_sig"))
-    elif mode == "semantic":
-        has_canonical = bool(expected.get("semantic_sig"))
-    else:
-        has_canonical = any(
-            bool(expected.get(key))
-            for key in ("visual_sig", "text_sig", "semantic_sig")
-        )
-    # Legacy screen_sig also triggers comparison (backward compat)
-    return has_canonical or bool(expected.get("screen_sig"))
+    return event_requires_comparison(ev, mode=mode)
 
 
 def _match_failure_values(match: dict, expected_snapshot: dict, observed_snapshot: dict) -> tuple[str, str]:
     expected_sig = str(match.get("expected_sig") or expected_snapshot.get("screen_sig") or "")
     observed_sig = str(match.get("observed_sig") or observed_snapshot.get("screen_sig") or "")
     return expected_sig, observed_sig
-
-
-def _observed_snapshot_from_session(session: _TargetSession) -> dict:
-    if hasattr(session, "canonical_snapshot_now"):
-        return session.canonical_snapshot_now()
-    return {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": ""}
 
 
 def _session_start_by_id(events: list[dict], sid: str) -> dict:
@@ -388,26 +369,25 @@ def _wait_for_expected_observed(
     replay_config: ReplayConfig | dict | None = None,
 ) -> tuple[bool, dict, dict]:
     expected_snapshot = _expected_snapshot_from_event(expected_event)
-    deadline = int(time.time() * 1000) + checkpoint_timeout_ms
-    last_observed = {}
-    last_match = compare_expected_observed(expected_snapshot, {}, params, event=expected_event, session_config=session_config, replay_config=replay_config)
-    while int(time.time() * 1000) < deadline:
-        should_pause_or_cancel()
-        for _, _ in selector.select(timeout=0.05):
-            try:
-                session.read_out()
-            except Exception:
-                pass
-        quiet = int(time.time() * 1000) - session.last_out_ms
-        if quiet >= checkpoint_quiet_ms:
-            observed = _observed_snapshot_from_session(session)
-            last_observed = observed
-            last_match = compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_config, replay_config=replay_config)
-            if last_match["matched"]:
-                return True, last_match, observed
-        time.sleep(0.02)
-    observed = last_observed or _observed_snapshot_from_session(session)
-    return False, compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_config, replay_config=replay_config), observed
+
+    def compare(observed: dict) -> dict:
+        return compare_expected_observed(
+            expected_snapshot,
+            observed,
+            params,
+            event=expected_event,
+            session_config=session_config,
+            replay_config=replay_config,
+        )
+
+    return wait_for_signature_match(
+        session,
+        selector,
+        compare=compare,
+        checkpoint_quiet_ms=checkpoint_quiet_ms,
+        checkpoint_timeout_ms=checkpoint_timeout_ms,
+        should_pause_or_cancel=should_pause_or_cancel,
+    )
 
 
 def _should_apply_deterministic_input(on_failure, failure: dict, *, params: dict | None) -> bool:
@@ -464,22 +444,22 @@ def replay_strict_global_controlled(
 
     def wait_checkpoint(sid: str, expected_event: dict, seq_global: int, seq_session: int = 0):
         s = get_sess(sid)
-        deadline = int(time.time() * 1000) + checkpoint_timeout_ms
         expected_snapshot = _expected_snapshot_from_event(expected_event)
-        last_observed = {}
-        while int(time.time() * 1000) < deadline:
-            should_pause_or_cancel()
-            drain_output(0.05)
-            quiet = int(time.time() * 1000) - s.last_out_ms
-            if quiet >= cfg.checkpoint_quiet_ms:
-                observed = _observed_snapshot_from_session(s)
-                last_observed = observed
-                match = compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg)
-                if match["matched"]:
-                    return
-            time.sleep(0.02)
-        observed = last_observed or _observed_snapshot_from_session(s)
-        match = compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg)
+
+        def compare(observed: dict) -> dict:
+            return compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg)
+
+        matched, match, observed = wait_for_signature_match(
+            s,
+            sel,
+            compare=compare,
+            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+            checkpoint_timeout_ms=checkpoint_timeout_ms,
+            should_pause_or_cancel=should_pause_or_cancel,
+            drain_event=lambda key: sessions[key.data].read_out(),
+        )
+        if matched:
+            return
         expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
         got = match.get("observed_sig") or observed.get("screen_sig") or ""
         failure_type, severity, reason = classify_checkpoint_failure(
@@ -709,6 +689,22 @@ class LoadTestParams:
     on_deterministic_mismatch: str = "fail-fast"
 
 
+def _soft_checkpoint_match(expected_sig: str, observed_sig: str, params: dict | None) -> dict | None:
+    """Aplica match_mode não-estrito (contains/regex/fuzzy) sobre as assinaturas.
+
+    Usa evaluate_checkpoint_match com match_mode/match_threshold/
+    match_ignore_case dos params. Retorna o resultado quando o modo não é
+    "strict" e o match é positivo; caso contrário, None (segue o fluxo de
+    falha normal).
+    """
+    raw = params if isinstance(params, dict) else {}
+    mode = str(raw.get("match_mode") or "strict").strip().lower()
+    if mode == "strict":
+        return None
+    result = evaluate_checkpoint_match(expected_sig, observed_sig, raw)
+    return result if result.get("matched") else None
+
+
 def replay_parallel_sessions_concurrent_controlled(
     cfg: ReplayConfig,
     load_params: LoadTestParams,
@@ -747,14 +743,9 @@ def replay_parallel_sessions_concurrent_controlled(
         pool = load_params.target_user_pool or []
         if not pool:
             return None
-        # stable mapping by hash
-        idx = (hash(sid) & 0x7FFFFFFF) % len(pool)
+        # stable mapping by hash (sha256 é estável entre processos)
+        idx = int(hashlib.sha256(str(sid).encode("utf-8")).hexdigest(), 16) % len(pool)
         return pool[idx]
-
-    def sleep_scaled(ms: int):
-        if ms <= 0:
-            return
-        time.sleep(ms / 1000.0)
 
     def worker(sid: str, events: list[dict]):
         nonlocal stop_all
@@ -813,6 +804,10 @@ def replay_parallel_sessions_concurrent_controlled(
                             )
                             if not matched:
                                 expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
+                                if _soft_checkpoint_match(expected_failure_sig, got, load_params.__dict__) is not None:
+                                    matched = True
+                            if not matched:
+                                expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
                                 failure = _deterministic_failure(
                                     sid=sid,
                                     seq_global=seq_global,
@@ -857,6 +852,12 @@ def replay_parallel_sessions_concurrent_controlled(
                                 session_config=state.config,
                                 replay_config=cfg,
                             )
+                            if not matched:
+                                expected_snapshot = _expected_snapshot_from_event(ev)
+                                expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
+                                got = match.get("observed_sig") or observed.get("screen_sig") or ""
+                                if _soft_checkpoint_match(expected_sig, got, load_params.__dict__) is not None:
+                                    matched = True
                             if matched:
                                 expected_snapshot = _expected_snapshot_from_event(ev)
                                 expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
@@ -1072,10 +1073,11 @@ class Runner:
         self._run(run_id)
 
     def _run(self, run_id: int) -> None:
-        import sqlite3
-
-        con = sqlite3.connect(self.db_path, isolation_level=None, timeout=30)
-        con.row_factory = sqlite3.Row
+        # Conexão compartilhada com os workers (check_same_thread=False);
+        # todo acesso é serializado por db_lock porque os callbacks de
+        # progresso/falha são invocados a partir das threads de sessão.
+        con = db_connect(self.db_path)
+        db_lock = Lock()
         init_db(con)
 
         run = get_run(con, run_id)
@@ -1143,7 +1145,8 @@ class Runner:
 
         def wait_if_paused_or_cancelled():
             while True:
-                r = get_run(con, run_id)
+                with db_lock:
+                    r = get_run(con, run_id)
                 if not r:
                     raise ReplayError("run desapareceu")
                 st = r["status"]
@@ -1188,18 +1191,6 @@ class Runner:
 
             last_progress_write_ms = 0
 
-            def on_progress(seq_global: int, sig: str | None):
-                nonlocal last_seq, last_progress_write_ms
-                if seq_global > last_seq:
-                    last_seq = seq_global
-                now = now_ms()
-                if now - last_progress_write_ms >= 500:
-                    update_progress(con, run_id, last_seq_global=last_seq, last_sig=sig)
-                    last_progress_write_ms = now
-
-            def should_pause_or_cancel():
-                wait_if_paused_or_cancelled()
-
             cfg.input_mode = _replay_input_mode(params)
             cfg.on_deterministic_mismatch = _on_deterministic_mismatch(params)
 
@@ -1227,10 +1218,12 @@ class Runner:
                     return
                 setattr(write_metrics, "_last", now)
                 with m_lock:
+                    payload = json.dumps(metrics, ensure_ascii=False)
+                with db_lock:
                     exec1(
                         con,
                         "UPDATE replay_runs SET metrics_json=? WHERE id=?",
-                        (json.dumps(metrics, ensure_ascii=False), run_id),
+                        (payload, run_id),
                     )
 
             def on_progress(seq_global: int, sig: str | None):
@@ -1244,7 +1237,8 @@ class Runner:
                         metrics["last_checkpoint_sig"] = sig
                         metrics["checkpoints_ok"] += 1
                 if now - last_progress_write_ms >= 500:
-                    update_progress(con, run_id, last_seq_global=last_seq, last_sig=sig)
+                    with db_lock:
+                        update_progress(con, run_id, last_seq_global=last_seq, last_sig=sig)
                     last_progress_write_ms = now
                 write_metrics()
 
@@ -1256,25 +1250,27 @@ class Runner:
                         metrics["sessions_failed"] += 1
                     elif status == "skipped":
                         metrics["sessions_skipped"] += 1
-                add_run_event(con, run_id, "session", f"{session_id} {status}", {"message": message})
+                with db_lock:
+                    add_run_event(con, run_id, "session", f"{session_id} {status}", {"message": message})
                 write_metrics()
 
             def on_failure(failure: dict):
-                add_run_failure(con, run_id, failure)
-                add_run_event(
-                    con,
-                    run_id,
-                    "failure",
-                    failure.get("message") or failure.get("failure_type") or "failure",
-                    {
-                        "session_id": failure.get("session_id") or "",
-                        "seq_global": int(failure.get("seq_global") or 0),
-                        "failure_type": failure.get("failure_type") or "",
-                        "severity": failure.get("severity") or "",
-                        "expected_value": failure.get("expected_value") or "",
-                        "observed_value": failure.get("observed_value") or "",
-                    },
-                )
+                with db_lock:
+                    add_run_failure(con, run_id, failure)
+                    add_run_event(
+                        con,
+                        run_id,
+                        "failure",
+                        failure.get("message") or failure.get("failure_type") or "failure",
+                        {
+                            "session_id": failure.get("session_id") or "",
+                            "seq_global": int(failure.get("seq_global") or 0),
+                            "failure_type": failure.get("failure_type") or "",
+                            "severity": failure.get("severity") or "",
+                            "expected_value": failure.get("expected_value") or "",
+                            "observed_value": failure.get("observed_value") or "",
+                        },
+                    )
                 with m_lock:
                     ftype = str(failure.get("failure_type") or "technical_error")
                     severity = str(failure.get("severity") or "high")
@@ -1388,3 +1384,27 @@ class Runner:
                     )
                 exec1(con, "UPDATE replay_runs SET finished_at_ms=? WHERE id=?", (now_ms(), run_id))
                 set_run_status(con, run_id, "failed", error=msg)
+        except Exception as e:  # exceção inesperada: não deixar o run eternamente "running"
+            msg = f"{type(e).__name__}: {e}"
+            try:
+                with db_lock:
+                    add_run_failure(
+                        con,
+                        run_id,
+                        build_failure_record(
+                            session_id="",
+                            seq_global=last_seq,
+                            event_type="runner",
+                            failure_type="technical_error",
+                            severity="critical",
+                            expected_value="replay concluído sem exceção",
+                            observed_value=msg,
+                            message=msg,
+                            evidence={"last_seq_global_applied": last_seq},
+                        ),
+                    )
+                    exec1(con, "UPDATE replay_runs SET finished_at_ms=? WHERE id=?", (now_ms(), run_id))
+                    set_run_status(con, run_id, "failed", error=msg)
+            except Exception:
+                # best effort: se o banco também falhou, nada mais a fazer na thread
+                pass

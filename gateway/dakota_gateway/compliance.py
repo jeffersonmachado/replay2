@@ -107,21 +107,23 @@ def _has_gateway_route(params: dict | None) -> bool:
 
 
 def _iter_audit_events(log_dir: str):
-    for file_path in sorted(Path(log_dir).rglob("audit-*.jsonl")):
+    # glob não-recursivo + leitura em streaming, alinhado com verifier/replay
+    for file_path in sorted(Path(log_dir).glob("audit-*.jsonl")):
         try:
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            fh = open(file_path, "r", encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(item, dict):
-                yield item
+        with fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(item, dict):
+                    yield item
 
 
 def summarize_capture_sessions(log_dir: str, *, target_policy: dict | None = None) -> dict:

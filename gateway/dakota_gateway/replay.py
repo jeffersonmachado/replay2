@@ -19,7 +19,21 @@ except Exception:  # pragma: no cover
 
 from .screen import TerminalScreenState
 from .terminal_config import normalize_encoding, validate_terminal_geometry
+from .replay_compare import (
+    event_requires_comparison,
+    expected_snapshot_from_event,
+    normalize_deterministic_mismatch_mode,
+    wait_for_signature_match,
+)
 from dakota_terminal.comparison import compare_signatures, normalize_comparison_mode, resolve_comparison_mode
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Escreve o buffer inteiro no descritor (os.write pode gravar parcial)."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
 
 
 @dataclass
@@ -163,7 +177,7 @@ class _TargetSession:
             argv += ["-p", str(int(self.cfg.target_port))]
         argv.append(dest)
         if self.cfg.target_command:
-            argv += ["--", self.cfg.target_command]
+            argv.append(self.cfg.target_command)
         return argv
 
     def close(self):
@@ -177,7 +191,7 @@ class _TargetSession:
             pass
 
     def write_in(self, data: bytes):
-        os.write(self.master_fd, data)
+        _write_all(self.master_fd, data)
 
     def read_out(self) -> bytes:
         data = os.read(self.master_fd, 8192)
@@ -185,10 +199,6 @@ class _TargetSession:
             self.last_out_ms = int(time.time() * 1000)
             self.screen_state.feed_bytes(data)
         return data
-
-    def legacy_screen_signature_now(self) -> str:
-        """Retorna screen_sig legado para adaptadores externos antigos."""
-        return self.screen_state.snapshot().screen_sig
 
     def canonical_snapshot_now(self) -> dict:
         """Retorna assinaturas canonicas do estado atual."""
@@ -205,39 +215,16 @@ def _normalize_comparison_mode(value: str) -> str:
     return normalize_comparison_mode(value)
 
 
-def _expected_snapshot_from_event(ev: dict) -> dict:
-    return {
-        "text_sig": str(ev.get("expected_text_sig") or ev.get("text_sig") or ""),
-        "visual_sig": str(ev.get("expected_visual_sig") or ev.get("visual_sig") or ""),
-        "semantic_sig": str(ev.get("expected_semantic_sig") or ev.get("semantic_sig") or ""),
-        "screen_sig": str(ev.get("screen_sig") or ev.get("sig") or ""),
-    }
-
-
-def _event_requires_comparison(ev: dict, *, mode: str) -> bool:
-    expected = _expected_snapshot_from_event(ev)
-    # Check mode-specific signature first
-    if mode == "visual":
-        has_canonical = bool(expected.get("visual_sig"))
-    elif mode == "text":
-        has_canonical = bool(expected.get("text_sig"))
-    elif mode == "semantic":
-        has_canonical = bool(expected.get("semantic_sig"))
-    else:
-        has_canonical = any(bool(expected.get(key)) for key in ("visual_sig", "text_sig", "semantic_sig"))
-    # Legacy screen_sig also triggers comparison (backward compat)
-    return has_canonical or bool(expected.get("screen_sig"))
+# Helpers compartilhados com replay_control (dakota_gateway.replay_compare).
+_expected_snapshot_from_event = expected_snapshot_from_event
+_event_requires_comparison = event_requires_comparison
+_normalize_deterministic_mismatch_mode = normalize_deterministic_mismatch_mode
 
 
 def _decode_replay_input(ev: dict) -> bytes:
     if str(ev.get("type") or "") == "deterministic_input":
         return base64.b64decode(ev.get("key_b64") or "")
     return base64.b64decode(ev.get("data_b64") or "")
-
-
-def _normalize_deterministic_mismatch_mode(value: str) -> str:
-    mode = str(value or "fail-fast").strip().lower()
-    return mode if mode in {"fail-fast", "skip", "send-anyway"} else "fail-fast"
 
 
 def _wait_for_screen_signature(
@@ -254,66 +241,35 @@ def _wait_for_screen_signature(
     Usa compare_signatures com o modo configurado (visual/text/semantic/hybrid).
     Retorna resultado estruturado com expected_sig, observed_sig, matched, etc.
     """
-    deadline = int(time.time() * 1000) + checkpoint_timeout_ms
     start_ms = int(time.time() * 1000)
     mode = _normalize_comparison_mode(comparison_mode)
+    expected_snap = _expected_snapshot_from_event(expected_event)
 
-    while int(time.time() * 1000) < deadline:
-        events = sel.select(timeout=0.05)
-        for key, _ in events:
-            sid2 = key.data
-            try:
-                _ = s.read_out() if sid2 == s.session_id else None
-            except Exception:
-                pass
-        quiet = int(time.time() * 1000) - s.last_out_ms
-        if quiet >= checkpoint_quiet_ms:
-            if hasattr(s, "canonical_snapshot_now"):
-                observed = s.canonical_snapshot_now()
-            else:
-                observed = {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": ""}
+    def compare(observed: dict) -> dict:
+        # Constrói snapshots mínimos para comparação
+        observed_snap = {
+            "text_sig": observed.get("text_sig", ""),
+            "visual_sig": observed.get("visual_sig", ""),
+            "semantic_sig": observed.get("semantic_sig", ""),
+        }
+        return compare_signatures(
+            expected_snap, observed_snap, mode=mode,
+            legacy_expected_screen_sig=expected_event.get("screen_sig") or expected_event.get("sig") or "",
+            legacy_observed_screen_sig=observed.get("screen_sig", ""),
+        )
 
-            # Constrói snapshots mínimos para comparação
-            expected_snap = _expected_snapshot_from_event(expected_event)
-            observed_snap = {
-                "text_sig": observed["text_sig"],
-                "visual_sig": observed["visual_sig"],
-                "semantic_sig": observed["semantic_sig"],
-            }
-
-            result = compare_signatures(
-                expected_snap, observed_snap, mode=mode,
-                legacy_expected_screen_sig=expected_event.get("screen_sig") or expected_event.get("sig") or "",
-                legacy_observed_screen_sig=observed.get("screen_sig", ""),
-            )
-            result["waited_ms"] = int(time.time() * 1000) - start_ms
-            result["quiet_ms"] = quiet
-            return result
-        time.sleep(0.02)
-
-    # Timeout: compara com o estado atual
-    if hasattr(s, "canonical_snapshot_now"):
-        observed = s.canonical_snapshot_now()
-    else:
-        observed = {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": ""}
-    expected_snap = {
-        "text_sig": expected_event.get("expected_text_sig") or expected_event.get("text_sig") or "",
-        "visual_sig": expected_event.get("expected_visual_sig") or expected_event.get("visual_sig") or "",
-        "semantic_sig": expected_event.get("expected_semantic_sig") or expected_event.get("semantic_sig") or "",
-    }
-    observed_snap = {
-        "text_sig": observed["text_sig"],
-        "visual_sig": observed["visual_sig"],
-        "semantic_sig": observed["semantic_sig"],
-    }
-    result = compare_signatures(
-        expected_snap, observed_snap, mode=mode,
-        legacy_expected_screen_sig=expected_event.get("screen_sig") or expected_event.get("sig") or "",
-        legacy_observed_screen_sig=observed.get("screen_sig", ""),
+    _, match, _ = wait_for_signature_match(
+        s,
+        sel,
+        compare=compare,
+        checkpoint_quiet_ms=checkpoint_quiet_ms,
+        checkpoint_timeout_ms=checkpoint_timeout_ms,
+        drain_event=lambda key: s.read_out() if key.data == s.session_id else None,
+        return_first_result=True,
     )
-    result["waited_ms"] = int(time.time() * 1000) - start_ms
-    result["quiet_ms"] = max(0, int(time.time() * 1000) - s.last_out_ms)
-    return result
+    match["waited_ms"] = int(time.time() * 1000) - start_ms
+    match["quiet_ms"] = max(0, int(time.time() * 1000) - s.last_out_ms)
+    return match
 
 
 def _handle_deterministic_mismatch(cfg: ReplayConfig, sid: str, match: dict) -> bool:
@@ -340,6 +296,10 @@ def replay_strict_global(cfg: ReplayConfig) -> None:
     """
     Replays all input bytes in global order.
     For checkpoints, waits and validates signature on target session output.
+
+    NOTA DE INTEGRIDADE: esta função não verifica a trilha; o chamador deve
+    rodar verifier.verify_log(log_dir, hmac_key) antes (o CLI `replay` e o
+    Runner do replay_control já o fazem).
     """
     sessions: dict[str, _TargetSession] = {}
     sel = selectors.DefaultSelector()
@@ -360,37 +320,29 @@ def replay_strict_global(cfg: ReplayConfig) -> None:
 
     def wait_checkpoint(sid: str, checkpoint_event: dict):
         s = get_sess(sid)
-        deadline = int(time.time() * 1000) + cfg.checkpoint_timeout_ms
-        last_match = None
         session_cfg = session_configs.get(sid)
         mode = resolve_comparison_mode(event=checkpoint_event, session=session_cfg, replay=cfg)["comparison_mode"]
         expected_snapshot = _expected_snapshot_from_event(checkpoint_event)
-        while int(time.time() * 1000) < deadline:
-            # drain readable output for all sessions
-            events = sel.select(timeout=0.05)
-            for key, _ in events:
-                sid2 = key.data
-                try:
-                    _ = sessions[sid2].read_out()
-                except Exception:
-                    pass
 
-            quiet = int(time.time() * 1000) - s.last_out_ms
-            if quiet >= cfg.checkpoint_quiet_ms:
-                observed = s.canonical_snapshot_now()
-                last_match = compare_signatures(
-                    expected_snapshot,
-                    observed,
-                    mode=mode,
-                    legacy_expected_screen_sig=expected_snapshot.get("screen_sig", ""),
-                    legacy_observed_screen_sig=observed.get("screen_sig", ""),
-                )
-                if last_match.get("matched"):
-                    return
-                # not matched yet; keep waiting a bit (maybe more output coming)
-            time.sleep(0.02)
+        def compare(observed: dict) -> dict:
+            return compare_signatures(
+                expected_snapshot,
+                observed,
+                mode=mode,
+                legacy_expected_screen_sig=expected_snapshot.get("screen_sig", ""),
+                legacy_observed_screen_sig=observed.get("screen_sig", ""),
+            )
 
-        observed = s.canonical_snapshot_now()
+        matched, last_match, observed = wait_for_signature_match(
+            s,
+            sel,
+            compare=compare,
+            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+            checkpoint_timeout_ms=cfg.checkpoint_timeout_ms,
+            drain_event=lambda key: sessions[key.data].read_out(),
+        )
+        if matched:
+            return
         got = (last_match or {}).get("observed_sig") or observed.get("screen_sig") or ""
         expected_sig = (last_match or {}).get("expected_sig") or expected_snapshot.get("screen_sig") or ""
         raise ReplayError(f"checkpoint mismatch session={sid}: expected={expected_sig!r} got={got!r}")
@@ -475,6 +427,10 @@ def replay_parallel_sessions(cfg: ReplayConfig) -> None:
     """
     Replays each session independently (order total por sessão).
     Útil quando você não precisa reproduzir o interleaving global.
+
+    NOTA DE INTEGRIDADE: esta função não verifica a trilha; o chamador deve
+    rodar verifier.verify_log(log_dir, hmac_key) antes (o CLI `replay` e o
+    Runner do replay_control já o fazem).
     """
     # Collect per-session input bytes and checkpoints in order.
     per_session_events: dict[str, list[dict]] = {}
@@ -531,31 +487,25 @@ def replay_parallel_sessions(cfg: ReplayConfig) -> None:
                     mode = resolve_comparison_mode(event=ev, session=session_cfg, replay=cfg)["comparison_mode"]
                     if _event_requires_comparison(ev, mode=mode):
                         # wait for quiet + match through canonical comparison
-                        deadline = int(time.time() * 1000) + cfg.checkpoint_timeout_ms
-                        last_match = None
                         expected_snapshot = _expected_snapshot_from_event(ev)
-                        while int(time.time() * 1000) < deadline:
-                            events2 = sel.select(timeout=0.05)
-                            for _, _ in events2:
-                                try:
-                                    _ = s.read_out()
-                                except Exception:
-                                    pass
-                            quiet = int(time.time() * 1000) - s.last_out_ms
-                            if quiet >= cfg.checkpoint_quiet_ms:
-                                observed = s.canonical_snapshot_now()
-                                last_match = compare_signatures(
-                                    expected_snapshot,
-                                    observed,
-                                    mode=mode,
-                                    legacy_expected_screen_sig=expected_snapshot.get("screen_sig", ""),
-                                    legacy_observed_screen_sig=observed.get("screen_sig", ""),
-                                )
-                                if last_match.get("matched"):
-                                    break
-                            time.sleep(0.02)
-                        else:
-                            observed = s.canonical_snapshot_now()
+
+                        def compare(observed: dict, _snap=expected_snapshot, _mode=mode) -> dict:
+                            return compare_signatures(
+                                _snap,
+                                observed,
+                                mode=_mode,
+                                legacy_expected_screen_sig=_snap.get("screen_sig", ""),
+                                legacy_observed_screen_sig=observed.get("screen_sig", ""),
+                            )
+
+                        matched, last_match, observed = wait_for_signature_match(
+                            s,
+                            sel,
+                            compare=compare,
+                            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                            checkpoint_timeout_ms=cfg.checkpoint_timeout_ms,
+                        )
+                        if not matched:
                             got = (last_match or {}).get("observed_sig") or observed.get("screen_sig") or ""
                             expected_sig = (last_match or {}).get("expected_sig") or expected_snapshot.get("screen_sig") or ""
                             raise ReplayError(

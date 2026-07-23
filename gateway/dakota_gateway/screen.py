@@ -267,12 +267,6 @@ class TerminalScreenState:
         return self.engine.cursor_col
 
 
-def _canonical_terminal_text(raw_text: str, *, rows: int = 25, cols: int = 80) -> str:
-    state = TerminalScreenState(rows=rows, cols=cols)
-    state.feed_text(raw_text)
-    return state.text()
-
-
 def build_screen_snapshot_from_bytes(raw_bytes: bytes, *, encoding: str = "utf-8", rows: int = 25, cols: int = 80) -> ScreenSnapshot:
     state = TerminalScreenState(rows=rows, cols=cols, encoding=encoding)
     state.feed_bytes(raw_bytes)

@@ -210,7 +210,7 @@ def encode_snapshot_compact(snapshot: dict) -> dict:
 
     Retorna dict serializavel com:
     - version, rows, cols, term, encoding
-    - cursor, text_sig, visual_sig
+    - cursor, seq_global, text_sig, visual_sig, semantic_sig
     - attribute_table: lista de atributos unicos
     - runs: lista de {row, col, length, text, attr_index}
     """
@@ -280,8 +280,10 @@ def encode_snapshot_compact(snapshot: dict) -> dict:
         "term": snapshot.get("term", "xterm"),
         "encoding": snapshot.get("encoding", "utf-8"),
         "cursor": snapshot.get("cursor", {"row": 0, "col": 0, "visible": True, "wrap_pending": False}),
+        "seq_global": int(snapshot.get("seq_global", 0) or 0),
         "text_sig": snapshot.get("text_sig", ""),
         "visual_sig": snapshot.get("visual_sig", ""),
+        "semantic_sig": snapshot.get("semantic_sig", ""),
         "attribute_table": attr_table,
         "runs": runs,
     }
@@ -334,9 +336,11 @@ def decode_snapshot_compact(payload: dict) -> dict:
         "term": payload.get("term", "xterm"),
         "encoding": payload.get("encoding", "utf-8"),
         "cursor": payload.get("cursor", {"row": 0, "col": 0, "visible": True, "wrap_pending": False}),
+        "seq_global": int(payload.get("seq_global", 0) or 0),
         "cells": cells,
         "text_sig": payload.get("text_sig", ""),
         "visual_sig": payload.get("visual_sig", ""),
+        "semantic_sig": payload.get("semantic_sig", ""),
     }
     return result
 

@@ -5,7 +5,7 @@ import sys
 import json
 from pathlib import Path
 
-from ..gateway import GatewayConfig, TerminalGateway
+from ..gateway import GatewayConfig, GatewayCaptureError, TerminalGateway
 from ..replay import ReplayConfig, ReplayError, replay_strict_global
 from ..terminal_config import TerminalGeometry, geometry_from_environment, geometry_from_tty, normalize_encoding, validate_terminal_geometry
 from ..verifier import VerificationError, verify_log
@@ -237,6 +237,10 @@ def handle_runtime_command(ns, read_key) -> int:
         return 0
 
     if ns.cmd == "capture-session":
+        # --source-user vazio = captura TODOS os usuarios (fail-closed)
+        source_user = str(ns.source_user or "").strip()
+        actor = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+
         key = read_key(ns.hmac_key_file)
         capture = _resolve_capture_session(getattr(ns, "db", ""), getattr(ns, "capture_id", 0))
         term_opts = _resolve_terminal_options(ns)
@@ -250,7 +254,7 @@ def handle_runtime_command(ns, read_key) -> int:
             capture_id=int(capture.get("id") or 0),
             capture_session_uuid=str(capture.get("session_uuid") or "").strip(),
             source_host=str(ns.source_host or "").strip(),
-            source_user=str(ns.source_user or "").strip(),
+            source_user=source_user or actor,
             source_command=source_command,
             ssh_batch_mode=ns.ssh_batch_mode,
             gateway_endpoint=ns.gateway_endpoint,
@@ -262,6 +266,14 @@ def handle_runtime_command(ns, read_key) -> int:
             encoding=term_opts["encoding"],
             geometry_source=term_opts["geometry_source"],
         )
-        return TerminalGateway(cfg).run()
+        try:
+            return TerminalGateway(cfg).run()
+        except GatewayCaptureError as exc:
+            print(f"ERRO: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"ERRO: Gateway ativo mas falha na captura: {exc}", file=sys.stderr)
+            print("Contate o administrador. Login abortado.", file=sys.stderr)
+            return 1
 
     return 1

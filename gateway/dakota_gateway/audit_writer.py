@@ -10,7 +10,7 @@ from typing import Optional
 
 import fcntl
 
-from .canonical import canonical_string
+from .canonical import canonical_string_v2
 from .crypto import sha256_hex, hmac_sha256_hex
 from .schema import AuditEvent
 
@@ -57,7 +57,34 @@ class AuditWriter:
                 d[k] = int(v or "0")
             else:
                 d[k] = v
+        self._heal_state_from_log_locked(d)
         return d
+
+    def _heal_state_from_log_locked(self, st: dict) -> None:
+        """Deriva seq_global/prev_hash do log quando ele está à frente do state.
+
+        A gravação do JSONL ocorre antes da persistência do audit.state; se o
+        processo morrer entre as duas, o state fica defasado e o próximo append
+        corromperia a cadeia. O log append-only é a fonte da verdade.
+        """
+        cur = st.get("current_log") or ""
+        if not cur:
+            return
+        log_path = Path(cur)
+        try:
+            # Heurística barata: o state é salvo logo após o append, então só
+            # há defasagem quando o log foi modificado depois do state.
+            if log_path.stat().st_mtime_ns <= self.state_path.stat().st_mtime_ns:
+                return
+        except OSError:
+            return
+        last = _last_log_entry(log_path)
+        if not last:
+            return
+        log_seq = int(last.get("seq_global") or 0)
+        if log_seq >= int(st.get("seq_global") or 0):
+            st["seq_global"] = log_seq
+            st["prev_hash"] = str(last.get("hash") or "")
 
     def _save_state_locked(self, st: dict) -> None:
         tmp = self.state_path.with_suffix(".tmp")
@@ -98,7 +125,7 @@ class AuditWriter:
         st["current_log"] = str(self.log_dir / f"{prefix}.part{st['part']:03d}.jsonl")
 
     def append(self, ev: AuditEvent) -> AuditEvent:
-        ev.v = "v1"
+        ev.v = "v2"
         if ev.timestamp_ms is None:
             ev.timestamp_ms = int(ev.ts_ms or 0)
 
@@ -112,7 +139,7 @@ class AuditWriter:
             ev.seq_global = st["seq_global"]
             ev.prev_hash = st.get("prev_hash", "") or ""
 
-            payload = canonical_string(ev).encode("utf-8")
+            payload = canonical_string_v2(ev).encode("utf-8")
             ev.hash = sha256_hex(payload)
             ev.hmac = hmac_sha256_hex(self.hmac_key, payload)
 
@@ -125,6 +152,48 @@ class AuditWriter:
             return ev
         finally:
             fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
+
+
+def _last_log_entry(path: Path) -> dict:
+    """Retorna o último evento JSON válido do log (best effort).
+
+    Lê apenas a cauda do arquivo; se a última linha for maior que a janela,
+    faz varredura completa como fallback.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return {}
+    if size <= 0:
+        return {}
+
+    def _scan_lines(lines) -> dict:
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                # cauda pode começar no meio de uma linha; ignorar truncadas
+                continue
+            if isinstance(ev, dict):
+                return ev
+        return {}
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, size - 1024 * 1024))
+            tail = fh.read()
+    except OSError:
+        return {}
+    found = _scan_lines(tail.decode("utf-8", errors="replace").splitlines())
+    if found:
+        return found
+    try:
+        return _scan_lines(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return {}
 
 
 def write_manifest(jsonl_path: str) -> None:

@@ -3,13 +3,20 @@
 **Data:** 2026-06-30
 **Base:** Ciclo de extração do `server.py` (498 linhas) + consolidação `_write_json` + middleware de erro + DELETE endpoints
 
+> **Nota de atualização (2026-07-23):** as métricas de linhas abaixo são um
+> snapshot de 2026-06-30 e já divergem do código atual — `server.py` tem
+> ~903 linhas (não ~505) e `synthetic_routes.py` tem 823 linhas (o trabalho
+> de delegação citado em R2 foi posteriormente revertido pelo crescimento do
+> módulo). Os status de resolução foram revistos: G1 resolvido por remoção do
+> componente Go (v0.3.0); G2 e itens de baixa severidade seguem abertos.
+
 ---
 
 ## Resumo por Camada
 
 | Camada | Arquivos | Linhas | Dívida |
 |--------|----------|--------|--------|
-| Control (server.py) | 1 | ~505 | Baixa |
+| Control (server.py) | 1 | ~505 (snapshot 2026-06-30; ~903 em 2026-07-23) | Média |
 | Control (módulos extraídos) | 7 | ~1900 | Baixa |
 | Routes | 10 | ~3000 | Média |
 | Services | 14 | ~2779 | Baixa |
@@ -25,7 +32,7 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | R1 | `ui_routes.py` ✅ | **CORRIGIDO** | Reduzido de 597 para 102 linhas. `ROUTES_CONFIG` extraído para `ui_templates.py`. |
-| R2 | `synthetic_routes.py` ✅ | **CORRIGIDO** | 599→396 linhas. Journey/error-patterns/diff delegados para `journey_routes.py`. |
+| R2 | `synthetic_routes.py` | **PARCIAL** | Reduzido de 599 para 396 linhas no ciclo de 2026-06; o módulo voltou a crescer e tem **823 linhas** em 2026-07-23. Delegação para `journey_routes.py` mantida, mas o tamanho atual indica dívida reaberta. |
 | R3 | `journey_routes.py` sobrepõe `synthetic_routes.py` ✅ | **CORRIGIDO** | Unificado: `journey_routes.py` é fonte canônica. `synthetic_routes.py` delega com rewrite de path. |
 | R4 | `_write_json` extraído ✅ | **CORRIGIDO** | 9 duplicações removidas. Centralizado em `route_helpers.py`. |
 | R5 | DELETE incompleto ✅ | **CORRIGIDO** | Adicionados: `DELETE /api/runs/{id}`, `DELETE /api/captures/{id}`, `DELETE /api/targets/{id}`, `DELETE /api/connection-profiles/{id}`. |
@@ -44,7 +51,7 @@
 
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
-| G1 | Componente Go não integrado | **ALTA** | `gateway/internal/audit/` contém código Go (canonical, crypto, writer). Binário compilado mas nunca usado pelo runtime Python. Manter ou remover. |
+| G1 | Componente Go não integrado ✅ | **RESOLVIDO** | `gateway/internal/audit/` foi **removido** no commit `dd87592` (v0.3.0). O runtime Python é a única implementação de auditoria. |
 | G2 | `replay_control.py` — Runner monolítico | **ALTA** | Controla execução de replay, fila, status, retry. Extrair: `run_queue.py`, `run_executor.py`, `run_status.py`. |
 | G3 | `source_analyzer/` com 9 extractors | **MÉDIA** | Extractors independentes mas sem interface comum. Criar `BaseExtractor` ABC. |
 | G4 | `synthetic/` com 29+ módulos ✅ | **CORRIGIDO** | `test_synthetic_gap_coverage.py` com 22 testes: 12 para `screen_differ`, 10 para `error_detector`. |
@@ -73,7 +80,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Todos os 10 itens resolvidos.** Nenhuma dívida arquitetural pendente.
+**Itens resolvidos:** R1–R5, S1, G1, G4, G5, X1, X3, X4 (12 itens).
+**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
 
 ---
 
@@ -92,7 +100,7 @@
 - ✅ `_write_json` centralizado em `route_helpers.py` (9 duplicações eliminadas)
 - ✅ Middleware de erro global (`error_middleware.py` com `@error_guard`)
 - ✅ DELETE endpoints: `/api/runs/{id}`, `/api/captures/{id}`, `/api/targets/{id}`, `/api/connection-profiles/{id}`
-- ✅ Componente Go documentado como laboratório experimental (decisão: manter isolado)
+- ✅ Componente Go documentado como laboratório experimental (decisão: manter isolado) — **posteriormente removido de vez na v0.3.0 (commit `dd87592`)**
 - ✅ `DEBT_MAP.md` criado com 21 itens mapeados por camada e severidade
 
 ### Ciclo 3 — Separação de serviços

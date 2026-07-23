@@ -1,5 +1,10 @@
 # Testagem da Interface Web - Dakota Replay2
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado na v0.1.0 (2026-06-23).
+> Descreve o estado do projeto naquela versão e **não** reflete o estado atual
+> (v0.7.9). Mantido apenas como referência histórica; para o estado vigente de
+> testes consulte `TESTES.md` na raiz do repositório.
+
 ## Status Atual de Tests
 
 ### ✅ Testes Existentes

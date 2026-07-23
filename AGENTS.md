@@ -27,9 +27,9 @@ Objetivos centrais:
 - **Gerar dados sintéticos e jornadas** a partir da análise do código-fonte
   legado (P2-A — Synthetic Knowledge Base).
 
-Versão atual: ver arquivo `VERSION` (ex.: `0.5.3`). Linux é o alvo operacional
-principal; AIX é contemplado no desenho (scripts POSIX, Expect/Tcl) mas a
-homologação AIX é item operacional pendente, não capacidade comprovada.
+Versão atual: ver arquivo `VERSION` (atualmente `0.7.9`). Linux é o alvo
+operacional principal; AIX é contemplado no desenho (scripts POSIX, Expect/Tcl)
+mas a homologação AIX é item operacional pendente, não capacidade comprovada.
 
 A documentação e os comentários do projeto são em **português (pt-BR)** —
 mantenha esse idioma em código novo, comentários e documentação.
@@ -51,10 +51,11 @@ mantenha esse idioma em código novo, comentários e documentação.
 
 Requisitos de ferramentas:
 
-- `python3` (3.10+; CI testa 3.10, 3.11, 3.12) — dependências em `gateway/requirements.txt`
-  (flask/bottle/werkzeug declarados, mas o servidor HTTP em produção usa stdlib;
-  `watchfiles` só para hot-reload em dev; `websocket-client` e `Pillow` usados
-  nos testes de aceitação/visual);
+- `python3` (3.10+; CI testa 3.10, 3.11, 3.12) — dependências em
+  `gateway/requirements.txt` (flask/bottle/werkzeug declarados, mas o servidor
+  HTTP em produção usa stdlib; `watchfiles` só para hot-reload em dev;
+  `websocket-client` e `Pillow` usados nos testes de aceitação/visual;
+  pylint/flake8/black para qualidade de código);
 - `node` >= 18 (testes JS com `node --test` e build do Tailwind);
 - `tclsh` + pacote `tcltest`, e `expect` (engine Tcl e testes Tcl);
 - cliente `ssh` (cenários de proxy/replay remoto);
@@ -83,8 +84,11 @@ Arquivos de configuração chave na raiz:
 replay2/
 ├── bin/                      # Entrypoints Expect: main.exp, replay2.exp
 ├── lib/                      # Engine Tcl: capture, normalize, signature,
-│                             #   state_machine, control, record, config, ...
-├── screens/                  # Handlers de telas Tcl (registram na state machine)
+│                             #   state_machine, control, record, config,
+│                             #   action, dump, events, log, plugins
+├── screens/                  # Diretório de handlers de telas Tcl (convenção:
+│                             #   registram na state machine; hoje só README +
+│                             #   plugins.tcldict.txt — demos em examples/)
 ├── examples/                 # demo.exp + legacy_sim.tcl (simulador local)
 ├── gateway/
 │   ├── dakota-gateway        # Wrapper executável (python3 → dakota_gateway.cli)
@@ -108,6 +112,7 @@ replay2/
 ├── artifacts/                # Evidências de aceitação (necessárias p/ build)
 ├── dist/                     # Tarballs gerados (gitignored)
 ├── docs/                     # Referências Recital, navegação, servidor MIG24
+│   └── historico/            # Relatórios congelados da v0.1.0 (GAPS, auditoria, análises)
 ├── log/                      # Logs locais (gitignored)
 ├── .local-secrets/           # hmac.key, cookie_secret.key (gitignored)
 └── dev/                      # Sandbox de dev (gitignored)
@@ -118,40 +123,68 @@ replay2/
 - `gateway.py` — proxy SSH auditável; captura `bytes in/out`, `checkpoint`,
   `session_start/end` e eventos `deterministic_input` (tela estável + input);
 - `audit_writer.py` — ordem global (`seq_global`), hash-chain, HMAC e manifest;
+- `crypto.py` — primitivas criptográficas (HMAC, hash-chain);
 - `verifier.py` — verificação de integridade da trilha;
 - `replay.py` — replay no destino (modos `raw` e `deterministic`);
 - `replay_control.py` — runner de runs, concorrência, métricas, falhas
   estruturadas, reprocessamento por faixa/sessão/checkpoint;
+- `replay_failures.py` / `replay_run_state.py` — taxonomia de falhas e estado
+  de runs;
 - `screen.py` — normalização e assinatura de tela (fonte central do gateway);
+- `canonical.py` — canônicos compartilhados entre camadas;
 - `compliance.py` — policies de target (`gateway_required`,
   `direct_ssh_policy`, `capture_start_mode`, `capture_compliance_mode`);
-- `state_db.py` — **shim de compatibilidade**; a persistência real está em
-  `db/` (`schema.py`, `connection.py`, `migrations.py`). Código novo deve usar
-  `dakota_gateway/db/`;
-- `cli.py` + `cli_commands/` — CLI (`targets`, `profiles`, `runs`, `verify`,
-  `replay`, `synthetic knowledge-base`, `synthetic journey ...`, `env-profiles`);
+- `auth.py` — autenticação/usuários do control plane;
+- `assessment.py` — AI Assessment (análise consolidada do sistema legado);
+- `terminal_config.py` — configuração de terminal (geometria, encoding);
+- `state_db.py` — **helpers de acesso a SQLite** (`connect`, `now_ms`,
+  `query_one`, `query_all`, `exec1`): é a API de persistência de facto, usada
+  por todo o control plane (`server.py`, `auth_support.py`, services). O
+  schema, o pool de conexões e as migrações vivem em `db/` (`schema.py`,
+  `connection.py`, `migrations.py`) — código novo com regras de schema vai em
+  `dakota_gateway/db/`. Há também um `schema.py` na raiz do pacote (legado) —
+  prefira sempre `db/schema.py`;
+- `cli.py` + `cli_commands/` (`catalog.py`, `runtime.py`, `env_profiles.py`) —
+  CLI: `start`, `verify`, `replay`, `targets`, `profiles`, `runs`
+  (create/start), `user add`, `env-profiles` e `synthetic` com muitos
+  subcomandos (`analyze-source`, `screens`, `generate`, `stress`, `journey ...`,
+  `schedule ...`, `record`, `explore`, `quickstart`, `pipeline`, `benchmark`,
+  `assess`, `knowledge-base`, `export-junit`, `export-csv`, `watch`, `metrics`,
+  `diff-quickstart`);
 - `source_analyzer/` — P2-A Discovery: extratores SQL/ISAM/DBF/Recital, telas,
-  menus, CRUD, relacionamentos, catálogo de programas;
+  menus, CRUD, relacionamentos, catálogo de programas/entidades, auditoria;
 - `synthetic/` — P2-A Synthetic: planejador de dataset (grafo de dependências),
-  sintetizador de dados, jornadas, `journey_mix`, relatórios de evidência.
+  sintetizador de dados, jornadas (inferência, geração CRUD, validação,
+  verificação, dry-run), `journey_mix`, scheduler, executor remoto, stress
+  runner, explorador de telas, relatórios de evidência/homologação;
+- `benchmark/` — pacote de benchmark (AIX vs Linux);
+- `templates/` — templates internos do gateway.
 
 ### 3.3 `gateway/dakota_terminal/` — terminal engine canônica
 
 Desde v0.3.19, o **TerminalEngine Python é a fonte única oficial** de emulação
 de terminal (parser ANSI/UTF-8, geometria, snapshots, `text_sig`/`visual_sig`).
-O JS de produção **não** contém parser de terminal — isso é garantido pelo
-teste `production_no_terminal_parser.test.mjs`. Vetores de decodificação vivem
-em `tests/fixtures/terminal_vectors/`.
+Módulos: `parser.py`, `decoder.py`, `engine.py`, `model.py`, `geometry.py`,
+`attributes.py`, `snapshot.py`, `serializer.py`, `signatures.py`,
+`comparison.py`, `diffs.py`. O JS de produção **não** contém parser de
+terminal — isso é garantido pelo teste
+`production_no_terminal_parser.test.mjs`. Vetores de decodificação vivem em
+`tests/fixtures/terminal_vectors/`.
 
 ### 3.4 `gateway/control/` — control plane (superfície oficial)
 
-- `server.py` — entry point HTTP (stdlib `ThreadingHTTPServer`), shell leve;
+- `server.py` — entry point HTTP (stdlib `ThreadingHTTPServer`), shell leve
+  (~900 linhas): auth/cookies, helpers e despacho;
 - `routes/` — acoplamento HTTP por domínio (`run_routes`, `capture_routes`,
   `gateway_routes`, `observability_routes`, `catalog_routes`,
   `operational_routes`, `journey_routes`, `synthetic_routes`, `ui_routes`,
   `admin_routes`);
 - `services/` — regras e payloads reutilizáveis (reports, cenários, captura,
-  sessão/replay, observabilidade);
+  sessão/replay, observabilidade, analytics, ambiente);
+- Módulos de suporte na raiz de `control/`: `auth_support.py`,
+  `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
+  `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,
+  `websocket_support.py`;
 - `ui_templates.py` — loader fino; `templates/` — HTMLs da UI;
 - `static/js/` — JS vanilla (`core/`, `components/`, `pages/`, `vendor/`);
   testes `*.test.mjs` ao lado dos módulos;
@@ -171,9 +204,14 @@ inativo/desabilitado.
 normalização (`lib/normalize.tcl`), assinatura estável (`lib/signature.tcl`),
 roteamento por estado (`lib/state_machine.tcl`), controle local
 `pause/resume/step/send/dump` (`lib/control.tcl`) e gravação simplificada
-(`lib/record.tcl`). Handlers de tela ficam em `screens/*.tcl` e se registram
-via `::state_machine::register <assinatura> <estado> <proc>`. Todo entrypoint
-Tcl executa `encoding system utf-8` **antes** de qualquer `source` (regra P0).
+(`lib/record.tcl`). Handlers de tela são módulos `.tcl` em `screens/` que se
+registram via `::state_machine::register <assinatura> <estado> <proc>`
+(`bin/main.exp` carrega os handlers via `::plugins::load_screens` de
+`lib/plugins.tcl`, filtrados pelo estado em `screens/plugins.tcldict.txt`; o
+diretório hoje só tem a convenção documentada — handlers de exemplo vivem em
+`examples/`). Todo
+entrypoint Tcl executa `encoding system utf-8` **antes** de qualquer `source`
+(regra P0).
 
 Atenção: a captura fiel consolidada é a do **gateway SSH**; `record.tcl` é um
 gravador simplificado da engine e não substitui a trilha auditável.
@@ -196,7 +234,9 @@ Equivamente: `npm run dev`, `npm run setup`, etc. (npm scripts espelham o make).
 Variáveis de ambiente de dev: `LISTEN` (default `127.0.0.1:8090`), `DB_PATH`
 (default `gateway/state/replay.db`), `DAKOTA_ENV` (`lab` default |
 `homologation` | `production`), `DAKOTA_ADMIN` (`user:senha` p/ bootstrap),
-`DAKOTA_GATEWAY_AUTO_ACTIVATE=true`, `BOOTSTRAP_ADMIN`, `SECRETS_DIR`.
+`SECRETS_DIR`, `COOKIE_SECRET_FILE`, `HMAC_KEY_FILE`, `WATCH_MODE` (0 desliga
+hot-reload). O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
+sobe o servidor com `--gateway-auto-activate`.
 
 Execução manual do control plane:
 
@@ -214,10 +254,12 @@ python3 gateway/control/server.py \
 Orquestrador principal: `./scripts/test.sh` (documentação completa em `TESTES.md`).
 
 ```bash
-./scripts/test.sh --quick        # JS apenas (~2s) — loop de dev
+./scripts/test.sh --quick        # JS apenas — loop de dev
 ./scripts/test.sh --unit         # JS + Python + Tcl — antes de commit
 ./scripts/test.sh --all          # tudo (default)
 ./scripts/test.sh --ci           # tudo menos Tcl
+./scripts/test.sh --js|--python|--tcl            # suítes individuais
+./scripts/test.sh --capture --replay             # foco em captura/replay
 ./scripts/test.sh --smoke --remote --host 10.5.8.24 --port 8080
 # modificadores: --verbose, --fail-fast
 # DAKOTA_TEST_SH_TIMEOUT=450 (timeout por bloco), DAKOTA_TEST_SH_DRY_RUN=1
@@ -249,9 +291,15 @@ make smoke-test    # scripts/smoke-test.sh (9 checks end-to-end locais)
 ```
 
 Smoke remoto (requer acesso SSH ao host): `scripts/smoke-test-capture.sh` e
-`scripts/smoke-test-replay.sh` validam health/ready, login, captures, replay,
+`scripts/smoke-test-replay.sh` (wrappers de `smoke-test-capture.py` /
+`smoke-test-replay.py`) validam health/ready, login, captures, replay,
 geometria, encoding, timeline e playback contra o servidor (default
 `10.5.8.24:8080`).
+
+Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
+`test-p2.sh`, `test-best-effort.sh`, `validate_acceptance_results.py`,
+`process_tree.py` (runner com detecção de processos vazados, usado pelo
+`test.sh`).
 
 ### Build e release
 
@@ -282,13 +330,15 @@ Instala em `/opt/dakota-replay2` (default), cria os wrappers `replay2` e
 Toolbox. Servidor de homologação/produção documentado: MIG24 AIX 7
 (`10.5.8.25`, ver `docs/servidor-dakota-mig24.md`). Operação do gateway
 (rotação, verificação, replay local de smoke): `gateway/docs/ops.md`.
+`uninstall.sh` remove a instalação.
 
 ### CI
 
 `.github/workflows/ci.yml`: matrix Python 3.10–3.12, instala Tcl/Expect, roda
 `tclsh tests/all.tcl`, `gateway/tests/test_integrity.py`,
 `tests/quick-test-api.py`, `tests/benchmark.tcl`, lint (pylint/flake8 com
-`--exit-zero`), coverage e Selenium (`continue-on-error`).
+`--exit-zero`), coverage (`gateway/tests/test_integrity.py`) e Selenium
+(`continue-on-error`).
 
 ---
 
@@ -380,9 +430,6 @@ O que **faz** sentido evoluir: Discovery Engine (`source_analyzer/`),
 Synthetic Engine (`synthetic/`), replay determinístico, métricas internas via
 `/metrics`, endpoints REST na API existente, `/health` e `/ready`.
 
-O componente Go `gateway/internal/audit` citado no README é experimental/futuro
-e **não** integra o runtime atual.
-
 ---
 
 ## 8. Estratégia de Testes (resumo)
@@ -409,6 +456,33 @@ Unitários (Py+JS+Tcl) → tests/ + gateway/tests/ + static/js/*.test.mjs + test
 - Gaps de cobertura conhecidos estão listados em `TESTES.md` (seção "Gaps
   Conhecidos") — consulte antes de assumir que algo já é testado.
 
+## 8.5. Deploy no Servidor (REGRA OBRIGATÓRIA)
+
+**Sempre usar o script de deploy. NUNCA fazer deploy manual com `scp`/`ssh` soltos.**
+
+### Deploy no MIG24 (AIX 10.5.8.25):
+```bash
+cd /home/jmachado/projetos/dakota/remoto_dakota
+bash scripts/deploy.sh --target aix
+```
+
+### Deploy no Linux (10.5.8.24):
+```bash
+SSH_PASSWORD="$SSH_PASSWORD" bash scripts/deploy.sh --target linux
+```
+
+O script cuida de: build do tarball, backup do banco, parada do serviço, sincronização, chown, restart e health check.
+
+### Hotfix (apenas emergência, 1-2 arquivos):
+```bash
+cd replay2
+for f in gateway/control/services/arquivo.py gateway/control/templates/algum.html; do
+  scp -o StrictHostKeyChecking=accept-new "$f" root@10.5.8.25:/opt/dakota/replay2/"$f"
+done
+ssh dakota-mig24-root "chown -R results:cpd /opt/dakota/replay2/gateway/ && pkill -f server.py; sleep 2; cd /opt/dakota/replay2/gateway && su results -c '...'"
+```
+Hotfixes devem ser seguidos de deploy completo via `deploy.sh` na próxima oportunidade.
+
 ## 9. Lacunas Conhecidas (não tratar como bug novo)
 
 - `record.tcl` é gravador simplificado; a captura oficial é o gateway SSH;
@@ -429,5 +503,7 @@ Unitários (Py+JS+Tcl) → tests/ + gateway/tests/ + static/js/*.test.mjs + test
 - `gateway/README.md` — gateway, deterministic record, replay local
 - `gateway/docs/ops.md` — operação (rotação, verificação, replay)
 - `gateway/docs/threat_model.md` — modelo de ameaças
-- `ROADMAP.md`, `GAPS.md`, `DEBT_MAP.md` — planejamento e dívida técnica
-- `docs/` — referências do sistema Recital/Dakota e do servidor MIG24
+- `ROADMAP.md`, `DEBT_MAP.md` — planejamento e dívida técnica
+- `docs/` — referências do sistema Recital/Dakota e do servidor MIG24;
+  `docs/historico/` — relatórios congelados da v0.1.0 (GAPS, auditoria,
+  análises), mantidos só como referência histórica

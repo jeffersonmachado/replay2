@@ -104,7 +104,7 @@
   - `openapi` e documentação operacional previamente ajustados na frente de compliance/gateway-only
 
 - Arquivos marcados como experimental/futuro:
-  - `gateway/internal/audit/`: experimental/futuro, sem integração obrigatória ao runtime atual.
+  - `gateway/internal/audit/`: experimental/futuro, sem integração obrigatória ao runtime atual. **(Atualização: o componente Go foi removido de vez na v0.3.0, commit `dd87592`.)**
 
 - Arquivos removidos:
   - nenhum removido funcionalmente; houve substituição de conteúdo em `ui_templates.py` e `state_db.py` por versões mais leves e compatíveis.

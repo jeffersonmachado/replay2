@@ -13,7 +13,7 @@ Replay2 é uma ferramenta de **validação de migração** de sistemas legados (
 | Core engine | Expect/Tcl |
 | Gateway | Python |
 | Control Plane | Python + SQLite |
-| UI | HTML/CSS/JS vanilla (Jinja2 templates) |
+| UI | HTML/CSS/JS vanilla (templates HTML estáticos servidos por `ui_templates.py`; sem engine de template como Jinja2) |
 | Build | Shell script → tarball |
 | Runtime | Processo direto no host (sem containers) |
 

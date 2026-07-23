@@ -1,5 +1,10 @@
 # Relatório de Auditoria — Dakota Replay2 v0.1.0
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado na v0.1.0 (2026-06-23).
+> Descreve o estado do projeto naquela versão e **não** reflete o estado atual
+> (v0.7.9). Mantido apenas como referência histórica; para o estado vigente
+> consulte `README.md`, `AGENTS.md` e `ROADMAP.md` na raiz do repositório.
+
 **Data:** 2026-06-23
 **Versão auditada:** 0.1.0
 **Escopo:** Análise completa de componentes, dependências, fluxos e débitos técnicos
@@ -27,8 +32,8 @@ replay2/
 │   ├── signature.tcl       # Identificação estável de tela
 │   └── state_machine.tcl   # Roteamento de handlers por assinatura
 ├── gateway/
-│   ├── dakota-gateway       # Binário Go do gateway (componente experimental)
-│   ├── go.mod / go.sum      # Dependências Go
+│   ├── dakota-gateway       # Wrapper do gateway (na v0.1.0 era binário Go experimental; hoje é wrapper Python → dakota_gateway.cli)
+│   ├── go.mod / go.sum      # Dependências Go (REMOVIDO na v0.3.0, commit dd87592)
 │   ├── dakota_gateway/      # Core Python do gateway
 │   │   ├── gateway.py       # Proxy SSH com captura auditável
 │   │   ├── audit_writer.py  # Ordem global, hash-chain, HMAC
@@ -59,7 +64,7 @@ replay2/
 │   │   ├── templates/       # 15 templates HTML + partials
 │   │   ├── static/          # CSS, JS
 │   │   └── openapi.yaml     # Spec OpenAPI
-│   ├── internal/audit/      # Componente Go experimental (sem integração)
+│   ├── internal/audit/      # Componente Go experimental (REMOVIDO na v0.3.0, commit dd87592)
 │   ├── state/               # Estado local (NÃO versionar)
 │   ├── tests/               # Testes do gateway
 │   └── docs/                # Documentação interna
@@ -243,11 +248,11 @@ replay2/
 | Tcl 8.6+ | Runtime | Produção |
 | tcltest | Testes | Desenvolvimento |
 
-### Go (experimental)
+### Go (experimental) — REMOVIDO na v0.3.0
 
 | Dependência | Uso | Status |
 |-------------|-----|--------|
-| Go 1.x | gateway/internal/audit | Experimental |
+| Go 1.x | gateway/internal/audit | Removido (commit dd87592, v0.3.0); o runtime Python é a única implementação de auditoria |
 
 ### Sistema
 
@@ -333,9 +338,9 @@ replay2/
 
 | Componente | Localização | Status |
 |------------|-------------|--------|
-| Gateway Go | `gateway/internal/audit/` | Experimental, sem integração |
+| Gateway Go | `gateway/internal/audit/` | REMOVIDO na v0.3.0 (commit dd87592) — nunca integrou o runtime |
 | QA Waves UI | `dev/qa-waves-ui/` | Em desenvolvimento |
-| Go runtime | `gateway/go.mod` | Binário `dakota-gateway` compilado |
+| Go runtime | `gateway/go.mod` | REMOVIDO junto com o componente Go (v0.3.0) |
 
 ---
 

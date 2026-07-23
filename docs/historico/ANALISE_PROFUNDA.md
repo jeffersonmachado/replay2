@@ -1,5 +1,10 @@
 # Análise Profunda: Dakota Replay2 (v0.1.0)
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado na v0.1.0 (2026-06-23).
+> Descreve o estado do projeto naquela versão e **não** reflete o estado atual
+> (v0.7.9). Mantido apenas como referência histórica; para o estado vigente
+> consulte `README.md`, `AGENTS.md` e `ROADMAP.md` na raiz do repositório.
+
 ## Sumário Executivo
 
 **Dakota Replay2** é uma plataforma robusta e modular para automação de sistemas legados em modo texto (Recital/Clipper) com capacidades avançadas de auditoria, integridade criptográfica e replay determinístico. Implementada em **Expect/Tcl** (core) com extensões em **Python/Go** (gateway), a solução é portável entre Linux e AIX.

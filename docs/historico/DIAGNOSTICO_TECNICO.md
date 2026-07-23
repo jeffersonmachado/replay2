@@ -1,5 +1,10 @@
 # Diagnostico Tecnico Atual
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado em 2026-03-29 (v0.1.x).
+> Descreve o estado do projeto naquela data e **não** reflete o estado atual
+> (v0.7.9). Mantido apenas como referência histórica; para o estado vigente
+> consulte `README.md` e `AGENTS.md` na raiz do repositório.
+
 Data de referencia: 2026-03-29
 
 Este diagnostico foi produzido a partir do codigo real em `bin/`, `lib/`, `gateway/`, `dashboard/`, `tests/` e scripts do repositorio. Ele nao assume capacidades nao comprovadas no codigo.

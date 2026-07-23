@@ -1,5 +1,11 @@
 # Relatório de Gaps — Dakota Replay2
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado na v0.1.0 (2026-06-23).
+> Descreve os gaps identificados naquela versão; os itens marcados como
+> resolvidos refletem correções pontuais posteriores, mas o documento como um
+> todo **não** acompanha o estado atual (v0.7.9). Mantido apenas como
+> referência histórica.
+
 **Data:** 2026-06-23
 **Versão:** 0.1.0
 
@@ -27,11 +33,11 @@ Dependências de runtime adicionadas: `flask`, `bottle`, `werkzeug`, `watchfiles
 
 ## 2. Gaps de Integração
 
-### 2.1 Componente Go não integrado (ALTO)
+### 2.1 Componente Go não integrado (ALTO) ✅ RESOLVIDO (remoção)
 
-`gateway/internal/audit/` contém código Go (canonical, crypto, writer, testes) que implementa funcionalidades paralelas ao Python (`canonical.py`, `crypto.py`, `audit_writer.py`). Não há integração entre as duas linguagens — o binário `dakota-gateway` é compilado mas não usado pelo runtime Python.
+`gateway/internal/audit/` continha código Go (canonical, crypto, writer, testes) que implementava funcionalidades paralelas ao Python (`canonical.py`, `crypto.py`, `audit_writer.py`), sem integração com o runtime.
 
-**Impacto:** Código mantido sem propósito claro; risco de divergência entre implementações.
+**Resolução:** o componente Go foi **removido do repositório** no commit `dd87592` (v0.3.0). O runtime Python (`audit_writer.py`, `crypto.py`, `canonical.py`) é a única implementação de auditoria.
 
 ---
 
@@ -51,7 +57,7 @@ O `replay_adapter.py` conecta o `SyntheticStressRunner` ao `Runner` real do `rep
 O `SyntheticInferencer` usa `SourceParser` para `analyze_source()`, mas:
 - O resultado da análise é materializado apenas em memória (não persiste no banco `source_entities`)
 - A tabela `source_entities` existe mas não é populada pelo fluxo padrão
-- Não há endpoint REST para trigger de análise de código-fonte
+- ~~Não há endpoint REST para trigger de análise de código-fonte~~ ✅ **Resolvido:** o endpoint `GET /api/knowledge-base?source=...` (admin) e o comando CLI `dakota-gateway synthetic knowledge-base` expõem o pipeline P2-A.
 
 **Impacto:** Discovery e Synthetic operam como ilhas; o pipeline Target→Discovery→Synthetic→Replay não é automatizado.
 
@@ -78,7 +84,7 @@ Os testes em `tests/` (raiz) cobrem algumas unidades (`test_synthetic_engine_uni
 - Não cobrem `capture_parametrizer.py`
 - Não cobrem `remote_executor.py`
 - Não cobrem `scheduler.py`
-- Não cobrem `screen_differ.py`
+- ~~Não cobrem `screen_differ.py`~~ ✅ coberto por `tests/test_synthetic_gap_coverage.py` (12 testes; `error_detector.py` também coberto, com 10 testes)
 - Não cobrem `snapshot_baseline.py`
 
 **Impacto:** Refatorações no Synthetic Engine são arriscadas; regressões podem passar despercebidas.
@@ -93,9 +99,11 @@ Os testes em `tests/` (raiz) cobrem algumas unidades (`test_synthetic_engine_uni
 
 ---
 
-### 3.3 `dashboard/` vazio ou com conteúdo não versionado (BAIXO)
+### 3.3 `dashboard/` vazio ou com conteúdo não versionado (BAIXO) ✅ RESOLVIDO
 
-O diretório `dashboard/` aparece na estrutura do projeto mas está listado no `.gitignore` indiretamente (não há conteúdo visível). Não está claro se há código de dashboard adicional ou se o control plane supre tudo.
+O diretório `dashboard/` existia na estrutura do projeto mas permanecia vazio e sem propósito definido — o control plane (`gateway/control/`) supre toda a UI.
+
+**Resolução:** o diretório vazio `dashboard/` foi removido do repositório.
 
 ---
 
@@ -181,7 +189,7 @@ Faltam: teste com SSH real, replay multi-sessão, stress com concorrência.
 | 3 | Sem `/metrics` | MÉDIO | ✅ Sprint 6 |
 | 4 | Synthetic sem testes dedicados | ALTO | ✅ Parcial (7 e2e) |
 | 5 | Testes e2e inexistentes | ALTO | ✅ Parcial (7 e2e) |
-| 6 | Componente Go não integrado | ALTO | Backlog |
+| 6 | Componente Go não integrado | ALTO | ✅ Removido (v0.3.0) |
 | 7 | `register-targets.sh` payload errado | ALTO | ✅ Sprint 1 |
 | 8 | `requirements.txt` sem deps runtime | MÉDIO | ✅ Sprint 1 |
 | 9 | `ConnectionPool` subutilizado | MÉDIO | Sprint 5 |
@@ -193,7 +201,7 @@ Faltam: teste com SSH real, replay multi-sessão, stress com concorrência.
 | 15 | Sem smoke test | MÉDIO | ✅ Sprint 1 |
 | 16 | Sem documentação de API com exemplos | MÉDIO | Sprint 1 |
 | 17 | `record.tcl` duplicado com gateway | BAIXO | Backlog |
-| 18 | `dashboard/` sem conteúdo claro | BAIXO | Backlog |
+| 18 | `dashboard/` sem conteúdo claro | BAIXO | ✅ Diretório removido |
 | 19 | `COOKIE_SECRET` sem rotação | BAIXO | Sprint 6 |
 | 20 | Sem diagrama ER / doc de dados | BAIXO | Sprint 1 |
 | 21 | Sem `CONTRIBUTING.md` | BAIXO | ✅ Sprint 1 |
@@ -227,7 +235,7 @@ Faltam: teste com SSH real, replay multi-sessão, stress com concorrência.
 
 ---
 
-## 11. Achados da Análise r-observe (ver `ANALISE_R_OBSERVE.md`)
+## 12. Achados da Análise r-observe (ver `ANALISE_R_OBSERVE.md` na raiz)
 
 | # | Achado | Severidade |
 |---|--------|-----------|

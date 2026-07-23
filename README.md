@@ -90,7 +90,7 @@ Hoje a base registra:
 - runtime principal: core `Expect/Tcl`, gateway Python, control plane Python e SQLite;
 - superficie oficial de operacao/observabilidade: `gateway/control/server.py`;
 - composicao do control plane: `gateway/control/server.py` atua como shell HTTP leve, `gateway/control/routes/` concentra os dominios de rota, `gateway/control/services/` concentra payloads e regras reaproveitaveis, `gateway/control/ui_templates.py` virou loader fino e `gateway/control/templates/` concentra os HTMLs da UI;
-- componente experimental/futuro: `gateway/internal/audit` em Go, sem integracao obrigatoria no runtime atual.
+- o componente experimental em Go (`gateway/internal/audit`) foi **removido** na v0.3.0 (commit `dd87592`); o runtime Python (`audit_writer.py`, `crypto.py`, `canonical.py`) e a unica implementacao de auditoria.
 - persistencia Python em transicao incremental: `gateway/dakota_gateway/db/` concentra schema, conexao e migracoes leves; `gateway/dakota_gateway/state_db.py` permanece como camada de compatibilidade.
 
 ## Criterios de Sucesso
@@ -184,7 +184,7 @@ com rastreabilidade auditavel.
 - `/metrics` com autenticacao em producao
 - Chave HMAC sem ACL para usuario capturado
 - `DAKOTA_ENV=lab|production|homologation` — modo de operacao
-- Senha admin bootstrap removida; `DAKOTA_ADMIN` obrigatorio em producao
+- Bootstrap de admin via `--bootstrap-admin` ou `DAKOTA_ADMIN` (preferir a env var: o argumento expõe a senha no historico do shell); em desenvolvimento o `dev.sh` aplica o default `admin:Admin123!`; em `DAKOTA_ENV=production` o `DAKOTA_ADMIN` e **obrigatorio** e o servidor aborta sem ele
 
 **Operacao:**
 
@@ -466,7 +466,7 @@ POST /api/runs
 
 ## Documentacao Complementar
 
-- `DIAGNOSTICO_TECNICO.md`
+- `docs/historico/DIAGNOSTICO_TECNICO.md` (documento historico da v0.1.x)
 - `ROADMAP.md`
 - `gateway/README.md`
 - `gateway/docs/ops.md`

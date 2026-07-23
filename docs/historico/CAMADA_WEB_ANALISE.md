@@ -1,5 +1,10 @@
 # Análise Profunda: Camada Web de Gerenciamento (Dakota Replay2)
 
+> **⚠️ DOCUMENTO HISTÓRICO (OBSOLETO)** — Congelado na v0.1.0 (2026-06-23).
+> Descreve o estado do projeto naquela versão e **não** reflete o estado atual
+> (v0.7.9). Mantido apenas como referência histórica; para o estado vigente
+> consulte `README.md`, `AGENTS.md` e `ROADMAP.md` na raiz do repositório.
+
 ## 1. Visão Geral da Arquitetura Web
 
 ### 1.1 Componentes Principais

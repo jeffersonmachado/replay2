@@ -130,24 +130,27 @@ listening on http://127.0.0.1:8090
 ```
 dakota/replay2/
 ├── gateway/
-│   ├── control/          # API + UI (Python/Jinja2)
-│   │   ├── server.py     # Entry point
-│   │   ├── routes/       # Endpoints HTTP
-│   │   ├── services/     # Lógica de negócio
-│   │   ├── templates/    # HTML (Jinja2)
-│   │   └── static/       # JS, CSS
-│   └── dakota_gateway/   # Gateway + Auditoria
-│       ├── gateway.py    # Proxy SSH auditável
-│       ├── audit_writer.py # Hash-chain + HMAC
-│       ├── replay.py     # Runner de sessões
-│       └── ...
+│   ├── control/          # API + UI (Python stdlib http.server + SQLite)
+│   │   ├── server.py     # Entry point HTTP (shell leve: auth/cookies/despacho)
+│   │   ├── routes/       # Acoplamento HTTP por domínio
+│   │   ├── services/     # Regras e payloads reutilizáveis
+│   │   ├── templates/    # HTML estático (sem Jinja2; loader em ui_templates.py)
+│   │   └── static/       # JS vanilla, CSS (Tailwind)
+│   ├── dakota_gateway/   # Gateway + Auditoria
+│   │   ├── gateway.py    # Proxy SSH auditável
+│   │   ├── audit_writer.py # Hash-chain + HMAC
+│   │   ├── replay.py     # Runner de sessões
+│   │   ├── state_db.py   # Helpers de acesso SQLite (connect, now_ms, query_one, query_all, exec1)
+│   │   ├── db/           # Schema, conexão (pool) e migrações
+│   │   └── ...
+│   └── dakota_terminal/  # Terminal engine canônica (parser ANSI/UTF-8, snapshots, assinaturas)
 ├── lib/                  # Tcl (core capture)
-├── bin/                  # Binários compilados
+├── bin/                  # Entrypoints Expect/Tcl (main.exp, replay2.exp)
 ├── tests/                # Testes Python + Tcl
 ├── scripts/              # Shells utilities
-├── dev.sh               # Script de dev (novo!)
-├── Makefile             # Targets make (novo!)
-└── package.json         # npm scripts (novo!)
+├── dev.sh               # Script de dev
+├── Makefile             # Targets make
+└── package.json         # npm scripts
 ```
 
 ## Fluxo Típico de Dev
@@ -233,10 +236,9 @@ chmod +x scripts/*.sh
 cat log/replay2-control.log
 # ou 
 npm run dev:logs
-
-# Aumentar verbosidade
-FLASK_DEBUG=1 npm run dev
 ```
+
+Não existe flag de debug por variável de ambiente (`FLASK_DEBUG` **não é lida** — o servidor HTTP usa a stdlib, não Flask). Para diagnosticar, acompanhe o log acima e, se necessário, rode o servidor em foreground com `./dev.sh` para ver o traceback no console.
 
 ## Integração SSH (Gateway Capture)
 
@@ -250,13 +252,12 @@ Isto configura `ForceCommand` para interceptar logins e rotear pelo gateway audi
 
 ## Modo Hot-Reload
 
-Se `flask-reload` estiver instalado, mudanças em `.py`, `.html`, `.css` e `.js` recarregam automaticamente.
+O `dev.sh` usa **watchfiles** para auto-reload (estilo nodemon): mudanças em
+`.py`, `.tcl`, `.exp`, `.html`, `.js` e `.css` reiniciam o servidor
+automaticamente. O watchfiles é instalado pelo `npm run setup` / `make setup`.
 
-Instalar:
-```bash
-source .venv/bin/activate
-pip install flask-reload
-```
+- Auto-reload ativo por padrão (`WATCH_MODE=1`);
+- Para desabilitar: `WATCH_MODE=0 npm run dev`.
 
 ## Build Tcl/Expect (opcional)
 
@@ -284,7 +285,7 @@ npm run dev
 
 ## Próximas Etapas
 
-1. **Leia**: [ANALISE_PROFUNDA.md](ANALISE_PROFUNDA.md) - Visão técnica completa
+1. **Leia**: [ANALISE_PROFUNDA.md](docs/historico/ANALISE_PROFUNDA.md) - Visão técnica da v0.1.0 (documento histórico)
 2. **Explore**: [gateway/control/](gateway/control/) - API e UI
 3. **Entenda**: [Filtros de Auditoria](FILTROS_AUDITORIA.md) - Sistema de filtros
 4. **Teste**: `npm run test` - Suite de testes

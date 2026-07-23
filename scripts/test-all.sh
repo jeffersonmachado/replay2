@@ -11,6 +11,9 @@ cd "$ROOT_DIR"
 
 RESULT_DIR="$ROOT_DIR/artifacts/acceptance-logs/results"
 mkdir -p "$RESULT_DIR"
+# Remove resultados de execuções anteriores para não misturar suítes antigas
+# (renomeadas/removidas) no resumo desta execução
+rm -f "$RESULT_DIR"/test-all-*.result.json "$RESULT_DIR"/test-all-*.log "$RESULT_DIR"/test-all-summary.json 2>/dev/null || true
 
 TIMEOUT="${DAKOTA_TEST_SH_TIMEOUT:-450}"
 FAIL_COUNT=0
@@ -59,15 +62,27 @@ printf "${ESC_BOLD}=== test-all.sh — Suite Completa ===${ESC_RESET}\n"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════
-# JavaScript suites
+# JavaScript suites — lista única em scripts/js-tests.manifest
 # ═══════════════════════════════════════════════════════════════════════════
-run_suite js-virtual-terminal 60 node --test gateway/control/static/js/virtual_terminal.test.mjs || true
-run_suite js-timeline 60 node --test gateway/control/static/js/components/capture_replay_timeline.test.mjs || true
-run_suite js-renderer 60 node --test gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs || true
-run_suite js-replay-state 60 node --test gateway/control/static/js/components/replay_snapshot_state.test.mjs || true
-run_suite js-checkpoint-seek 60 node --test gateway/control/static/js/components/checkpoint_seek.test.mjs || true
-run_suite js-template-syntax 60 node --test gateway/control/static/js/components/template_syntax.test.mjs || true
-run_suite js-production-check 60 node --test gateway/control/static/js/components/production_no_terminal_parser.test.mjs || true
+JS_SEEN=""
+if [ -f "$ROOT_DIR/scripts/js-tests.manifest" ]; then
+  while IFS= read -r js_test; do
+    case "$js_test" in
+      ''|'#'*) continue ;;
+    esac
+    js_base=$(basename "$js_test" .test.mjs)
+    # Evita colisão de nomes de suíte quando dois arquivos têm o mesmo basename
+    case " $JS_SEEN " in
+      *" $js_base "*) js_base="$(basename "$(dirname "$js_test")")-$js_base" ;;
+    esac
+    JS_SEEN="$JS_SEEN $js_base"
+    js_suite="js-$(printf '%s' "$js_base" | tr '_ ' '--')"
+    run_suite "$js_suite" 60 node --test "$ROOT_DIR/$js_test" || true
+  done < "$ROOT_DIR/scripts/js-tests.manifest"
+else
+  printf "${ESC_RED}[FAIL]${ESC_RESET} manifesto JS não encontrado: scripts/js-tests.manifest\n"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 
 # Python — COMPLETO, sem exclusões
 run_suite python-full "$TIMEOUT" env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q tests/ || true

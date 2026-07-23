@@ -34,7 +34,7 @@ EXCLUDE_DIRS = {
     ".claude", ".codex", ".github", ".vscode", ".local-secrets",
     "dev", "docs",
 }
-EXCLUDE_DIR_PREFIXES = ("artifacts/acceptance-logs", "artifacts/visual-failure")
+EXCLUDE_DIR_PREFIXES = ("artifacts/acceptance-logs", "artifacts/visual-failure", "tests/tmp")
 
 EXCLUDE_FILES = {
     "artifacts/visual-test-result.json",
@@ -49,19 +49,20 @@ EXCLUDE_FILES = {
     # Root-level dotfiles and docs not in distributable artifact
     ".gitignore", ".hintrc", ".codex",
     "AGENTS.md",
-    "AI_ASSESSMENT_ARQUITETURA.md", "ANALISE_PROFUNDA.md", "ANALISE_R_OBSERVE.md",
-    "AUDITORIA_REPLAY2.md", "BENCHMARK_ARQUITETURA.md", "CAMADA_WEB_ANALISE.md",
+    "AI_ASSESSMENT_ARQUITETURA.md", "ANALISE_R_OBSERVE.md",
+    "BENCHMARK_ARQUITETURA.md",
     "CHECKLIST_EMPACOTAMENTO.md", "CONTRIBUTING.md", "DEBT_MAP.md",
-    "DESENVOLVIMENTO.md", "DIAGNOSTICO_TECNICO.md", "DISCOVERY_AUDITORIA.md",
-    "FILTROS_AUDITORIA.md", "FRONTEIRAS.md", "GAPS.md", "JOURNEY_AUDITORIA.md",
+    "DESENVOLVIMENTO.md", "DISCOVERY_AUDITORIA.md",
+    "FILTROS_AUDITORIA.md", "FRONTEIRAS.md", "JOURNEY_AUDITORIA.md",
     "REFATORACAO_ESTABILIZACAO_RELATORIO.md", "REPLAY_FLUXO.md", "ROADMAP.md",
-    "SYNTHETIC_DATA_ARQUITETURA.md", "TESTES.md", "TESTE_INTERFACE_WEB.md",
+    "SYNTHETIC_DATA_ARQUITETURA.md", "TESTES.md",
     # Build/dev configs not in distributable tarball
     "Makefile", "package.json", "pytest.ini", "tailwind.config.cjs", "dev.sh",
     # Old artifacts not in tarball
     "artifacts/acceptance-matrix.json",
     # Scripts excluded from tarball (contain credentials/hosts)
     "scripts/show-admin-credentials.sh",
+    "scripts/tunnel-mig24.sh",
 }
 
 EXCLUDE_FILE_EXTENSIONS = {".pyc", ".pyo", ".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3"}

@@ -241,20 +241,18 @@ fi
 if [ -f "$PREFIX/gateway/control/server.py" ]; then
   run_install_cmd chmod +x "$PREFIX/gateway/control/server.py" || true
 fi
+# Remove caches, virtualenv, node_modules e estado local que possam ter vindo
+# com a cópia do working tree. Find portável (parênteses + -prune + -exec \;),
+# compatível com Linux e AIX.
 run_install_cmd rm -rf \
-  "$PREFIX/gateway/__pycache__" \
-  "$PREFIX/gateway/dakota_gateway/__pycache__" \
-  "$PREFIX/gateway/control/__pycache__" \
-  "$PREFIX/gateway/tests/__pycache__" \
-  "$PREFIX/tests/__pycache__" 2>/dev/null || true
-
-# Remove arquivos de banco de dados e estado local que possam ter vindo com tarball
-find "$PREFIX" \
-  -name "*.db" \
-  -o -name "*.db-wal" \
-  -o -name "*.db-shm" \
-  -o -name "*.pyc" \
-  2>/dev/null | xargs rm -f || true
+  "$PREFIX/gateway/.venv" \
+  "$PREFIX/gateway/node_modules" \
+  "$PREFIX/gateway/state" \
+  "$PREFIX/gateway/.pytest_cache" 2>/dev/null || true
+run_install_cmd sh -c '
+find "$1" -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} \;
+find "$1" -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.db" -o -name "*.db-wal" -o -name "*.db-shm" \) -exec rm -f {} \;
+' sh "$PREFIX" 2>/dev/null || true
 
 # Wrapper replay2
 WRAPPER="$PREFIX/bin/replay2"
@@ -321,6 +319,8 @@ if [ -n "$LINK_DIR" ]; then
   sudo_or_die_prefix mkdir -p "$LINK_DIR"
   sudo_or_die_prefix ln -sf "$WRAPPER" "$LINK_DIR/replay2"
   info "Symlink criado: $LINK_DIR/replay2 -> $WRAPPER"
+  sudo_or_die_prefix ln -sf "$GW_WRAPPER" "$LINK_DIR/dakota-gateway"
+  info "Symlink criado: $LINK_DIR/dakota-gateway -> $GW_WRAPPER"
 else
   info "Sem symlink global (use: $WRAPPER ou ajuste seu PATH)."
 fi

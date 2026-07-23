@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ master ]
 
 jobs:
   test:
@@ -38,9 +38,16 @@ jobs:
     
     - name: Run Python integrity tests
       run: |
-        cd gateway
-        python3 tests/test_integrity.py
-    
+        python3 -m pytest gateway/tests/test_integrity.py -q
+
+    - name: Run main Python suite
+      run: |
+        python3 -m pytest tests/ gateway/tests/ -q -m "not slow and not selenium and not external"
+
+    - name: Run JavaScript tests
+      run: |
+        grep -v '^#' scripts/js-tests.manifest | grep -v '^[[:space:]]*$' | xargs node --test
+
     - name: Run API tests
       run: |
         python3 tests/quick-test-api.py
@@ -67,10 +74,11 @@ jobs:
     
     - name: Lint Python files
       run: |
-        find gateway -name "*.py" -type f | head -20 | xargs pylint --exit-zero
-        find gateway -name "*.py" -type f | head -20 | xargs flake8 --exit-zero
+        find gateway -name "*.py" -type f | xargs pylint --exit-zero
+        find gateway -name "*.py" -type f | xargs flake8 --exit-zero
   
   coverage:
+    name: Coverage (gateway)
     runs-on: ubuntu-latest
     
     steps:
@@ -86,15 +94,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install coverage pytest
     
-    - name: Run tests with coverage
+    - name: Run gateway tests with coverage
       run: |
         cd gateway
-        coverage run -m pytest tests/test_integrity.py
+        coverage run -m pytest tests/ -q
         coverage report
         coverage html
     
     - name: Upload coverage artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: coverage-report

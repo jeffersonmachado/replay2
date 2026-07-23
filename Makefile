@@ -1,4 +1,4 @@
-.PHONY: help dev dev-stop dev-logs clean test test-all test-p2 build knowledge-base check install lint setup
+.PHONY: help setup install dev dev-stop dev-logs test test-all test-p2 build tailwind knowledge-base check smoke-test demo clean lint
 
 help:
 	@echo "Dakota Replay2 - Desenvolvimento"
@@ -65,19 +65,20 @@ test-all:
 		-q
 	@echo "=== Tcl syntax check ==="
 	@if command -v tclsh >/dev/null 2>&1; then \
-		for f in bin/main.exp bin/replay2.exp; do \
-			echo "  $$f..."; \
-			tclsh "$$f" 2>&1 | head -1 || true; \
-		done; \
+		sh scripts/check-tcl-syntax.sh bin/main.exp bin/replay2.exp; \
 	else \
 		echo "  tclsh não disponível — pulando"; \
 	fi
 	@echo "✓ test-all concluído"
 
 test-p2:
-	@python3 -m pytest tests/test_screen_entity_linker_unit.py tests/test_p2_knowledge_base.py tests/test_capture_knowledge_integrator.py -v
+	@python3 -m pytest -m p2 -v
 
 build:
+	@if [ ! -f artifacts/final-acceptance-results.json ]; then \
+		echo "AVISO: artifacts/ de aceitação ausentes — o build vai falhar."; \
+		echo "Rode primeiro: bash scripts/final-acceptance.sh"; \
+	fi
 	@./scripts/build-tarball.sh
 
 tailwind:
@@ -96,9 +97,8 @@ check:
 	@python3 -m compileall gateway/ 2>&1 | tail -1
 	@echo "=== smoke tests ==="
 	@python3 -m pytest tests/test_screen_entity_linker_unit.py tests/test_p2_knowledge_base.py -q
-	@echo "=== build check ==="
-	@./scripts/build-tarball.sh 2>&1 | tail -1
 	@echo "✓ check concluído"
+	@echo "  (build do tarball: 'make build' — requer artifacts/ gerados por scripts/final-acceptance.sh)"
 
 smoke-test:
 	@./scripts/smoke-test.sh
@@ -114,5 +114,3 @@ clean:
 
 lint:
 	@. .venv/bin/activate 2>/dev/null && python -m pylint gateway/ --disable=all --enable=E 2>/dev/null || echo "pylint disponível para linting avançado"
-
-.PHONY: help dev dev-stop dev-logs clean test install lint setup

@@ -1,0 +1,19 @@
+# Manifesto único dos testes JavaScript oficiais (node --test).
+#
+# Consumido por: scripts/test.sh, scripts/test-all.sh e o CI
+# (.github/workflows/ci.yml). A fase 08 do pipeline de release cobre estes
+# testes via scripts/test-all.sh — não duplique a lista em outros scripts.
+#
+# Os testes JS de aceitação (tests/js/acceptance/*.test.mjs) são de escopo
+# distinto (contratos de payload/playback) e rodam na fase 05 do pipeline de
+# release (scripts/acceptance/run-phase-05-payload-frontend.sh).
+#
+# Formato: um caminho por linha; linhas iniciadas com '#' são comentários.
+gateway/control/static/js/virtual_terminal.test.mjs
+tests/oracles/virtual_terminal.test.mjs
+gateway/control/static/js/components/capture_replay_timeline.test.mjs
+gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs
+gateway/control/static/js/components/replay_snapshot_state.test.mjs
+gateway/control/static/js/components/checkpoint_seek.test.mjs
+gateway/control/static/js/components/template_syntax.test.mjs
+gateway/control/static/js/components/production_no_terminal_parser.test.mjs

@@ -2,6 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Alinha com `make setup`: prefere o .venv do projeto quando presente, para que
+# as dependências Python (websocket-client, Pillow, pytest) sejam as mesmas do
+# ambiente de desenvolvimento em vez de exigir instalação no python3 global.
+if [ -x .venv/bin/python3 ]; then
+  PATH="$(pwd)/.venv/bin:$PATH"
+  export PATH
+fi
+
 RELEASE_RUN_ID="release-$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c "import hashlib,os,time;print(hashlib.sha256((os.urandom(16)+str(time.time()).encode())).hexdigest()[:8])")"
 STARTED_AT=$(date -Iseconds)
 echo "=== FINAL ACCEPTANCE $RELEASE_RUN_ID ==="
@@ -11,10 +19,22 @@ echo "=== DEPENDENCY CHECK ==="
 for cmd in python3 pytest node tclsh; do
   command -v "$cmd" >/dev/null || { echo "ERROR: $cmd not found"; exit 1; }
 done
-python3 -c "import websocket, PIL.Image" 2>/dev/null || { echo "ERROR: websocket-client or Pillow missing"; exit 1; }
+python3 -c "import websocket, PIL.Image" 2>/dev/null || { echo "ERROR: websocket-client or Pillow missing — instale com: pip install -r gateway/requirements.txt (ou rode 'make setup' e use o .venv)"; exit 1; }
 CHROMIUM=$(python3 -c "import shutil; print(shutil.which('google-chrome-stable') or shutil.which('google-chrome') or shutil.which('chromium-browser') or shutil.which('chromium') or '')")
 [ -n "$CHROMIUM" ] || { echo "ERROR: Chromium not found"; exit 1; }
 echo "All dependencies present"
+
+# Conta zumbis restritos à árvore de processos DESTE pipeline (via
+# scripts/process_tree.py, a partir do PID do pipeline), em vez de todos os
+# processos do UID — evita falsos positivos de processos alheios ao release.
+count_pipeline_zombies() {
+  python3 - "$1" <<'PYEOF'
+import sys
+sys.path.insert(0, 'scripts')
+from process_tree import _find_descendants, _is_zombie
+print(sum(1 for p in _find_descendants(int(sys.argv[1])) if _is_zombie(p)))
+PYEOF
+}
 
 # ── 2. Clean old artifacts ──
 echo "=== CLEANING ==="
@@ -23,7 +43,8 @@ rm -f artifacts/manual-validation.json artifacts/visual-test-result.json
 rm -f artifacts/source-tree-manifest.sha256 artifacts/source-tree-hash.json
 rm -rf artifacts/acceptance-logs/
 mkdir -p artifacts/acceptance-logs/
-rm -f dist/*.tar.gz dist/*.manifest.json dist/*.sha256 dist/*.tar.gz.sha256
+# NOTA: dist/ NÃO é limpo — releases anteriores (tarballs, manifestos e
+# checksums) são preservadas como histórico.
 
 # ── 3. Source tree hash BEFORE ──
 SOURCE_TREE_SHA256_BEFORE=$(python3 scripts/tree_hash.py)
@@ -53,12 +74,7 @@ r=subprocess.run(['pgrep','-U',str(os.getuid()),'-f','user-data-dir.*dakota-visu
 pids=[l for l in r.stdout.strip().splitlines() if l.strip().isdigit() and l!=str(os.getpid())]
 print(len(pids))
 ")
-ZOMBIES_ORIG=$(python3 -c "
-import subprocess,os
-r=subprocess.run(['ps','-U',str(os.getuid()),'-o','pid,stat','--no-headers'],capture_output=True,text=True)
-z=[l.split()[0] for l in r.stdout.strip().splitlines() if len(l.split())>=2 and 'Z' in l.split()[1]]
-print(len(z))
-")
+ZOMBIES_ORIG=$(count_pipeline_zombies $$)
 echo "original remaining=$REMAINING_ORIG zombies=$ZOMBIES_ORIG"
 
 # ── 7. Visual + contamination validation ──
@@ -153,15 +169,59 @@ def parse_pytest_counts(log_rel):
     m = re.search(r'(\d+)\s+subtests?\s+passed', text); subtests = int(m.group(1)) if m else 0
     return {'passed': passed, 'failed': failed, 'skipped': skipped, 'subtests': subtests}
 
+# ── Resultados das suítes que rodam UMA vez via scripts/test-all.sh ──
+# (python-full, gateway-tests, tcl-tests e os testes JS do manifesto).
+# A fase 08 não repete essas suítes; o relatório lê os JSONs estruturados
+# gerados pelo test-all em artifacts/acceptance-logs/results/.
+testall_dir = Path('artifacts/acceptance-logs/results')
+
+def parse_testall_suite(suite):
+    """Lê o resultado estruturado de uma suíte do test-all.sh."""
+    rj = testall_dir / f'test-all-{suite}.result.json'
+    lp = testall_dir / f'test-all-{suite}.log'
+    r = {'name': suite, 'log_path': str(lp), 'success': False,
+         'exit_code': None, 'timed_out': False, 'duration_seconds': 0}
+    if rj.exists():
+        try:
+            d = json.loads(rj.read_text())
+            r.update({
+                'name': d.get('name', suite),
+                'success': d.get('success', False),
+                'exit_code': d.get('exit_code'),
+                'timed_out': d.get('timed_out', False),
+                'duration_seconds': d.get('duration_seconds', 0),
+            })
+        except Exception:
+            pass
+    if lp.exists():
+        r['log_sha256'] = hashlib.sha256(lp.read_bytes()).hexdigest()
+    return r
+
 commands = {}
 for phase in ['01-comparison','02-diffs','03-sessions','04-snapshots-gateway','05-payload-frontend','06-decoder-fixture','07-visual-runner']:
     commands[f'phase-{phase}'] = parse_log_result(f'phase-{phase}.log')
 commands['acceptance-baseline'] = parse_log_result('acceptance-baseline.log')
 commands['python-acceptance'] = {**parse_log_result('python-acceptance.log'), **parse_pytest_counts('python-acceptance.log')}
-commands['python-full'] = {**parse_log_result('python-full.log'), **parse_pytest_counts('python-full.log')}
-commands['gateway-tests'] = {**parse_log_result('gateway-tests.log'), **parse_pytest_counts('gateway-tests.log')}
-commands['javascript-tests'] = parse_log_result('javascript-tests.log')
-commands['tcl-tests'] = parse_log_result('tcl-tests.log')
+commands['python-full'] = {**parse_testall_suite('python-full'), **parse_pytest_counts('../results/test-all-python-full.log')}
+commands['gateway-tests'] = {**parse_testall_suite('gateway-tests'), **parse_pytest_counts('../results/test-all-gateway-tests.log')}
+commands['tcl-tests'] = parse_testall_suite('tcl-tests')
+# javascript-tests: agregado de todas as suítes js-* do test-all
+js_results = []
+for rj in sorted(testall_dir.glob('test-all-js-*.result.json')):
+    try:
+        js_results.append(json.loads(rj.read_text()))
+    except Exception:
+        js_results.append({'name': rj.stem, 'success': False})
+js_all_ok = bool(js_results) and all(d.get('success') for d in js_results)
+commands['javascript-tests'] = {
+    'name': 'javascript-tests',
+    'success': js_all_ok,
+    'exit_code': 0 if js_all_ok else 1,
+    'timed_out': any(d.get('timed_out') for d in js_results),
+    'duration_seconds': round(sum(d.get('duration_seconds', 0) for d in js_results), 2),
+    'log_path': str(testall_dir),
+    'suites': [d.get('name', '?') for d in js_results],
+}
 commands['test-all'] = parse_log_result('test-all.log')
 commands['process-cleanup'] = parse_log_result('process-cleanup.log')
 commands['visual-evidence'] = parse_log_result('visual-evidence-exists.log')
@@ -282,7 +342,7 @@ TB_SIZE=$(stat -c%s "$TB")
 TB_ENTRIES=$(tar -tzf "$TB" | wc -l)
 echo "tarball=$TB hash=$TB_HASH size=$TB_SIZE entries=$TB_ENTRIES"
 
-# ── 10. Extract and run FULL phase 8 on extracted tree ──
+# ── 12. Extract and run FULL phase 8 on extracted tree ──
 echo "=== EXTRACTED VALIDATION ==="
 EXTRACT_DIR=$(mktemp -d)
 tar -xzf "$TB" -C "$EXTRACT_DIR"
@@ -335,14 +395,9 @@ r=subprocess.run(['pgrep','-U',str(os.getuid()),'-f','user-data-dir.*dakota-visu
 pids=[l for l in r.stdout.strip().splitlines() if l.strip().isdigit() and l!=str(os.getpid())]
 print(len(pids))
 ")
-EXTRACTED_ZOMBIES=$(python3 -c "
-import subprocess,os
-r=subprocess.run(['ps','-U',str(os.getuid()),'-o','pid,stat','--no-headers'],capture_output=True,text=True)
-z=[l.split()[0] for l in r.stdout.strip().splitlines() if len(l.split())>=2 and 'Z' in l.split()[1]]
-print(len(z))
-")
+EXTRACTED_ZOMBIES=$(count_pipeline_zombies $$)
 
-# ── 11. test-all results from structured JSON ──
+# ── 13. test-all results from structured JSON ──
 TEST_ALL_ORIG=False; TEST_ALL_EXTR=False
 [ -f artifacts/acceptance-logs/current/test-all.result.json ] && \
   TEST_ALL_ORIG=$(python3 -c "import json; d=json.load(open('artifacts/acceptance-logs/current/test-all.result.json')); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")
@@ -351,7 +406,7 @@ TEST_ALL_ORIG=False; TEST_ALL_EXTR=False
   TEST_ALL_EXTR=$(cd "$EXTRACT_ROOT" && python3 -c "import json; d=json.load(open('artifacts/acceptance-logs/current/test-all.result.json')); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")
 [ "$TEST_ALL_EXTR" = "true" ] && TEST_ALL_EXTR=True || TEST_ALL_EXTR=False
 
-# ── 12. Compute release validation ──
+# ── 14. Compute release validation ──
 RELEASE_OK=False
 if [ "$TREE_GATE_PASSED" = "True" ] && [ "$EXTRACTED_GATE_PASSED" = "True" ] && \
    [ "$BASELINE_OK_ORIGINAL" = "True" ] && [ "$BASELINE_OK_EXTRACTED" = "True" ] && \
@@ -364,7 +419,7 @@ if [ "$TREE_GATE_PASSED" = "True" ] && [ "$EXTRACTED_GATE_PASSED" = "True" ] && 
   RELEASE_OK=True
 fi
 
-# ── 13. Export env vars for safe Python consumption ──
+# ── 15. Export env vars for safe Python consumption ──
 export RELEASE_RUN_ID STARTED_AT
 export SOURCE_TREE_SHA256_BEFORE SOURCE_TREE_SHA256_AFTER EXTRACTED_HASH
 export TB_HASH TB_SIZE TB_ENTRIES
@@ -384,7 +439,7 @@ TCL_VER=$(echo 'puts [info patchlevel]' | tclsh 2>&1); export TCL_VER
 CHROMIUM_VER=$("$CHROMIUM" --version 2>&1 || echo "unknown"); export CHROMIUM_VER
 FINISHED_AT=$(date -Iseconds); export FINISHED_AT
 
-# ── 14. Generate external manifest via Python ──
+# ── 16. Generate external manifest via Python ──
 echo "=== EXTERNAL MANIFEST ==="
 python3 << 'PYEOF'
 import json, os
@@ -439,14 +494,14 @@ assert manifest['tarball_sha256'] == os.environ['TB_HASH']
 print(f'Manifest: {mn}')
 print('Validated: all booleans are bool, no NameError')
 PYEOF
-# ── 15. Generate .sha256 and verify ──
+# ── 17. Generate .sha256 and verify ──
 echo "$TB_HASH  $(basename "$TB")" > "dist/$(basename "$TB").sha256"
 (cd dist && sha256sum -c "$(basename "$TB").sha256") || { echo "ERROR: .sha256 verification failed"; RELEASE_OK=False; }
 
-# ── 16. Cleanup ──
+# ── 18. Cleanup ──
 rm -rf "$EXTRACT_DIR"
 
-# ── 17. Final report ──
+# ── 19. Final report ──
 echo ""
 echo "=== FINAL ACCEPTANCE COMPLETE ==="
 echo "release_run_id: $RELEASE_RUN_ID"

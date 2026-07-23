@@ -15,8 +15,8 @@
 #   --capture    Testes específicos de captura
 #   --replay     Testes específicos de replay
 #   --integration Testes de integração
-#   --quick      Testes rápidos (~10s): JS + smoke sem SSH
-#   --ci         Modo CI: --all sem Tcl, saída JUnit
+#   --quick      Testes rápidos (~10s): apenas a suíte JavaScript
+#   --ci         Modo CI: todas as suítes locais, exceto Tcl
 #
 # Modificadores:
 #   --verbose    Saída detalhada (pytest -v)
@@ -40,13 +40,9 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # ── Constantes ──────────────────────────────────────────────────────────────
-JS_VT_TEST="gateway/control/static/js/virtual_terminal.test.mjs"
-JS_TIMELINE_TEST="gateway/control/static/js/components/capture_replay_timeline.test.mjs"
-JS_RENDERER_TEST="gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs"
-JS_REPLAY_STATE_TEST="gateway/control/static/js/components/replay_snapshot_state.test.mjs"
-JS_CHECKPOINT_SEEK_TEST="gateway/control/static/js/components/checkpoint_seek.test.mjs"
-JS_TEMPLATE_SYNTAX_TEST="gateway/control/static/js/components/template_syntax.test.mjs"
-JS_PRODUCTION_CHECK_TEST="gateway/control/static/js/components/production_no_terminal_parser.test.mjs"
+# Lista única de testes JS (ver scripts/js-tests.manifest)
+JS_TESTS_MANIFEST="scripts/js-tests.manifest"
+JS_TESTS="$(grep -v '^#' "$JS_TESTS_MANIFEST" 2>/dev/null | grep -v '^[[:space:]]*$' || true)"
 PYTEST_DIR="tests/"
 GW_PYTEST_DIR="gateway/tests/"
 TCL_TEST="tests/all.tcl"
@@ -96,7 +92,8 @@ run_with_timeout_pg() {
   local label="$2"
   shift 2
   # Use process_tree.py for escape/leak detection + structured results
-  local result_dir="$ROOT_DIR/artifacts/acceptance-logs/current"
+  # Logs em log/ (gitignored) — NUNCA em artifacts/, que é evidência de release
+  local result_dir="$ROOT_DIR/log/test-sh"
   mkdir -p "$result_dir"
   local safe_label
   safe_label=$(echo "$label" | tr ' /:' '___')
@@ -119,10 +116,6 @@ run_with_timeout_pg() {
     fi
   fi
   return 1
-}
-
-collect_descendants() {
-  pgrep -P "$1" 2>/dev/null || true
 }
 
 collect_descendants() {
@@ -287,6 +280,11 @@ printf "Modo: %s\n" "$([ "$FLAG_CI" = "1" ] && echo 'CI' || echo 'completo')"
 printf "Host remoto: %s:%s\n" "$REMOTE_HOST" "$REMOTE_PORT"
 echo ""
 
+# ATENÇÃO (segurança): backdoor de autoteste do PRÓPRIO runner, usada apenas
+# pelos testes de desenvolvimento em tests/test_test_runner_script.py.
+# Executa um comando ARBITRÁRIO via bash -c a partir da variável de ambiente
+# DAKOTA_TEST_SH_SELFTEST_CMD. Nunca defina essa variável em CI, release ou
+# produção — qualquer valor presente no ambiente será executado.
 if [ -n "${DAKOTA_TEST_SH_SELFTEST_CMD:-}" ]; then
   FLAG_JS=0
   FLAG_PYTHON=0
@@ -304,27 +302,12 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$FLAG_JS" = "1" ]; then
   banner "1. JavaScript"
-  if require_mandatory_file "$JS_VT_TEST"; then
-    run_block "JS: virtual_terminal" node --test "$JS_VT_TEST" || true
-  fi
-  if require_mandatory_file "$JS_TIMELINE_TEST"; then
-    run_block "JS: capture_replay_timeline" node --test "$JS_TIMELINE_TEST" || true
-  fi
-  if require_mandatory_file "$JS_RENDERER_TEST"; then
-    run_block "JS: terminal_snapshot_renderer" node --test "$JS_RENDERER_TEST" || true
-  fi
-  if require_mandatory_file "$JS_REPLAY_STATE_TEST"; then
-    run_block "JS: replay_snapshot_state" node --test "$JS_REPLAY_STATE_TEST" || true
-  fi
-  if require_mandatory_file "$JS_CHECKPOINT_SEEK_TEST"; then
-    run_block "JS: checkpoint_seek" node --test "$JS_CHECKPOINT_SEEK_TEST" || true
-  fi
-  if require_mandatory_file "$JS_TEMPLATE_SYNTAX_TEST"; then
-    run_block "JS: template_syntax" node --test "$JS_TEMPLATE_SYNTAX_TEST" || true
-  fi
-  if require_mandatory_file "$JS_PRODUCTION_CHECK_TEST"; then
-    run_block "JS: production_no_terminal_parser" node --test "$JS_PRODUCTION_CHECK_TEST" || true
-  fi
+  for js_test in $JS_TESTS; do
+    js_label=$(basename "$js_test" .test.mjs)
+    if require_mandatory_file "$js_test"; then
+      run_block "JS: $js_label" node --test "$js_test" || true
+    fi
+  done
   echo ""
 fi
 

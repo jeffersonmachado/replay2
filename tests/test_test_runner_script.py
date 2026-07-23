@@ -106,7 +106,9 @@ def test_modifiers_only_run_default_suite_instead_of_zero_suite_success():
 def test_explicit_js_selection_runs_only_javascript_blocks_in_dry_run():
     result = run_test_script("--js")
     assert result.returncode == 0, result.stdout
-    assert passed_count(result.stdout) == 7
+    # 8 blocos: os 7 testes de gateway/control/static/js + o oráculo
+    # tests/oracles/virtual_terminal.test.mjs (lista única: scripts/js-tests.manifest)
+    assert passed_count(result.stdout) == 8
     assert "JS: virtual_terminal" in result.stdout
     assert "Python: tests/" not in result.stdout
 

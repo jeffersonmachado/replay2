@@ -17,12 +17,12 @@ ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 [ -f "$ROOT_DIR/uninstall.sh" ] || die "não achei $ROOT_DIR/uninstall.sh"
 
 VERSION_FILE="$ROOT_DIR/VERSION"
-if [ -f "$VERSION_FILE" ]; then
-  VERSION="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
-else
-  VERSION="$(date +%Y.%m.%d-%H%M%S)"
-  printf '%s\n' "$VERSION" >"$VERSION_FILE"
-fi
+# VERSION é a fonte única da versão e deve existir no repositório — nunca
+# gerar um VERSION sintético como efeito colateral do build.
+[ -f "$VERSION_FILE" ] || die "arquivo VERSION não encontrado em $ROOT_DIR
+Crie a versão antes de buildar (ex.: bash scripts/bump.sh patch)."
+VERSION="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
+[ -n "$VERSION" ] || die "arquivo VERSION está vazio"
 
 DIST_DIR="$ROOT_DIR/dist"
 STAGE_PARENT="$(mktemp -d 2>/dev/null || mktemp -d -t "${APP_NAME}.XXXXXX")"
@@ -55,12 +55,17 @@ if [ -d "$ROOT_DIR/tests" ]; then cp -R "$ROOT_DIR/tests" "$STAGE_DIR/"; fi
 # Remove tmp e caches de teste
 rm -rf "$STAGE_DIR/tests/tmp" 2>/dev/null || true
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
+# conftest.py da raiz aplica os markers do pytest (necessário para rodar a suíte no tarball)
+if [ -f "$ROOT_DIR/conftest.py" ]; then cp -f "$ROOT_DIR/conftest.py" "$STAGE_DIR/"; fi
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
   mkdir -p "$STAGE_DIR/scripts"
   cp -R "$ROOT_DIR/scripts/." "$STAGE_DIR/scripts/"
   # Remove scripts com credenciais ou hosts internos
   rm -f "$STAGE_DIR/scripts/show-admin-credentials.sh" 2>/dev/null || true
+  # tunnel-mig24.sh referencia host interno e chave SSH — ferramenta de dev,
+  # não deve ir para o artefato de distribuição
+  rm -f "$STAGE_DIR/scripts/tunnel-mig24.sh" 2>/dev/null || true
 fi
 if [ -d "$ROOT_DIR/artifacts" ]; then
   mkdir -p "$STAGE_DIR/artifacts"

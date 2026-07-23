@@ -19,6 +19,7 @@ def error_guard(method: Callable) -> Callable:
     Em caso de excecao nao capturada:
     - Loga o traceback no stderr
     - Retorna HTTP 500 com {"error": "internal_error", "detail": "<mensagem>"}
+      (em producao, "detail" e generico para nao vazar informacao interna)
     """
 
     def wrapper(self, *args, **kwargs):
@@ -29,12 +30,16 @@ def error_guard(method: Callable) -> Callable:
             return None
         except Exception as exc:
             traceback.print_exc()
+            # Em produção não vaza str(exc) ao cliente (pode conter paths,
+            # SQL e dados internos); o detalhe fica no log do servidor.
+            from control.routes.route_helpers import is_production
+            detail = "erro interno" if is_production() else str(exc)
             try:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 payload = json.dumps(
-                    {"error": "internal_error", "detail": str(exc)},
+                    {"error": "internal_error", "detail": detail},
                     ensure_ascii=False,
                 )
                 self.wfile.write(payload.encode("utf-8"))

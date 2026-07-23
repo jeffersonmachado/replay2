@@ -1,50 +1,71 @@
 from __future__ import annotations
 
-import json
+import re
+import sqlite3
+import threading
 import time
+
 from control.routes.route_helpers import write_json
+from control.services.gateway_state_service import (
+    build_full_gateway_status as _build_full_gateway_status,
+)
+
+# Username: charset seguro para o cookie (sem '|', que quebraria sign_cookie).
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
+
+# ── Rate limiting simples de login (A5) ──
+# Após MAX falhas consecutivas por (IP, username) dentro da janela, responde 429.
+_LOGIN_MAX_FAILURES = 5
+_LOGIN_WINDOW_SECONDS = 600
+_LOGIN_LOCKOUT_SECONDS = 60
+_login_failures: dict[tuple[str, str], list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def _client_ip(handler) -> str:
+    try:
+        return str(handler.client_address[0])
+    except Exception:
+        return "unknown"
+
+
+def _login_throttled(handler, username: str) -> bool:
+    """Verifica se o par (IP, username) está temporariamente bloqueado."""
+    now = time.time()
+    key = (_client_ip(handler), username)
+    with _login_lock:
+        failures = [ts for ts in _login_failures.get(key, []) if now - ts < _LOGIN_WINDOW_SECONDS]
+        _login_failures[key] = failures
+        if len(failures) >= _LOGIN_MAX_FAILURES and now - failures[-1] < _LOGIN_LOCKOUT_SECONDS:
+            return True
+    return False
+
+
+def _register_login_failure(handler, username: str) -> None:
+    key = (_client_ip(handler), username)
+    with _login_lock:
+        _login_failures.setdefault(key, []).append(time.time())
+
+
+def _clear_login_failures(handler, username: str) -> None:
+    key = (_client_ip(handler), username)
+    with _login_lock:
+        _login_failures.pop(key, None)
+
 
 def handle_admin_get_route(handler, parsed_path, *, gateway_service_status, query_all_fn) -> bool:
     if parsed_path.path == "/api/gateway/status":
         user = handler._require()
         if not user:
             return True
-        # Status legado do serviço sshd + estado lógico do gateway (fonte única)
+        # Status completo do gateway — payload unificado com /ws/gateway-status
         service_status = gateway_service_status()
         con = handler._db()
         try:
-            from control.services.gateway_state_service import build_operational_policy, get_gateway_state
-            logical_state = get_gateway_state(con)
-        except Exception:
-            logical_state = {}
-            build_operational_policy = None
+            merged = _build_full_gateway_status(con, service_status)
         finally:
             handler._db_release(con)
-        if build_operational_policy is not None:
-            policy = build_operational_policy(
-                logical_active=bool(logical_state.get("active")),
-                service_running=bool(service_status.get("running")),
-            )
-        else:
-            policy = {
-                "desired_mode": "gateway_active" if bool(logical_state.get("active")) else "gateway_inactive",
-                "desired_ssh_route": None,
-                "effective_ssh_route": None,
-                "capture_available": bool(logical_state.get("active")),
-                "policy_ok": False,
-                "reason": "falha ao avaliar política",
-            }
-        merged = {
-            **service_status,
-            "logical_active": bool(logical_state.get("active")),
-            "activated_by_username": logical_state.get("activated_by_username"),
-            "activated_at_ms": logical_state.get("activated_at_ms"),
-            "environment": logical_state.get("environment") or {},
-            "policy": policy,
-            "policy_ok": bool(policy.get("policy_ok")),
-            "capture_available": bool(policy.get("capture_available")),
-            "ssh_desired_route": policy.get("desired_ssh_route"),
-            "ssh_effective_route": policy.get("effective_ssh_route"),            "capture_log_dir": getattr(handler.server, "capture_log_dir", ""),        }
+        merged["capture_log_dir"] = getattr(handler.server, "capture_log_dir", "")
         write_json(handler, 200, merged)
         return True
 
@@ -76,13 +97,20 @@ def handle_admin_post_route(
     if parsed_path.path == "/api/login":
         username = str(body.get("username") or "")
         password = str(body.get("password") or "")
+        if not username or not password:
+            write_json(handler, 400, {"error": "username e password obrigatorios"})
+            return True
+        if _login_throttled(handler, username):
+            write_json(handler, 429, {"error": "muitas tentativas de login; aguarde e tente novamente"})
+            return True
         con = handler._db()
         try:
             row = query_one_fn(con, "SELECT id,username,role,password_hash FROM users WHERE username=?", (username,))
             if not row or not auth_module.verify_password(password, row["password_hash"]):
-                handler.send_response(401)
-                handler.end_headers()
+                _register_login_failure(handler, username)
+                write_json(handler, 401, {"error": "credenciais invalidas"})
                 return True
+            _clear_login_failures(handler, username)
             token = auth_module.new_session_token()
             token_hash = auth_module.sha256_hex(token.encode("utf-8"))
             exp = int(time.time() * 1000) + 12 * 3600 * 1000
@@ -99,7 +127,21 @@ def handle_admin_post_route(
             handler._db_release(con)
 
     if parsed_path.path == "/api/logout":
-        handler._auth()
+        # Invalida a sessão no banco (token_hash) e varre sessões expiradas.
+        cookie_value = handler._get_cookie("dakota_session") if hasattr(handler, "_get_cookie") else None
+        if cookie_value:
+            parsed = auth_module.verify_cookie(handler.server.cookie_secret, cookie_value)
+            if parsed:
+                _username, token, _exp = parsed
+                token_hash = auth_module.sha256_hex(token.encode("utf-8"))
+                con = handler._db()
+                try:
+                    con.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+                    con.execute("DELETE FROM sessions WHERE expires_at_ms < ?", (int(time.time() * 1000),))
+                except sqlite3.OperationalError:
+                    pass  # tabela ainda não criada — nada a invalidar
+                finally:
+                    handler._db_release(con)
         handler.send_response(200)
         handler._clear_cookie("dakota_session")
         handler.end_headers()
@@ -123,20 +165,25 @@ def handle_admin_post_route(
         password = str(body.get("password") or "")
         role = str(body.get("role") or "")
         if role not in ("admin", "operator", "viewer"):
-            handler.send_response(400)
-            handler.end_headers()
+            write_json(handler, 400, {"error": "role invalido"})
+            return True
+        if not _USERNAME_RE.match(username):
+            write_json(handler, 400, {"error": "username invalido: use 1-64 caracteres de letras, numeros, '_', '.', '@' ou '-'"})
             return True
         ph = auth_module.pbkdf2_hash_password(password)
         con = handler._db()
         try:
-            con.execute(
-                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
-                (username, ph, role, now_ms_fn()),
-            )
+            try:
+                con.execute(
+                    "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
+                    (username, ph, role, now_ms_fn()),
+                )
+            except sqlite3.IntegrityError:
+                write_json(handler, 409, {"error": "username ja cadastrado"})
+                return True
         finally:
             handler._db_release(con)
-        handler.send_response(200)
-        handler.end_headers()
+        write_json(handler, 200, {"ok": True, "username": username, "role": role})
         return True
 
     return False

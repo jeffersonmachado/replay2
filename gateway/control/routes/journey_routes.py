@@ -1,13 +1,13 @@
 """Rotas da API de jornadas para o dashboard web."""
 from __future__ import annotations
 
-import json
 from urllib.parse import parse_qs
 
 from dakota_gateway.synthetic.journey_builder import JourneyBuilder
 from dakota_gateway.synthetic.journey_inferencer import JourneyInferencer
 from dakota_gateway.synthetic.error_detector import ErrorDetector
-from control.routes.route_helpers import write_json
+from control.routes.route_helpers import parse_int, write_json
+from control.server_support import read_json, validate_source_path
 
 def handle_journey_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
@@ -30,13 +30,17 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
 
     # GET /api/journeys/infer
     if path == "/api/journeys/infer":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         qs = parse_qs(parsed_path.query or "")
         source_dir = qs.get("source_dir", [""])[0]
         if not source_dir:
             write_json(handler, 400, {"error": "source_dir required"})
+            return True
+        allowed, status, message = validate_source_path(source_dir)
+        if not allowed:
+            write_json(handler, status, {"error": message})
             return True
         inferencer = JourneyInferencer()
         journeys = inferencer.infer_from_source(source_dir)
@@ -60,6 +64,9 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
 
     # GET /api/journeys/error-patterns
     if path == "/api/journeys/error-patterns":
+        user = handler._require()
+        if not user:
+            return True
         detector = ErrorDetector()
         patterns = [
             {"type": etype, "severity": sev, "description": desc}
@@ -70,6 +77,9 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
 
     # GET /api/journeys/diff
     if path == "/api/journeys/diff":
+        user = handler._require()
+        if not user:
+            return True
         qs = parse_qs(parsed_path.query or "")
         expected = qs.get("expected", [""])[0]
         observed = qs.get("observed", [""])[0]
@@ -82,14 +92,17 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
 
     # GET /api/journeys/{id}/verify
     if path.startswith("/api/journeys/") and path.endswith("/verify"):
+        user = handler._require()
+        if not user:
+            return True
         parts = path.split("/")
         if len(parts) < 5:
             write_json(handler, 404, {"error": "invalid path"})
             return True
         journey_id = parts[3]
         qs = parse_qs(parsed_path.query or "")
-        session_count = int((qs.get("sessions") or ["5"])[0])
-        seed = int((qs.get("seed") or ["0"])[0])
+        session_count = parse_int((qs.get("sessions") or ["5"])[0], 5, min_value=1)
+        seed = parse_int((qs.get("seed") or ["0"])[0], 0, min_value=0)
         con = handler._db()
         try:
             builder = JourneyBuilder(db_connection=con)
@@ -120,14 +133,17 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
 
     # GET /api/journeys/{id}/report
     if path.startswith("/api/journeys/") and path.endswith("/report"):
+        user = handler._require()
+        if not user:
+            return True
         parts = path.split("/")
         if len(parts) < 5:
             write_json(handler, 404, {"error": "invalid path"})
             return True
         journey_id = parts[3]
         qs = parse_qs(parsed_path.query or "")
-        sessions = int((qs.get("sessions") or ["5"])[0])
-        seed = int((qs.get("seed") or ["0"])[0])
+        sessions = parse_int((qs.get("sessions") or ["5"])[0], 5, min_value=1)
+        seed = parse_int((qs.get("seed") or ["0"])[0], 0, min_value=0)
         fmt = (qs.get("format") or ["json"])[0]
         con = handler._db()
         try:
@@ -182,15 +198,18 @@ def handle_journey_post_route(handler, parsed_path, body: dict | None = None) ->
 
     # POST /api/journeys/infer - inferir e salvar
     if path == "/api/journeys/infer":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         if body is None:
-            content_len = int(handler.headers.get("Content-Length", 0))
-            body = json.loads(handler.rfile.read(content_len)) if content_len else {}
+            body = read_json(handler)
         source_dir = body.get("source_dir", "")
         if not source_dir:
             write_json(handler, 400, {"error": "source_dir required"})
+            return True
+        allowed, status, message = validate_source_path(source_dir)
+        if not allowed:
+            write_json(handler, status, {"error": message})
             return True
 
         inferencer = JourneyInferencer()
@@ -213,15 +232,18 @@ def handle_journey_post_route(handler, parsed_path, body: dict | None = None) ->
 
     # POST /api/journeys/infer-menu — inferir jornada de arquivo de menu
     if path == "/api/journeys/infer-menu":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         if body is None:
-            content_len = int(handler.headers.get("Content-Length", 0))
-            body = json.loads(handler.rfile.read(content_len)) if content_len else {}
+            body = read_json(handler)
         menu_file = body.get("menu_file", "")
         if not menu_file:
             write_json(handler, 400, {"error": "menu_file required"})
+            return True
+        allowed, status, message = validate_source_path(menu_file)
+        if not allowed:
+            write_json(handler, status, {"error": message})
             return True
         inferencer = JourneyInferencer()
         journey = inferencer.infer_from_menus(menu_file)
@@ -237,18 +259,20 @@ def handle_journey_post_route(handler, parsed_path, body: dict | None = None) ->
         write_json(handler, 200, {"journey_id": journey.journey_id, "db_id": jid, "steps": len(journey.steps)})
         return True
 
-    # POST /api/journeys/{id}/run — executar jornada
+    # POST /api/journeys/{id}/run — executar jornada (dispara stress)
     if path.startswith("/api/journeys/") and path.endswith("/run"):
+        user = handler._require(roles={"admin", "operator"})
+        if not user:
+            return True
         parts = path.split("/")
         if len(parts) < 5:
             write_json(handler, 404, {"error": "invalid path"})
             return True
         journey_id = parts[3]
         if body is None:
-            content_len = int(handler.headers.get("Content-Length", 0))
-            body = json.loads(handler.rfile.read(content_len)) if content_len else {}
-        sessions = int(body.get("sessions", 10))
-        seed = int(body.get("seed", 0))
+            body = read_json(handler)
+        sessions = parse_int(body.get("sessions", 10), 10, min_value=1)
+        seed = parse_int(body.get("seed", 0), 0, min_value=0)
         con = handler._db()
         try:
             from dakota_gateway.synthetic.stress_runner import SyntheticStressRunner, SyntheticStressConfig

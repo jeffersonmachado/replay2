@@ -173,6 +173,7 @@ TITLE "Cadastro de Clientes"
 
         old_env = os.environ.get("DAKOTA_ENV", "")
         os.environ["DAKOTA_ENV"] = "production"
+        old_root = os.environ.pop("DAKOTA_SOURCE_ROOT", None)
         os.environ["DAKOTA_SOURCE_ROOT"] = "/some/allowed/path"
         try:
             code, payload, _ = self._request_any(opener, "GET", f"/api/knowledge-base?source={self.source_dir}")
@@ -181,6 +182,9 @@ TITLE "Cadastro de Clientes"
             self.assertIn("fora do DAKOTA_SOURCE_ROOT", data.get("error", ""))
         finally:
             os.environ["DAKOTA_ENV"] = old_env
+            os.environ.pop("DAKOTA_SOURCE_ROOT", None)
+            if old_root is not None:
+                os.environ["DAKOTA_SOURCE_ROOT"] = old_root
 
     def test_is_relative_to_method(self):
         """Testa o método _is_relative_to diretamente."""

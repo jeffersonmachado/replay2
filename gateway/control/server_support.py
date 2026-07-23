@@ -6,6 +6,18 @@ import platform
 import shutil
 import subprocess
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+
+# Limite de corpo JSON aceito pelo control plane (1 MB).
+MAX_JSON_BODY_BYTES = 1_048_576
+
+
+class BodyTooLargeError(Exception):
+    """Corpo da requisição excede o limite aceito (responder 413)."""
+
+
+class InvalidContentLengthError(Exception):
+    """Content-Length inválido (não numérico ou negativo — responder 400)."""
 
 
 def is_weak_password(password: str) -> bool:
@@ -34,13 +46,54 @@ def is_weak_password(password: str) -> bool:
 
 
 def read_json(req: BaseHTTPRequestHandler) -> dict:
-    ln = int(req.headers.get("Content-Length") or "0")
+    """Lê corpo JSON da requisição com limite de tamanho.
+
+    - Content-Length inválido (não numérico/negativo) → InvalidContentLengthError;
+    - Content-Length acima de MAX_JSON_BODY_BYTES → BodyTooLargeError (413);
+    - JSON malformado ou não-objeto → {} (comportamento tolerante histórico).
+    """
+    raw = req.headers.get("Content-Length")
+    if raw in (None, ""):
+        ln = 0
+    else:
+        try:
+            ln = int(str(raw).strip())
+        except (TypeError, ValueError):
+            raise InvalidContentLengthError("Content-Length inválido")
+    if ln < 0:
+        raise InvalidContentLengthError("Content-Length inválido")
+    if ln > MAX_JSON_BODY_BYTES:
+        raise BodyTooLargeError(f"corpo excede o limite de {MAX_JSON_BODY_BYTES} bytes")
     data = req.rfile.read(ln) if ln else b"{}"
     try:
         parsed = json.loads(data.decode("utf-8"))
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def validate_source_path(path: str) -> tuple[bool, int, str]:
+    """Valida que um caminho de fontes resolve sob DAKOTA_SOURCE_ROOT.
+
+    Regra centralizada (antes existia apenas no endpoint knowledge-base e só
+    em produção):
+    - DAKOTA_SOURCE_ROOT definido → o path resolvido precisa estar sob a raiz;
+    - produção sem DAKOTA_SOURCE_ROOT → erro de configuração (500);
+    - lab/homologação sem a raiz → permitido (fluxo de desenvolvimento).
+
+    Retorna (permitido, status_http, mensagem_erro).
+    """
+    root = os.environ.get("DAKOTA_SOURCE_ROOT", "").strip()
+    if not root:
+        if os.environ.get("DAKOTA_ENV", "lab").strip().lower() == "production":
+            return False, 500, "DAKOTA_SOURCE_ROOT nao definido (obrigatorio em producao)"
+        return True, 0, ""
+    try:
+        resolved = Path(str(path)).resolve()
+        resolved.relative_to(Path(root).resolve())
+    except Exception:
+        return False, 403, "source fora do DAKOTA_SOURCE_ROOT permitido em producao"
+    return True, 0, ""
 
 
 def run_cmd(cmd: list[str]) -> tuple[int, str]:
@@ -110,6 +163,7 @@ def gateway_service_status(*, run_cmd_fn) -> dict:
             "platform": "aix",
             "service": "sshd",
             "running": running,
+            "service_running": running,
             "available": True,
             "capture_installed": capture_installed,
             "capture_configs": capture_configs,

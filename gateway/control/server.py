@@ -6,10 +6,8 @@ import json
 import logging
 import os
 import platform
-import secrets
 import shutil
 import sys
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -24,18 +22,14 @@ logging.basicConfig(
 log = logging.getLogger("replay2")
 
 from dakota_gateway import auth
-from dakota_gateway.source_analyzer.audit import get_audit_log, clear_audit_log, set_db_pool
-from dakota_gateway.compliance import (
-    normalize_direct_ssh_policy_payload,
-    normalize_target_policy,
-)
+from dakota_gateway.source_analyzer.audit import set_db_pool
 from dakota_gateway.replay_control import (
     Runner,
     query_all,
     query_one,
     retry_run,
 )
-from dakota_gateway.state_db import connect, exec1, init_db, now_ms
+from dakota_gateway.state_db import connect, init_db, now_ms
 from dakota_gateway.state_db import ConnectionPool
 from control.routes import (
     handle_admin_get_route,
@@ -63,14 +57,11 @@ from control.routes import (
     handle_synthetic_post_route,
     handle_ui_get_route,
 )
+from control.routes.route_helpers import write_json
+# Re-exports de services: consumidos como CONTROL._* pelos testes de
+# integração (tests/test_gateway_status_unit.py, test_targets_api.py, ...).
 from control.services.environment_service import (
-    list_target_environments as _list_target_environments,
     resolve_run_target_request as _resolve_run_target_request,
-)
-from control.services.gateway_observability_service import (
-    read_gateway_monitor as _read_gateway_monitor,
-    read_gateway_session_detail as _read_gateway_session_detail,
-    read_gateway_sessions as _read_gateway_sessions,
 )
 from control.services.scenario_service import (
     delete_analytics_scenario as _delete_analytics_scenario,
@@ -95,13 +86,20 @@ from control.services.report_service import (
     report_to_csv as _report_to_csv,
     report_to_markdown as _report_to_markdown,
 )
-from control.services.run_service import (
-    export_run_report_payload as _export_run_report_payload,
-    get_run_comparison_payload as _get_run_comparison_payload,
-    get_run_compliance_payload as _get_run_compliance_payload,
-    get_run_events_payload as _get_run_events_payload,
-    get_run_failures_payload as _get_run_failures_payload,
-    get_run_report_payload as _get_run_report_payload,
+from control.services.gateway_observability_service import (
+    read_gateway_monitor as _read_gateway_monitor,
+    read_gateway_session_detail as _read_gateway_session_detail,
+    read_gateway_sessions as _read_gateway_sessions,
+)
+from control.services.gateway_state_service import (
+    auto_activate_gateway as _auto_activate_gateway_service,
+    build_full_gateway_status as _build_full_gateway_status,
+)
+from control.services.knowledge_base_service import (
+    build_knowledge_base_report as _build_knowledge_base_report,
+)
+from control.services.metrics_service import (
+    collect_operational_metrics as _collect_operational_metrics,
 )
 from control.runtime_supervision import (
     Port22CaptureSampler,
@@ -134,9 +132,10 @@ from control.auth_support import (
 from control.engineering_route_support import (
     handle_engineering_api_get_route,
     handle_engineering_page_get_route,
-    handle_system_get_route,
 )
 from control.server_support import (
+    BodyTooLargeError,
+    InvalidContentLengthError,
     gateway_service_status as _support_gateway_service_status,
     gateway_toggle as _support_gateway_toggle,
     is_weak_password as _support_is_weak_password,
@@ -147,7 +146,7 @@ from control.error_middleware import error_guard
 from control.websocket_support import (
     ws_handshake,
     ws_recv_frame,
-    ws_send_ping,
+    ws_send_pong,
     get_broadcaster,
 )
 
@@ -171,32 +170,8 @@ def _gateway_service_status() -> dict:
 
 
 def _full_gateway_status(con) -> dict:
-    """Status completo do gateway: serviço + estado lógico + política."""
-    service_status = _gateway_service_status()
-    try:
-        from control.services.gateway_state_service import build_operational_policy, get_gateway_state
-        logical_state = get_gateway_state(con)
-    except Exception:
-        logical_state = {}
-        build_operational_policy = None
-    if build_operational_policy is not None:
-        policy = build_operational_policy(
-            logical_active=bool(logical_state.get("active")),
-            service_running=bool(service_status.get("running")),
-        )
-    else:
-        policy = {"policy_ok": False, "reason": "falha ao avaliar política"}
-    return {
-        **service_status,
-        "logical_active": bool(logical_state.get("active")),
-        "activated_by_username": logical_state.get("activated_by_username"),
-        "activated_at_ms": logical_state.get("activated_at_ms"),
-        "environment": logical_state.get("environment") or {},
-        "policy": policy,
-        "capture_available": bool(policy.get("capture_available")),
-        "ssh_desired_route": policy.get("desired_ssh_route"),
-        "ssh_effective_route": policy.get("effective_ssh_route"),
-    }
+    """Status completo do gateway (payload unificado com /api/gateway/status)."""
+    return _build_full_gateway_status(con, _gateway_service_status())
 
 
 def _gateway_toggle(enabled: bool) -> dict:
@@ -277,33 +252,13 @@ class ControlServer(ThreadingHTTPServer):
         )
 
     def _auto_activate_gateway(self, con):
-        """Ativa o gateway automaticamente no boot."""
-        from dakota_gateway.state_db import now_ms
-        # Busca o admin para usar como activated_by
-        admin = con.execute("SELECT id, username FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
-        if not admin:
-            log.warning("[startup] gateway auto-ativacao abortada: nenhum admin encontrado")
-            return
-        env = {"hostname": platform.node(), "fqdn": platform.node(), "platform": platform.system(),
-               "platform_release": platform.release(), "pid": os.getpid(), "env_name": platform.node()}
-        env_json = json.dumps(env)
-        session_uuid = str(uuid.uuid4())
-        log_dir = os.path.join(self.capture_log_dir, session_uuid)
-        os.makedirs(log_dir, exist_ok=True)
-        con.execute(
-            "INSERT OR REPLACE INTO gateway_state (id, active, activated_by_username, activated_by_id,"
-            " activated_at_ms, environment_json, connection_profile_id)"
-            " VALUES (1, 1, ?, ?, ?, ?, NULL)",
-            (admin["username"], admin["id"], now_ms(), env_json),
+        """Ativa o gateway automaticamente no boot (regra em gateway_state_service)."""
+        _auto_activate_gateway_service(
+            con,
+            capture_log_dir=self.capture_log_dir,
+            now_ms_fn=now_ms,
+            log=log,
         )
-        con.execute(
-            "INSERT INTO capture_sessions (session_uuid, status, created_by, created_by_username,"
-            " started_at_ms, environment_json, log_dir, notes, session_count, event_count)"
-            " VALUES (?, 'active', ?, ?, ?, ?, ?, 'auto-activado no boot', 0, 0)",
-            (session_uuid, admin["id"], admin["username"], now_ms(), env_json, log_dir),
-        )
-        con.commit()
-        log.info("[startup] gateway auto-ativado por %s (DAKOTA_GATEWAY_AUTO_ACTIVATE=true)", admin["username"])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -406,57 +361,25 @@ class Handler(BaseHTTPRequestHandler):
         Em producao (DAKOTA_ENV=production), exige autenticacao sempre.
         Em lab/homologacao, libera acesso de localhost (127.0.0.1).
         """
-        import os as _os
-        dakota_env = _os.environ.get("DAKOTA_ENV", "lab").strip().lower()
+        dakota_env = os.environ.get("DAKOTA_ENV", "lab").strip().lower()
         client_host = self.client_address[0] if hasattr(self, 'client_address') else ""
 
         # Produção: sempre exige auth. Lab: só exige auth para acesso externo
         if dakota_env == "production" or client_host not in ("127.0.0.1", "::1", "localhost", ""):
             u = self._auth()
             if not u:
-                self.send_response(401)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "autenticacao requerida para /metrics"}).encode("utf-8"))
+                write_json(self, 401, {"error": "autenticacao requerida para /metrics"})
                 return
         try:
             con = self._db()
-            metrics = {}
-            # Runs
-            metrics["runs_total"] = con.execute("SELECT COUNT(*) as c FROM replay_runs").fetchone()["c"]
-            metrics["runs_active"] = con.execute(
-                "SELECT COUNT(*) as c FROM replay_runs WHERE status IN ('queued','running')"
-            ).fetchone()["c"]
-            metrics["runs_success"] = con.execute(
-                "SELECT COUNT(*) as c FROM replay_runs WHERE status='success'"
-            ).fetchone()["c"]
-            metrics["runs_failed"] = con.execute(
-                "SELECT COUNT(*) as c FROM replay_runs WHERE status='failed'"
-            ).fetchone()["c"]
-            # Failures
-            metrics["failures_total"] = con.execute("SELECT COUNT(*) as c FROM replay_failures").fetchone()["c"]
-            metrics["failures_critical"] = con.execute(
-                "SELECT COUNT(*) as c FROM replay_failures WHERE severity='critical'"
-            ).fetchone()["c"]
-            # Captures
-            metrics["captures_active"] = con.execute(
-                "SELECT COUNT(*) as c FROM capture_sessions WHERE status='active'"
-            ).fetchone()["c"]
-            metrics["captures_total"] = con.execute("SELECT COUNT(*) as c FROM capture_sessions").fetchone()["c"]
-            # Gateway
-            gw = con.execute("SELECT active FROM gateway_state ORDER BY id DESC LIMIT 1").fetchone()
-            metrics["gateway_active"] = bool(gw["active"]) if gw else False
-            # Synthetic
-            metrics["screens"] = con.execute("SELECT COUNT(*) as c FROM screens").fetchone()["c"]
-            metrics["entities"] = con.execute("SELECT COUNT(*) as c FROM source_entities").fetchone()["c"]
-            self._db_release(con)
+            try:
+                metrics = _collect_operational_metrics(con)
+            finally:
+                self._db_release(con)
         except Exception:
             metrics = {"error": "db unavailable"}
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
+        write_json(self, 200, metrics)
 
     def _handle_ws_gateway_status(self):
         """WebSocket /ws/gateway-status — push em tempo real do status completo (serviço + lógico)."""
@@ -479,109 +402,26 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if frame["opcode"] == 0x8:  # close
                     break
-                if frame["opcode"] == 0x9:  # ping → pong
-                    pass
+                if frame["opcode"] == 0x9:  # ping → pong (RFC 6455)
+                    ws_send_pong(self, frame.get("payload") or b"")
         finally:
             broadcaster.remove_client(self)
 
     def _serve_knowledge_base(self, p):
         """Endpoint /api/knowledge-base — P2-A (admin only)."""
-        from urllib.parse import parse_qs as _parse_qs
-
         # Exige role admin
         u = self._require({"admin"})
         if not u:
             return
 
-        params = _parse_qs(p.query) if p.query else {}
+        params = parse_qs(p.query) if p.query else {}
         source_dir = params.get("source", [None])[0]
 
-        if not source_dir:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": "parametro 'source' obrigatorio",
-            }, ensure_ascii=False).encode("utf-8"))
-            return
-
-        if not os.path.isdir(source_dir):
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": f"diretorio nao encontrado: {source_dir}",
-            }, ensure_ascii=False).encode("utf-8"))
-            return
-
-        # ── Producao: DAKOTA_SOURCE_ROOT obrigatorio ──
-        dakota_env = os.environ.get("DAKOTA_ENV", "lab").strip().lower()
-        if dakota_env == "production":
-            allowed_root = os.environ.get("DAKOTA_SOURCE_ROOT", "")
-            if not allowed_root:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "error": "DAKOTA_SOURCE_ROOT nao definido (obrigatorio em producao)",
-                }, ensure_ascii=False).encode("utf-8"))
-                return
-
-            # Validacao segura com Path.resolve + is_relative_to
-            try:
-                source_path = Path(source_dir).resolve()
-                root_path = Path(allowed_root).resolve()
-                if not self._is_relative_to(source_path, root_path):
-                    self.send_response(403)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "error": "source fora do DAKOTA_SOURCE_ROOT permitido em producao",
-                    }, ensure_ascii=False).encode("utf-8"))
-                    return
-            except Exception:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "error": "erro ao validar source path",
-                }, ensure_ascii=False).encode("utf-8"))
-                return
-
-        # Limite de arquivos
-        import time as _time
-        start = _time.time()
-        from dakota_gateway.source_analyzer.parser import SourceParser
-
-        parser = SourceParser(source_dir)
-        source_count = len(parser._collect_source_files())
-        if source_count > 5000:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": f"muitos arquivos fonte ({source_count}). Limite: 5000",
-            }, ensure_ascii=False).encode("utf-8"))
-            return
-
-        try:
-            parser.parse_all()
-            report = parser.discovery_report()
-            elapsed = _time.time() - start
-            report["_meta"] = {"elapsed_s": round(elapsed, 2), "files_scanned": source_count}
-        except Exception as exc:
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": f"falha ao analisar fonte: {exc}",
-            }, ensure_ascii=False).encode("utf-8"))
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(report, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+        status, payload = _build_knowledge_base_report(source_dir or "")
+        if status == 200:
+            write_json(self, 200, payload)
+        else:
+            write_json(self, status, payload)
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -590,10 +430,44 @@ class Handler(BaseHTTPRequestHandler):
             return path[3:]  # /v1/api/... → /api/...
         return path
 
+    # ── Guard central de autenticação (C1) ──
+    # Rotas públicas explícitas: login, assets estáticos (página de login),
+    # healthchecks e /metrics (que tem política própria de auth em produção).
+    _PUBLIC_EXACT_PATHS = frozenset({
+        "/health",
+        "/ready",
+        "/login",
+        "/api/login",
+        "/metrics",
+    })
+    _PUBLIC_PREFIXES = ("/assets/",)
+
+    def _api_auth_guard(self, path: str) -> bool:
+        """Guard estrutural: todo /api/* e /ws/* exige sessão autenticada.
+
+        Retorna True se a requisição pode prosseguir; caso contrário já
+        respondeu 401 com corpo JSON. Roles específicas (admin/operator)
+        continuam sendo verificadas pelos próprios endpoints via _require().
+        """
+        if path in self._PUBLIC_EXACT_PATHS:
+            return True
+        if any(path.startswith(prefix) for prefix in self._PUBLIC_PREFIXES):
+            return True
+        if not (path.startswith("/api/") or path.startswith("/ws/")):
+            # Páginas HTML têm guard próprio (redirect para /login).
+            return True
+        if self._auth():
+            return True
+        write_json(self, 401, {"error": "autenticacao requerida"})
+        return False
+
     @error_guard
     def do_GET(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
+
+        if not self._api_auth_guard(p.path):
+            return
 
         # ── WebSocket gateway status (tempo real) ──
         if p.path == "/ws/gateway-status":
@@ -633,8 +507,6 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_metrics()
             return
 
-        if handle_system_get_route(self, p, db_acquire=self._db, db_release=self._db_release):
-            return
         if handle_engineering_api_get_route(self, p, db_acquire=self._db, db_release=self._db_release):
             return
         if handle_engineering_page_get_route(self, p):
@@ -695,7 +567,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
-        body = _read_json(self)
+
+        # Guard de autenticação antes de ler o corpo (M5/C1).
+        if not self._api_auth_guard(p.path):
+            return
+
+        try:
+            body = _read_json(self)
+        except BodyTooLargeError:
+            write_json(self, 413, {"error": "corpo da requisicao excede o limite permitido"})
+            return
+        except InvalidContentLengthError:
+            write_json(self, 400, {"error": "Content-Length invalido"})
+            return
         if handle_admin_post_route(
             self,
             p,
@@ -747,6 +631,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
+        if not self._api_auth_guard(p.path):
+            return
         if handle_run_delete_route(self, p):
             return
         if handle_capture_delete_route(self, p):

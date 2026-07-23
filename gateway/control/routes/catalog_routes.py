@@ -39,7 +39,12 @@ def handle_catalog_get_route(handler, parsed_path) -> bool:
         user = handler._require()
         if not user:
             return True
-        target_id = int(path.split("/")[3])
+        try:
+            target_id = int(path.split("/")[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
         con = handler._db()
         try:
             payload = next((item for item in list_target_environments(con) if int(item["id"]) == target_id), None)

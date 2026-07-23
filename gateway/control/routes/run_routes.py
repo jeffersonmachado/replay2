@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from urllib.parse import parse_qs
 
-from control.routes.route_helpers import write_json
+from control.routes.route_helpers import parse_int, write_json
 from control.services.run_service import (
     apply_run_action,
     create_run_request_payload,
@@ -30,7 +30,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
         if not user:
             return True
         qs = parse_qs(parsed_path.query or "")
-        limit = int((qs.get("limit") or ["200"])[0])
+        limit = parse_int((qs.get("limit") or ["200"])[0], 200, min_value=1, max_value=1000)
         compliance_status_filter = str((qs.get("compliance_status") or [""])[0]).strip().lower()
         con = handler._db()
         try:
@@ -44,7 +44,12 @@ def handle_run_get_route(handler, parsed_path) -> bool:
         user = handler._require()
         if not user:
             return True
-        run_id = int(path.split("/")[3])
+        try:
+            run_id = int(path.split("/")[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
         con = handler._db()
         try:
             payload = get_run_detail_payload(con, run_id)
@@ -113,7 +118,7 @@ def handle_run_get_route(handler, parsed_path) -> bool:
         run_id = int(parts[3])
         qs = parse_qs(parsed_path.query or "")
         fmt = str((qs.get("format") or ["md"])[0] or "md").strip().lower()
-        baseline_run_id = int((qs.get("baseline_run_id") or ["0"])[0] or 0)
+        baseline_run_id = parse_int((qs.get("baseline_run_id") or ["0"])[0] or 0, 0, min_value=0)
         con = handler._db()
         try:
             try:

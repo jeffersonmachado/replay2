@@ -12,6 +12,46 @@ import uuid
 from dakota_gateway.state_db import query_all, query_one
 from control.services.gateway_state_service import detect_runtime_environment, get_gateway_state
 
+# Cache de contagem de linhas dos audit-*.jsonl por (path, mtime) — evita
+# reler todos os arquivos de log a cada request (M6).
+_AUDIT_COUNT_CACHE_MAX = 1000
+_audit_count_cache: dict[str, tuple[float, int]] = {}
+
+
+def _count_audit_lines(fpath: str) -> int:
+    """Conta linhas de um audit-*.jsonl com cache por (path, mtime)."""
+    try:
+        mtime = os.path.getmtime(fpath)
+    except OSError:
+        return 0
+    cached = _audit_count_cache.get(fpath)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        with open(fpath) as fh:
+            count = sum(1 for _ in fh)
+    except OSError:
+        return 0
+    if len(_audit_count_cache) >= _AUDIT_COUNT_CACHE_MAX:
+        _audit_count_cache.clear()
+    _audit_count_cache[fpath] = (mtime, count)
+    return count
+
+
+def count_audit_sessions_events(log_dir: str) -> tuple[int, int]:
+    """Conta (sessões, eventos) dos audit-*.jsonl sob log_dir.
+
+    Procura no próprio log_dir e, como fallback de compatibilidade com
+    capturas antigas, em subdiretórios imediatos.
+    """
+    if not log_dir or not os.path.isdir(log_dir):
+        return 0, 0
+    audit_files = glob.glob(os.path.join(log_dir, "audit-*.jsonl"))
+    if not audit_files:
+        audit_files = glob.glob(os.path.join(log_dir, "*", "audit-*.jsonl"))
+    event_count = sum(_count_audit_lines(fpath) for fpath in audit_files)
+    return len(audit_files), event_count
+
 
 def _serialize(row) -> dict:
     if not row:
@@ -27,25 +67,14 @@ def _serialize(row) -> dict:
     item["active"] = item.get("status") == "active"
 
     # Para capturas ativas, session_count no banco pode estar desatualizado.
-    # Computa do sistema de arquivos (audit-*.jsonl no log_dir).
+    # Computa do sistema de arquivos (audit-*.jsonl no log_dir), com cache.
     session_count = item.get("session_count", 0)
     event_count = item.get("event_count", 0)
     if item["active"]:
-        log_dir = item.get("log_dir", "")
-        if log_dir and os.path.isdir(log_dir):
-            audit_files = glob.glob(os.path.join(log_dir, "audit-*.jsonl"))
-            live_session_count = len(audit_files)
-            if live_session_count > 0:
-                session_count = live_session_count
-                # Contagem leve de eventos (soma linhas dos arquivos)
-                live_event_count = 0
-                for f in audit_files:
-                    try:
-                        with open(f) as fh:
-                            live_event_count += sum(1 for _ in fh)
-                    except OSError:
-                        pass
-                event_count = live_event_count
+        live_session_count, live_event_count = count_audit_sessions_events(item.get("log_dir", ""))
+        if live_session_count > 0:
+            session_count = live_session_count
+            event_count = live_event_count
     item["session_count"] = session_count
     item["event_count"] = event_count
     return item

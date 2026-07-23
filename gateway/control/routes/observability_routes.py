@@ -4,7 +4,8 @@ import json
 from urllib.parse import parse_qs
 
 from dakota_gateway.replay_control import query_one
-from control.routes.route_helpers import write_json
+from control.routes.route_helpers import parse_int, write_json
+from control.routes.gateway_routes import _validated_log_dir
 from control.services.report_service import build_observability_overview, build_runs_trend_report
 from control.services.scenario_service import (
     delete_analytics_scenario,
@@ -20,12 +21,15 @@ def handle_observability_get_route(handler, parsed_path) -> bool:
         if not user:
             return True
         qs = parse_qs(parsed_path.query or "")
-        log_dir = str((qs.get("log_dir") or [""])[0])
-        limit = max(1, min(int((qs.get("limit") or ["40"])[0] or 40), 200))
+        log_dir = _validated_log_dir(handler, (qs.get("log_dir") or [""])[0])
+        if log_dir is None:
+            write_json(handler, 400, {"error": "log_dir fora do diretorio de capturas configurado"})
+            return True
+        limit = parse_int((qs.get("limit") or ["40"])[0] or 40, 40, min_value=1, max_value=200)
         environment = str((qs.get("environment") or [""])[0])
-        created_from_ms = int((qs.get("created_from_ms") or ["0"])[0] or 0)
-        created_to_ms = int((qs.get("created_to_ms") or ["0"])[0] or 0)
-        run_limit = int((qs.get("run_limit") or ["50"])[0] or 50)
+        created_from_ms = parse_int((qs.get("created_from_ms") or ["0"])[0] or 0, 0, min_value=0)
+        created_to_ms = parse_int((qs.get("created_to_ms") or ["0"])[0] or 0, 0, min_value=0)
+        run_limit = parse_int((qs.get("run_limit") or ["50"])[0] or 50, 50, min_value=1)
         con = handler._db()
         try:
             payload = build_observability_overview(
@@ -71,10 +75,10 @@ def handle_observability_get_route(handler, parsed_path) -> bool:
         if not user:
             return True
         qs = parse_qs(parsed_path.query or "")
-        run_limit = int((qs.get("run_limit") or ["50"])[0] or 50)
+        run_limit = parse_int((qs.get("run_limit") or ["50"])[0] or 50, 50, min_value=1)
         environment = str((qs.get("environment") or [""])[0])
-        created_from_ms = int((qs.get("created_from_ms") or ["0"])[0] or 0)
-        created_to_ms = int((qs.get("created_to_ms") or ["0"])[0] or 0)
+        created_from_ms = parse_int((qs.get("created_from_ms") or ["0"])[0] or 0, 0, min_value=0)
+        created_to_ms = parse_int((qs.get("created_to_ms") or ["0"])[0] or 0, 0, min_value=0)
         con = handler._db()
         try:
             payload = build_runs_trend_report(

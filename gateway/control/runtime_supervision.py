@@ -20,12 +20,43 @@ def env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "y", "on", "sim"}
 
 
+def _kill_orphan_capture_processes() -> int:
+    """Mata processos capture-session orfaos de execucoes anteriores.
+
+    Procura por 'dakota-gateway capture-session' no ps e envia SIGTERM.
+    Retorna o numero de processos mortos.
+    """
+    killed = 0
+    try:
+        result = subprocess.run(
+            ["ps", "-ef"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if "dakota-gateway" in line and "capture-session" in line:
+                if "grep" in line:
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[1])
+                        os.kill(pid, 15)  # SIGTERM
+                        killed += 1
+                    except (ValueError, OSError):
+                        pass
+    except Exception:
+        pass
+    return killed
+
+
 def reconcile_gateway_capture_startup(
     con,
     *,
     capture_log_dir: str,
     now_ms_fn,
 ) -> dict:
+    # Mata processos orfaos de capture-session antes de recriar
+    orphan_killed = _kill_orphan_capture_processes()
     stale = interrupt_stale_captures(con, now_ms_fn=now_ms_fn)
     resumed = ensure_active_capture_for_gateway(
         con,
@@ -34,6 +65,7 @@ def reconcile_gateway_capture_startup(
     )
     return {
         "stale_captures_interrupted": int(stale or 0),
+        "orphan_processes_killed": orphan_killed,
         "resumed_capture": resumed,
     }
 

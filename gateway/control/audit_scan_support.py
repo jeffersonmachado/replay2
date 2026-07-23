@@ -6,12 +6,16 @@ import subprocess
 
 
 def analyze_remote_navigation() -> dict | None:
-    ssh_host = "results@10.5.8.25"
+    # Host parametrizável por configuração (sem IP hard-coded no código).
+    ssh_host = os.environ.get("DAKOTA_AUDIT_SSH_HOST", "").strip() or "results@10.5.8.25"
     ssh_pass = os.environ.get("SSH_PASSWORD", "")
     if not ssh_pass:
         return {"error": "SSH_PASSWORD nao definida", "source": "remoto"}
 
-    ssh_base = ["sshpass", "-p", ssh_pass, "ssh", "-o", "StrictHostKeyChecking=no", ssh_host]
+    # Credencial via variável SSHPASS (sshpass -e), nunca em argv (visível em ps).
+    # accept-new: confia na primeira chave conhecida sem desabilitar a verificação.
+    ssh_base = ["sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=accept-new", ssh_host]
+    ssh_env = {**os.environ, "SSHPASS": ssh_pass}
 
     def _remote_strings(path: str) -> str:
         try:
@@ -19,6 +23,7 @@ def analyze_remote_navigation() -> dict | None:
                 ssh_base + [f"strings {path} 2>/dev/null"],
                 timeout=15,
                 stderr=subprocess.DEVNULL,
+                env=ssh_env,
             ).decode("utf-8", errors="replace")
         except Exception:
             return ""
@@ -29,12 +34,13 @@ def analyze_remote_navigation() -> dict | None:
                 ssh_base + [f"cat {path} 2>/dev/null"],
                 timeout=15,
                 stderr=subprocess.DEVNULL,
+                env=ssh_env,
             ).decode("utf-8", errors="replace")
         except Exception:
             return ""
 
     result: dict = {
-        "source": "remoto (10.5.8.25:/dakota1)",
+        "source": f"remoto ({ssh_host}:/dakota1)",
         "menusig": {},
         "gmenucad": {},
         "gmenu": {},

@@ -331,7 +331,8 @@ class TargetAndProfileApiTests(unittest.TestCase):
         self.assertEqual(run_payload["compliance_status"], "warning")
 
     def test_session_compliance_endpoint_reports_gateway_evidence(self):
-        log_dir = Path(self.tmpdir.name) / "capture-gateway"
+        # log_dir precisa estar sob o capture_log_dir configurado (validação A2)
+        log_dir = Path(self.server.capture_log_dir) / "capture-gateway"
         self._write_capture_log(
             log_dir,
             [

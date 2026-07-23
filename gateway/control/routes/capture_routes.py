@@ -10,10 +10,7 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 """
 from __future__ import annotations
 
-import json
-import os
-
-from control.routes.route_helpers import write_json
+from control.routes.route_helpers import parse_int, public_error_message, write_json
 from control.services.capture_service import (
     get_capture as _get_capture,
     list_captures as _list_captures,
@@ -68,12 +65,12 @@ def handle_capture_get_route(
         if not user:
             return True
         qs = parse_qs_fn(parsed_path.query or "")
-        limit = max(1, min(int((qs.get("limit") or ["20"])[0] or 20), 500))
-        offset = max(0, int((qs.get("offset") or ["0"])[0] or 0))
+        limit = parse_int((qs.get("limit") or ["20"])[0] or 20, 20, min_value=1, max_value=500)
+        offset = parse_int((qs.get("offset") or ["0"])[0] or 0, 0, min_value=0)
         search = (qs.get("search") or [""])[0] or ""
         created_by = (qs.get("created_by") or [""])[0] or ""
-        ts_from = max(0, int((qs.get("ts_from") or ["0"])[0] or 0))
-        ts_to = max(0, int((qs.get("ts_to") or ["0"])[0] or 0))
+        ts_from = parse_int((qs.get("ts_from") or ["0"])[0] or 0, 0, min_value=0)
+        ts_to = parse_int((qs.get("ts_to") or ["0"])[0] or 0, 0, min_value=0)
         status = (qs.get("status") or [""])[0] or ""
         con = handler._db()
         try:
@@ -111,7 +108,7 @@ def handle_capture_get_route(
             return True
         qs = parse_qs_fn(parsed_path.query or "")
         log_dir = capture.get("log_dir") or ""
-        limit = max(1, min(int((qs.get("limit") or ["300"])[0] or 300), 1000))
+        limit = parse_int((qs.get("limit") or ["300"])[0] or 300, 300, min_value=1, max_value=1000)
         payload = read_gateway_monitor_fn(log_dir, limit=limit)
         write_json(handler, 200, {**payload, "capture_id": capture_id})
         return True
@@ -143,7 +140,7 @@ def handle_capture_get_route(
             return True
         qs = parse_qs_fn(parsed_path.query or "")
         log_dir = capture.get("log_dir") or ""
-        limit = max(1, min(int((qs.get("limit") or ["100"])[0] or 100), 500))
+        limit = parse_int((qs.get("limit") or ["100"])[0] or 100, 100, min_value=1, max_value=500)
         sessions_payload = _read_gateway_sessions(log_dir, limit=limit)
         write_json(handler, 200, {**sessions_payload, "capture_id": capture_id})
         return True
@@ -199,33 +196,9 @@ def handle_capture_get_route(
             return False
         con = handler._db()
         try:
+            # _get_capture já computa session_count/event_count do disco
+            # (com cache) para capturas ativas — sem contagem duplicada aqui.
             capture = _get_capture(con, capture_id)
-            # Real-time: conta sessoes/eventos do disco para capturas ativas
-            if capture and capture.get("active"):
-                import glob as _glob
-                log_dir = capture.get("log_dir") or ""
-                session_count = 0
-                event_count = 0
-                if log_dir and os.path.isdir(log_dir):
-                    # audiencias diretas: audit-*.jsonl no proprio log_dir
-                    for fpath in _glob.glob(os.path.join(log_dir, "audit-*.jsonl")):
-                        session_count += 1
-                        try:
-                            with open(fpath) as fh:
-                                event_count += sum(1 for _ in fh)
-                        except Exception:
-                            pass
-                    # audiencias em subdiretorios (compatibilidade com captures antigas)
-                    if session_count == 0:
-                        for fpath in _glob.glob(os.path.join(log_dir, "*", "audit-*.jsonl")):
-                            session_count += 1
-                            try:
-                                with open(fpath) as fh:
-                                    event_count += sum(1 for _ in fh)
-                            except Exception:
-                                pass
-                capture["session_count"] = session_count
-                capture["event_count"] = event_count
         finally:
             handler._db_release(con)
         if not capture:
@@ -253,13 +226,13 @@ def handle_capture_post_route(
             return True
         connection_profile_id = body.get("connection_profile_id") or None
         if connection_profile_id:
-            connection_profile_id = int(connection_profile_id)
+            connection_profile_id = parse_int(connection_profile_id, 0) or None
         operational_user_id = body.get("operational_user_id") or None
         if operational_user_id:
-            operational_user_id = int(operational_user_id)
+            operational_user_id = parse_int(operational_user_id, 0) or None
         target_env_id = body.get("target_env_id") or None
         if target_env_id:
-            target_env_id = int(target_env_id)
+            target_env_id = parse_int(target_env_id, 0) or None
         connection_profile_name = str(body.get("connection_profile_name") or "").strip() or None
         notes = str(body.get("notes") or "").strip()
         con = handler._db()
@@ -280,7 +253,7 @@ def handle_capture_post_route(
             write_json(handler, 409, {"error": str(exc)})
             return True
         except Exception as exc:
-            write_json(handler, 500, {"error": str(exc)})
+            write_json(handler, 500, {"error": public_error_message(exc, fallback="falha ao iniciar captura")})
             return True
         finally:
             handler._db_release(con)
@@ -311,7 +284,7 @@ def handle_capture_post_route(
             write_json(handler, 409, {"error": str(exc)})
             return True
         except Exception as exc:
-            write_json(handler, 500, {"error": str(exc)})
+            write_json(handler, 500, {"error": public_error_message(exc, fallback="falha ao encerrar captura")})
             return True
         finally:
             handler._db_release(con)
@@ -342,13 +315,13 @@ def handle_capture_post_route(
                 con,
                 capture_id,
                 source_dir=source_dir,
-                samples=int(body.get("samples", 10)),
+                samples=parse_int(body.get("samples", 10), 10, min_value=1),
                 seed=body.get("seed"),
                 name=str(body.get("name") or "").strip(),
                 out_dir=str(body.get("out_dir") or "").strip(),
                 include_validation=bool(body.get("validate", True)),
                 include_stress=bool(body.get("stress", False)),
-                concurrency=int(body.get("concurrency", 5)),
+                concurrency=parse_int(body.get("concurrency", 5), 5, min_value=1),
             )
         except ValueError as exc:
             message = str(exc)
@@ -374,7 +347,12 @@ def handle_capture_delete_route(handler, parsed_path) -> bool:
     user = handler._require(roles={"admin", "operator"})
     if not user:
         return True
-    capture_id = int(path.split("/")[3])
+    try:
+        capture_id = int(path.split("/")[3])
+    except (ValueError, IndexError):
+        handler.send_response(404)
+        handler.end_headers()
+        return True
     con = handler._db()
     try:
         row = con.execute(

@@ -12,8 +12,9 @@ import json
 import re
 import threading
 from urllib.parse import parse_qs
-from control.routes.route_helpers import write_json
+from control.routes.route_helpers import parse_int, write_json
 from control.routes.journey_routes import handle_journey_get_route, handle_journey_post_route
+from control.server_support import read_json, validate_source_path
 
 
 def _serialize_plan(plan) -> dict:
@@ -162,11 +163,13 @@ def _is_placeholder_screen(title: str, program_name: str, field_count: int) -> b
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _read_body(handler) -> dict:
-    content_len = int(handler.headers.get("Content-Length", 0))
-    if content_len:
-        return json.loads(handler.rfile.read(content_len))
-    return {}
+def _require_source_path(handler, source_dir: str) -> bool:
+    """Valida source_dir/menu_file sob DAKOTA_SOURCE_ROOT; responde e retorna False se inválido."""
+    allowed, status, message = validate_source_path(source_dir)
+    if not allowed:
+        write_json(handler, status, {"error": message})
+        return False
+    return True
 
 # ---------------------------------------------------------------------------
 # GET routes
@@ -175,6 +178,11 @@ def _read_body(handler) -> dict:
 def handle_synthetic_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
     qs = parse_qs(parsed_path.query or "")
+
+    # Guard estrutural: todos os GETs de synthetic exigem sessão autenticada.
+    user = handler._require()
+    if not user:
+        return True
 
     # --- Pipeline status (polling) ---
     if path.startswith("/api/synthetic/pipeline/") and path.endswith("/status"):
@@ -229,7 +237,11 @@ def handle_synthetic_get_route(handler, parsed_path) -> bool:
         return True
 
     if path.startswith("/api/synthetic/screens/") and path.count("/") == 4:
-        screen_id = int(path.split("/")[4])
+        try:
+            screen_id = int(path.split("/")[4])
+        except (ValueError, IndexError):
+            write_json(handler, 404, {"error": "screen not found"})
+            return True
         con = handler._db()
         try:
             from dakota_gateway.synthetic.screen_registry import ScreenRegistry
@@ -268,7 +280,11 @@ def handle_synthetic_get_route(handler, parsed_path) -> bool:
         return True
 
     if path.startswith("/api/synthetic/datasets/") and path.count("/") == 4:
-        ds_id = int(path.split("/")[4])
+        try:
+            ds_id = int(path.split("/")[4])
+        except (ValueError, IndexError):
+            write_json(handler, 404, {"error": "dataset not found"})
+            return True
         con = handler._db()
         try:
             from dakota_gateway.synthetic.engine import SyntheticEngine
@@ -445,16 +461,18 @@ def handle_synthetic_get_route(handler, parsed_path) -> bool:
 def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) -> bool:
     path = parsed_path.path
     if body is None:
-        body = _read_body(handler)
+        body = read_json(handler)
 
     # --- Analyze source ---
     if path == "/api/synthetic/analyze-source":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         source_dir = body.get("source_dir", "")
         if not source_dir:
             write_json(handler, 400, {"error": "source_dir required"})
+            return True
+        if not _require_source_path(handler, source_dir):
             return True
         con = handler._db()
         try:
@@ -482,12 +500,14 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Infer generic data plans ---
     if path == "/api/synthetic/data/plans":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         source_dir = body.get("source_dir", "")
         if not source_dir:
             write_json(handler, 400, {"error": "source_dir required"})
+            return True
+        if not _require_source_path(handler, source_dir):
             return True
 
         from dakota_gateway.synthetic.data_synthesizer import DataSynthesizer
@@ -506,13 +526,15 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Validate a single inferred plan before bulk generation ---
     if path == "/api/synthetic/data/preflight":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         source_dir = body.get("source_dir", "")
         plan_id = body.get("plan_id", "")
         if not source_dir or not plan_id:
             write_json(handler, 400, {"error": "source_dir and plan_id required"})
+            return True
+        if not _require_source_path(handler, source_dir):
             return True
 
         synthesizer, plan, plans = _resolve_plan(
@@ -530,8 +552,8 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
         preflight = synthesizer.generate_preflight(
             plan,
-            sample_size=int(body.get("sample_size", 5)),
-            seed=int(body.get("seed", 0)),
+            sample_size=parse_int(body.get("sample_size", 5), 5, min_value=1),
+            seed=parse_int(body.get("seed", 0), 0, min_value=0),
         )
         write_json(handler, 200, {
             "plan": _serialize_plan(plan),
@@ -541,13 +563,15 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Generate bulk dataset for a validated plan ---
     if path == "/api/synthetic/data/generate-bulk":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         source_dir = body.get("source_dir", "")
         plan_id = body.get("plan_id", "")
         if not source_dir or not plan_id:
             write_json(handler, 400, {"error": "source_dir and plan_id required"})
+            return True
+        if not _require_source_path(handler, source_dir):
             return True
 
         synthesizer, plan, plans = _resolve_plan(
@@ -565,9 +589,9 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
         result = synthesizer.generate_bulk(
             plan,
-            quantity=int(body.get("quantity", 100)),
-            seed=int(body.get("seed", 0)),
-            sample_size=int(body.get("sample_size", 5)),
+            quantity=parse_int(body.get("quantity", 100), 100, min_value=1),
+            seed=parse_int(body.get("seed", 0), 0, min_value=0),
+            sample_size=parse_int(body.get("sample_size", 5), 5, min_value=1),
             strict_preflight=bool(body.get("strict_preflight", True)),
         )
         payload = {
@@ -580,7 +604,7 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
             dataset_id = _persist_generated_dataset(handler, plan, result.dataset)
             payload["dataset"] = _serialize_dataset(
                 result.dataset,
-                sample_size=int(body.get("preview_size", 5)),
+                sample_size=parse_int(body.get("preview_size", 5), 5, min_value=1),
             )
             payload["dataset_id"] = dataset_id
         write_json(handler, 200, payload)
@@ -588,12 +612,12 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Generate dataset ---
     if path == "/api/synthetic/generate":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         screen_name = body.get("screen", body.get("screen_name", ""))
-        quantity = int(body.get("quantity", 100))
-        seed = int(body.get("seed", 0))
+        quantity = parse_int(body.get("quantity", 100), 100, min_value=1)
+        seed = parse_int(body.get("seed", 0), 0, min_value=0)
         if not screen_name:
             write_json(handler, 400, {"error": "screen required"})
             return True
@@ -636,14 +660,14 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Run stress ---
     if path == "/api/synthetic/stress":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         journey_id = body.get("scenario", body.get("journey_id", ""))
-        concurrency = int(body.get("concurrency", 10))
-        ramp_up = int(body.get("ramp_up", body.get("ramp_up_seconds", 5)))
-        seed = int(body.get("seed", 0))
-        max_sessions = int(body.get("max_sessions", body.get("sessions", 0)) or concurrency * 5)
+        concurrency = parse_int(body.get("concurrency", 10), 10, min_value=1)
+        ramp_up = parse_int(body.get("ramp_up", body.get("ramp_up_seconds", 5)), 5, min_value=0)
+        seed = parse_int(body.get("seed", 0), 0, min_value=0)
+        max_sessions = parse_int(body.get("max_sessions", body.get("sessions", 0)), 0, min_value=0) or concurrency * 5
 
         if not journey_id:
             write_json(handler, 400, {"error": "scenario/journey_id required"})
@@ -682,15 +706,17 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Pipeline integrado (async com polling) ---
     if path == "/api/synthetic/pipeline":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         source_dir = body.get("source_dir", "")
         if not source_dir:
             write_json(handler, 400, {"error": "source_dir required"})
             return True
-        sessions = int(body.get("sessions", 10))
-        seed = int(body.get("seed", 0))
+        if not _require_source_path(handler, source_dir):
+            return True
+        sessions = parse_int(body.get("sessions", 10), 10, min_value=1)
+        seed = parse_int(body.get("seed", 0), 0, min_value=0)
         save = not bool(body.get("dry_run", False))
 
         import uuid, threading, time as _time
@@ -782,7 +808,7 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- Benchmark ---
     if path == "/api/synthetic/benchmark":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         name = body.get("name", "")
@@ -797,10 +823,10 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
             name=name,
             journey_id=journey_id,
             environments=envs,
-            concurrency=int(body.get("concurrency", 5)),
-            iterations=int(body.get("iterations", 3)),
-            seed=int(body.get("seed", 0)),
-            timeout_seconds=int(body.get("timeout", 300)),
+            concurrency=parse_int(body.get("concurrency", 5), 5, min_value=1),
+            iterations=parse_int(body.get("iterations", 3), 3, min_value=1),
+            seed=parse_int(body.get("seed", 0), 0, min_value=0),
+            timeout_seconds=parse_int(body.get("timeout", 300), 300, min_value=1),
         )
         orch = BenchmarkOrchestrator()
         report = orch.run_and_report(config)
@@ -809,7 +835,7 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
     # --- AI Assessment ---
     if path == "/api/synthetic/assess":
-        user = handler._require()
+        user = handler._require(roles={"admin", "operator"})
         if not user:
             return True
         from dakota_gateway.assessment import AIAssessment

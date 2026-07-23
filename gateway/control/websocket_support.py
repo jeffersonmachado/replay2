@@ -15,6 +15,10 @@ from typing import Callable
 
 WS_MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+# Limite de payload aceito por frame (64 KB) — protege contra frames 64-bit
+# gigantes declarados pelo cliente.
+WS_MAX_PAYLOAD_BYTES = 65536
+
 
 def _accept_key(key: str) -> str:
     accept = hashlib.sha1(key.encode() + WS_MAGIC).digest()
@@ -60,11 +64,22 @@ def ws_send_ping(handler: BaseHTTPRequestHandler) -> None:
         pass
 
 
+def ws_send_pong(handler: BaseHTTPRequestHandler, payload: bytes = b"") -> None:
+    """Envia pong frame (opcode 0xA) em resposta a um ping (RFC 6455)."""
+    try:
+        handler.wfile.write(_build_frame(0xA, payload))
+        handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+
+
 def ws_recv_frame(handler: BaseHTTPRequestHandler) -> dict | None:
     """
     Lê um frame do cliente. Retorna:
       {"opcode": int, "payload": bytes, "close_code": int | None}
-    ou None se a conexão fechou/erro.
+    ou None se a conexão fechou/erro ou o frame viola o protocolo
+    (sem máscara — RFC 6455 exige máscara em frames do cliente — ou
+    payload acima de WS_MAX_PAYLOAD_BYTES).
     """
     try:
         header = handler.rfile.read(2)
@@ -77,12 +92,25 @@ def ws_recv_frame(handler: BaseHTTPRequestHandler) -> dict | None:
 
         if length == 126:
             extra = handler.rfile.read(2)
+            if len(extra) < 2:
+                return None
             length = struct.unpack("!H", extra)[0]
         elif length == 127:
             extra = handler.rfile.read(8)
+            if len(extra) < 8:
+                return None
             length = struct.unpack("!Q", extra)[0]
 
-        mask_key = handler.rfile.read(4) if masked else b""
+        # RFC 6455: frames do cliente DEVEM ser mascarados.
+        if not masked:
+            return None
+        # Cap de payload: recusa frames gigantes antes de alocar memória.
+        if length > WS_MAX_PAYLOAD_BYTES:
+            return None
+
+        mask_key = handler.rfile.read(4)
+        if len(mask_key) < 4:
+            return None
         payload = handler.rfile.read(length) if length > 0 else b""
 
         if masked and mask_key:
@@ -158,13 +186,21 @@ class WebSocketBroadcaster:
 
 
 _broadcaster: WebSocketBroadcaster | None = None
+_broadcaster_lock = threading.Lock()
 
 
 def get_broadcaster(status_fn: Callable[[], dict]) -> WebSocketBroadcaster:
+    """Retorna o broadcaster singleton, criando-o na primeira chamada.
+
+    Novas conexões apenas registram mais clientes no broadcaster existente;
+    a função de status é atualizada a cada chamada (o closure carrega o
+    handler mais recente, mas todos compartilham o pool de conexões do
+    servidor, então qualquer um serve).
+    """
     global _broadcaster
-    # Recria o broadcaster se a função de status mudou
-    if _broadcaster is not None:
-        _broadcaster._running = False
-        _broadcaster = None
-    _broadcaster = WebSocketBroadcaster(status_fn)
-    return _broadcaster
+    with _broadcaster_lock:
+        if _broadcaster is None:
+            _broadcaster = WebSocketBroadcaster(status_fn)
+        else:
+            _broadcaster._status_fn = status_fn
+        return _broadcaster

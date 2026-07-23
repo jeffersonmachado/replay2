@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 
 from dakota_gateway import auth
-from dakota_gateway.state_db import init_db, query_one
+from dakota_gateway.state_db import query_one
 
 
 def set_cookie(handler, name: str, value: str, max_age: int = 3600 * 12) -> None:
@@ -75,8 +76,9 @@ def authenticate_request(handler):
                 (username, token_hash),
             )
         except sqlite3.OperationalError as exc:
+            # Schema é inicializado no startup do servidor (ControlServer);
+            # aqui apenas tratamos banco ainda não inicializado como "não autenticado".
             if "no such table" in str(exc).lower():
-                init_db(con)
                 return None
             raise
         if not row:
@@ -88,15 +90,21 @@ def authenticate_request(handler):
         handler._db_release(con)
 
 
+def _write_auth_error(handler, status: HTTPStatus, message: str) -> None:
+    """Responde erro de autenticação/autorização com corpo JSON."""
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.end_headers()
+    handler.wfile.write(json.dumps({"error": message}, ensure_ascii=False).encode("utf-8"))
+
+
 def require_user(handler, roles: set[str] | None = None):
     user = authenticate_request(handler)
     if not user:
-        handler.send_response(HTTPStatus.UNAUTHORIZED)
-        handler.end_headers()
+        _write_auth_error(handler, HTTPStatus.UNAUTHORIZED, "autenticacao requerida")
         return None
     if roles and user["role"] not in roles:
-        handler.send_response(HTTPStatus.FORBIDDEN)
-        handler.end_headers()
+        _write_auth_error(handler, HTTPStatus.FORBIDDEN, "perfil sem permissao para esta operacao")
         return None
     return user
 

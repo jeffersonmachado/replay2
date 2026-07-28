@@ -381,6 +381,72 @@ class GatewayStatusUnitTests(unittest.TestCase):
         self.assertTrue(state["socket_running"])
         self.assertIsNone(state["error"])
 
+    def test_daemon_socket_status(self):
+        """Status do socket do capture-daemon: ausente, presente e sem path."""
+        import socket as _socket
+
+        from control import server_support
+
+        # Sem path configurado: status desconhecido (None)
+        st = server_support.daemon_socket_status("")
+        self.assertIsNone(st["daemon_socket_present"])
+        self.assertEqual(st["daemon_socket_path"], "")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sock_path = str(Path(tmpdir) / "daemon" / "capture.sock")
+
+            # Path inexistente: ausente
+            st = server_support.daemon_socket_status(sock_path)
+            self.assertFalse(st["daemon_socket_present"])
+
+            # Socket Unix real: presente
+            Path(tmpdir, "daemon").mkdir()
+            srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            try:
+                srv.bind(sock_path)
+                st = server_support.daemon_socket_status(sock_path)
+                self.assertTrue(st["daemon_socket_present"])
+            finally:
+                srv.close()
+
+            # Arquivo regular no lugar do socket: ausente
+            Path(sock_path).unlink()
+            Path(sock_path).write_text("not a socket")
+            st = server_support.daemon_socket_status(sock_path)
+            self.assertFalse(st["daemon_socket_present"])
+
+    def test_gateway_state_inactive_when_daemon_socket_missing(self):
+        """Sem socket do capture-daemon, gateway logicamente ativo reporta INATIVO.
+
+        Sem o daemon as sessões SSH entram em fallback (login normal, sem
+        trilha auditável) — o gateway não pode constar como ativo.
+        """
+        from control.services import gateway_state_service as gss
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "replay.db")
+            con = connect(db_path)
+            init_db(con)
+            con.execute(
+                "UPDATE gateway_state SET active=1, activated_at_ms=1000, activated_by_username='admin' WHERE id=1"
+            )
+            con.commit()
+
+            with patch.object(gss, "_check_ssh_service_running", return_value=True), \
+                 patch.object(gss, "_check_capture_process_alive", return_value=True):
+                state = gss.get_gateway_state(con, daemon_socket_present=False)
+                state_ok = gss.get_gateway_state(con, daemon_socket_present=True)
+            con.close()
+
+        self.assertFalse(state["active"])
+        self.assertTrue(state["logical_active"])
+        self.assertFalse(state["daemon_socket_present"])
+        self.assertFalse(state["policy"]["capture_available"])
+        self.assertFalse(state["policy"]["policy_ok"])
+        self.assertIn("capture-daemon", state["policy"]["reason"])
+        self.assertTrue(state_ok["active"])
+        self.assertTrue(state_ok["policy"]["capture_available"])
+
     def test_toggle_uses_sudo_and_stops_socket_and_service(self):
         initial_state = {
             "platform": "linux",

@@ -128,6 +128,30 @@ class RealTimeCaptureCountingTests(unittest.TestCase):
 
         self.assertEqual(session_count, 2)
         self.assertEqual(event_count, 3)  # 2 + 1
+    def test_supervision_dir_not_counted(self):
+        """Marcadores do sampler de porta 22 (supervision/) nao contam como sessao.
+
+        Regressao: ao reativar o gateway, o Port22CaptureSampler grava um
+        session_start em <log_dir>/supervision/audit-*.jsonl; o contador nao
+        pode expor isso como "1 sessao/1 evento" (a trilha auditavel real
+        continua vazia).
+        """
+        from control.services.capture_service import count_audit_sessions_events
+
+        log_dir = os.path.join(self.captures_dir, "capture-supervision")
+        supervision_dir = os.path.join(log_dir, "supervision")
+        self._create_audit_file(supervision_dir, lines=1)
+
+        session_count, event_count = count_audit_sessions_events(log_dir)
+        self.assertEqual(session_count, 0)
+        self.assertEqual(event_count, 0)
+
+        # Subdiretorio de sessao real (compatibilidade) continua contando.
+        session_dir = os.path.join(log_dir, "session-uuid")
+        self._create_audit_file(session_dir, lines=4)
+        session_count, event_count = count_audit_sessions_events(log_dir)
+        self.assertEqual(session_count, 1)
+        self.assertEqual(event_count, 4)
 
 
 if __name__ == "__main__":

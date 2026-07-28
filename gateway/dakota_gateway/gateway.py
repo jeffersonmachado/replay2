@@ -6,6 +6,7 @@ import fcntl
 import os
 import pty
 import selectors
+import signal
 import struct
 import subprocess
 import time
@@ -213,6 +214,10 @@ class GatewayConfig:
     checkpoint_min_bytes: int = 512
     max_screen_bytes: int = 65535
 
+    # Sink de auditoria alternativo (ex.: AuditClient do capture-daemon).
+    # Quando presente, substitui o AuditWriter local e dispensa a chave HMAC.
+    audit_sink: object | None = None
+
     def __post_init__(self) -> None:
         geom = validate_terminal_geometry(int(self.rows), int(self.cols))
         self.rows = geom.rows
@@ -238,18 +243,23 @@ class TerminalGateway:
 
         # Pre-flight: verifica se conseguimos escrever no diretorio de captura
         # antes mesmo de iniciar a sessao. Se falhar, aborta o login.
-        try:
-            self.writer = AuditWriter(cfg.log_dir, cfg.hmac_key, rotate_bytes=cfg.rotate_bytes)
-        except PermissionError as exc:
-            raise GatewayCaptureError(
-                f"Gateway ativo mas sem permissao de escrita em {cfg.log_dir}: {exc}\n"
-                f"Contate o administrador. Login abortado."
-            ) from exc
-        except OSError as exc:
-            raise GatewayCaptureError(
-                f"Gateway ativo mas diretorio de captura inacessivel ({cfg.log_dir}): {exc}\n"
-                f"Contate o administrador. Login abortado."
-            ) from exc
+        # Com audit_sink externo (capture-daemon), a escrita/assinatura e
+        # responsabilidade do daemon e o pre-flight local nao se aplica.
+        if cfg.audit_sink is not None:
+            self.writer = cfg.audit_sink
+        else:
+            try:
+                self.writer = AuditWriter(cfg.log_dir, cfg.hmac_key, rotate_bytes=cfg.rotate_bytes)
+            except PermissionError as exc:
+                raise GatewayCaptureError(
+                    f"Gateway ativo mas sem permissao de escrita em {cfg.log_dir}: {exc}\n"
+                    f"Contate o administrador. Login abortado."
+                ) from exc
+            except OSError as exc:
+                raise GatewayCaptureError(
+                    f"Gateway ativo mas diretorio de captura inacessivel ({cfg.log_dir}): {exc}\n"
+                    f"Contate o administrador. Login abortado."
+                ) from exc
 
         # Usa o capture_session_uuid como session_id para unificar a identidade.
         # So gera UUID novo se nao houver capture_session_uuid (modo standalone).
@@ -553,10 +563,22 @@ class TerminalGateway:
             return ["/bin/sh", "-c", command]
 
         shell = str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
-        # AIX: ksh/sh nao aceitam flag -l (login shell se invoca com argv[0]="-ksh")
+        # AIX: ksh/sh nao aceitam flag -l; login shell se invoca com
+        # argv[0]="-ksh" (o Popen usa executable= para apontar o binario real).
+        # Sem isso a sessao nao le /etc/profile nem ~/.profile (ambiente do
+        # Recital nao sobe) — mesmo efeito de "su - usuario".
         if hasattr(os, "uname") and os.uname().sysname == "AIX":
-            return [shell]
+            return ["-" + os.path.basename(shell)]
         return [shell, "-l"]
+
+    def _session_executable(self, argv: list[str]) -> str | None:
+        """Binario real quando argv[0] foi alterado para login shell ("-ksh").
+
+        Retorna None nos demais casos (Popen usa o proprio argv[0]).
+        """
+        if argv and str(argv[0]).startswith("-"):
+            return str(os.environ.get("SHELL") or "/bin/sh").strip() or "/bin/sh"
+        return None
 
     def _run_batch_pipe(self, gateway_endpoint: str) -> int:
         """Modo batch sem PTY: captura saida de comando via pipe (compativel com AIX)."""
@@ -625,8 +647,10 @@ class TerminalGateway:
         _configure_pty(slave_fd, rows=self.cfg.rows, cols=self.cfg.cols)
         use_setsid = batch_mode == "yes"
         try:
+            session_argv = self._session_argv()
             proc = subprocess.Popen(
-                self._session_argv(),
+                session_argv,
+                executable=self._session_executable(session_argv),
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
@@ -711,9 +735,27 @@ class TerminalGateway:
             self._append(ev)
             last_checkpoint_ms = now
 
+        # Ao fechar o canal (ex.: usuario fecha a janela do terminal), o sshd
+        # envia SIGHUP/SIGTERM ao processo. Sem handler, o Python morre sem
+        # passar pelo finally e o session_end nunca e gravado. Convertemos o
+        # sinal em SystemExit para que o finally grave o session_end e
+        # encerre o filho normalmente.
+        def _exit_on_signal(signum, _frame):
+            raise SystemExit(128 + signum)
+
+        previous_signal_handlers = {}
+        try:
+            for _sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+                previous_signal_handlers[_sig] = signal.signal(_sig, _exit_on_signal)
+        except ValueError:
+            # fora da main thread (ex.: embed/testes): mantem o comportamento
+            # anterior em vez de quebrar a sessao
+            previous_signal_handlers = {}
+
         # proxy loop
         try:
-            while True:
+            session_done = False
+            while not session_done:
                 if proc.poll() is not None:
                     break
                 events = sel.select(timeout=0.05)
@@ -724,8 +766,14 @@ class TerminalGateway:
                         except OSError:
                             data = b""
                         if not data:
-                            # client closed
+                            # client closed: sai do loop e encerra o filho no
+                            # finally (TERM -> wait -> KILL). Sair do while e'
+                            # obrigatorio: um fd em EOF permanece "readable" no
+                            # select, e se o filho ignorar o SIGTERM (ex.: shell
+                            # esperando `su`) o loop gira em EOF para sempre
+                            # (100% CPU).
                             proc.terminate()
+                            session_done = True
                             break
                         event_ts_ms = self._ts_ms()
                         for ev in self._build_audit_events_for_input(
@@ -742,7 +790,10 @@ class TerminalGateway:
                         except OSError:
                             data = b""
                         if not data:
+                            # mesmo motivo do EOF de stdin: sair do while e
+                            # deixar o finally escalar TERM -> KILL
                             proc.terminate()
+                            session_done = True
                             break
                         _write_all(1, data)
                         last_out_ms = self._ts_ms()
@@ -759,6 +810,11 @@ class TerminalGateway:
 
             maybe_checkpoint(force=True)
         finally:
+            for _sig, _prev in previous_signal_handlers.items():
+                try:
+                    signal.signal(_sig, _prev)
+                except Exception:
+                    pass
             try:
                 sel.close()
             except Exception:
@@ -775,7 +831,12 @@ class TerminalGateway:
                 except subprocess.TimeoutExpired:
                     # fallback: garantir que o filho não fique órfão
                     proc.kill()
-                    rc = proc.wait()
+                    try:
+                        rc = proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # filho em estado ininterruptivel (D-state): nao travar
+                        # o gateway para sempre — o init reapeia o processo
+                        rc = 1
             else:
                 rc = proc.returncode
 

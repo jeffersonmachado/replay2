@@ -5,6 +5,49 @@
 - `hmac.key`: `/etc/dakota-gateway/hmac.key` com permissão `0600` (root) e backup seguro.
 - `log-dir`: `/var/log/dakota-gateway` com permissão restrita (`0700`), idealmente com política *append-only* (filesystem/WORM quando disponível).
 
+## Capture daemon (serviço privilegiado de captura)
+
+Em operação multiusuário (ForceCommand no sshd), quem assina e grava a trilha
+é o **capture-daemon**, rodando como o usuário de serviço (`results`). O
+`capture-session` — que roda como o usuário SSH final — só executa o
+PTY/proxy loop e envia os eventos prontos via Unix socket; não lê a chave
+HMAC nem o banco de estado.
+
+- Socket: `gateway/state/daemon/capture.sock` (criado pelo daemon, `0666`;
+  diretório `daemon/` `0755`). Default derivado do `--db`:
+  `<dir do replay.db>/daemon/capture.sock`.
+- Protocolo: JSON-lines — `ping`, `resolve` (captura ativa) e `append`
+  (daemon calcula `seq_global`/hash-chain/HMAC e grava via `AuditWriter`).
+
+Subir/parar (o `deploy.sh` já faz isso automaticamente):
+
+```bash
+# subir (como results)
+su results -c 'cd /opt/dakota/replay2/gateway && \
+  PYTHONPATH=/opt/dakota/replay2/gateway nohup python3 \
+  /opt/dakota/replay2/gateway/dakota-gateway capture-daemon \
+  --db /opt/dakota/replay2/gateway/state/replay.db \
+  --hmac-key-file /opt/dakota/replay2/.local-secrets/hmac-key \
+  > /tmp/replay2-capture-daemon.log 2>&1 &'
+
+# parar
+pkill -f 'capture-d[a]emon'
+
+# health check: socket existe + resolve responde
+test -S /opt/dakota/replay2/gateway/state/daemon/capture.sock
+python3 /opt/dakota/replay2/gateway/dakota-gateway capture-resolve \
+  --db /opt/dakota/replay2/gateway/state/replay.db
+# exit: 0 = captura ativa, 1 = sem captura ativa, 2 = daemon indisponível
+```
+
+Com o daemon no ar, as permissões fechadas bastam — nenhum ajuste por grupo
+do usuário SSH é necessário: `hmac-key` `0600 results`, `replay.db` `0660`.
+Se o daemon estiver fora, o `capture-session` cai no fallback local
+(comportamento antigo) apenas quando `--hmac-key-file` é informado; caso
+contrário o login é abortado (fail-closed). Se o daemon reiniciar no meio de
+uma captura, o self-healing do `AuditWriter` retoma a hash-chain a partir do
+próprio log.
+
 ## Rotação
 
 O gateway pode rotacionar por tamanho via `--rotate-bytes`.\n

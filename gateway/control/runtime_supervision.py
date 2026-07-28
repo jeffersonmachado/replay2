@@ -71,6 +71,15 @@ def reconcile_gateway_capture_startup(
 
 
 class Port22CaptureSampler:
+    """Sampler passivo de conexões da porta 22 (observabilidade).
+
+    Os eventos são marcadores v1 **não assinados** (sem hash-chain/HMAC) e
+    por isso NÃO podem ficar no diretório raiz do log_dir: verify/replay/
+    playback leem `audit-*.jsonl` (glob não-recursivo) e quebrariam com o
+    "diretório misto". Vão para `<log_dir>/supervision/`, onde a
+    observabilidade (rglob recursivo) continua enxergando-os.
+    """
+
     def __init__(self, *, run_cmd):
         self._run_cmd = run_cmd
         self._thread = None
@@ -94,7 +103,14 @@ class Port22CaptureSampler:
             os.makedirs(log_dir, exist_ok=True)
             self._seq = 0
             self._seen = set()
-            self._file_path = os.path.join(log_dir, f"audit-{time.strftime('%Y%m%d-%H%M%S')}.part001.jsonl")
+            # Subdir proprio, fora do glob nao-recursivo do verify/replay;
+            # timestamp em UTC como o AuditWriter.
+            supervision_dir = os.path.join(log_dir, "supervision")
+            os.makedirs(supervision_dir, exist_ok=True)
+            self._file_path = os.path.join(
+                supervision_dir,
+                f"audit-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.part001.jsonl",
+            )
             self._stop.clear()
             self._emit("session_start")
             self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -130,7 +146,14 @@ class Port22CaptureSampler:
         }
         payload.update(extra)
         try:
+            log_created = not os.path.exists(self._file_path)
             with open(self._file_path, "a", encoding="utf-8") as fh:
+                if log_created:
+                    # mesmo modelo fechado do AuditWriter (0660)
+                    try:
+                        os.fchmod(fh.fileno(), 0o660)
+                    except OSError:
+                        pass
                 fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except Exception:
             return

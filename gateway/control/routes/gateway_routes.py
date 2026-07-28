@@ -34,6 +34,17 @@ def _validated_log_dir(handler, raw: str) -> str | None:
         return None
     return str(resolved)
 
+def _daemon_socket_present(handler) -> bool | None:
+    """Presença do socket do capture-daemon (None se indeterminado)."""
+    db_path = str(getattr(handler.server, "db_path", "") or "").strip()
+    if not db_path:
+        return None
+    from dakota_gateway.capture_daemon import default_socket_path
+    from control.server_support import daemon_socket_status
+
+    return daemon_socket_status(default_socket_path(db_path))["daemon_socket_present"]
+
+
 def _resolve_target_policy(handler, target_env_id: int, *, query_one_fn):
     if int(target_env_id or 0) <= 0:
         return None
@@ -62,7 +73,7 @@ def handle_gateway_get_route(
             return True
         con = handler._db()
         try:
-            state = _get_gateway_state(con)
+            state = _get_gateway_state(con, daemon_socket_present=_daemon_socket_present(handler))
         finally:
             handler._db_release(con)
         write_json(handler, 200, state)

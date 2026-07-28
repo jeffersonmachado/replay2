@@ -10,34 +10,39 @@ esac
 
 PROJECT_ROOT=/opt/dakota/replay2
 DB_PATH=/opt/dakota/replay2/gateway/state/replay.db
-HMAC_KEY_FILE=/opt/dakota/replay2/.local-secrets/hmac-key
+CAPTURE_SOCKET=/opt/dakota/replay2/gateway/state/daemon/capture.sock
 PYTHON_BIN=/usr/bin/python3
+
+# A escrita auditavel (hash-chain/HMAC/arquivos) e feita pelo capture-daemon
+# (usuario de servico); este processo roda como o usuario SSH final e apenas
+# envia eventos via socket — nao precisa da chave HMAC nem do banco.
+
+# Como o sshd tradicional, a sessao inicia no HOME do usuario: profiles do
+# legado usam caminhos relativos ao CWD (ex.: o ".menu" do Recital).
+cd "$HOME" 2>/dev/null || cd /
 
 fallback_login() {
   if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
     exec /bin/ksh -c "$SSH_ORIGINAL_COMMAND"
   fi
-  exec /bin/ksh
+  # ksh do AIX nao aceita flag -l; "exec -a -ksh" simula login shell
+  # (argv[0] com '-'), fazendo o ksh ler /etc/profile e ~/.profile
+  user_shell="${SHELL:-/bin/ksh}"
+  exec -a "-$(basename "$user_shell")" "$user_shell"
 }
 
-# Verifica se ha captura ativa antes de iniciar o gateway
-if ! "$PYTHON_BIN" -c "
-import sqlite3
-con = sqlite3.connect('$DB_PATH')
-try:
-    row = con.execute(\"SELECT id FROM capture_sessions WHERE status='active' ORDER BY id DESC LIMIT 1\").fetchone()
-    raise SystemExit(0 if row else 1)
-finally:
-    con.close()
-" >/dev/null 2>&1; then
+export PYTHONPATH="$PROJECT_ROOT/gateway${PYTHONPATH:+:$PYTHONPATH}"
+
+# Verifica se ha captura ativa (via daemon) antes de iniciar o gateway.
+# Daemon fora do ar ou sem captura ativa -> login normal (mesma semantica
+# do pre-check anterior, que caia no fallback quando a consulta falhava).
+if ! "$PYTHON_BIN" "$PROJECT_ROOT/gateway/dakota-gateway" capture-resolve \
+    --socket "$CAPTURE_SOCKET" >/dev/null 2>&1; then
   fallback_login
 fi
 
-export PYTHONPATH="$PROJECT_ROOT/gateway${PYTHONPATH:+:$PYTHONPATH}"
-cd "$PROJECT_ROOT"
-
 exec "$PYTHON_BIN" "$PROJECT_ROOT/gateway/dakota-gateway" capture-session \
   --db "$DB_PATH" \
-  --hmac-key-file "$HMAC_KEY_FILE" \
+  --capture-socket "$CAPTURE_SOCKET" \
   --source-user "${LOGNAME:-${USER:-}}" \
   "$@"

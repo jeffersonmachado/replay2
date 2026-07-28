@@ -554,6 +554,12 @@ function renderServiceStatus(data) {
   const svc = data.service || "?";
   const ss = data.service_running ? "running" : (data.socket_running ? "socket" : "dead");
   html("#gw_svc_sshd", `${run(data.running)} <span class="text-xs text-stone-500">(${svc} ${ss})</span>`);
+  const daemonPresent = data.daemon_socket_present;
+  html("#gw_svc_daemon", daemonPresent === null || daemonPresent === undefined
+    ? '<span class="text-stone-400">desconhecido</span>'
+    : daemonPresent
+      ? '<span class="text-emerald-300">ativo</span>'
+      : `<span class="text-rose-300">ausente</span> <span class="text-xs text-stone-500">(${data.daemon_socket_path || "capture.sock"})</span>`);
   html("#gw_svc_wrapper", data.capture_installed ? yes(true) : '<span class="text-rose-300">não instalado</span>');
   const cfgs = data.capture_configs || [];
   html("#gw_svc_ssh_int", cfgs.length

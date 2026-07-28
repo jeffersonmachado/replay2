@@ -48,7 +48,13 @@ def count_audit_sessions_events(log_dir: str) -> tuple[int, int]:
         return 0, 0
     audit_files = glob.glob(os.path.join(log_dir, "audit-*.jsonl"))
     if not audit_files:
-        audit_files = glob.glob(os.path.join(log_dir, "*", "audit-*.jsonl"))
+        audit_files = [
+            f
+            for f in glob.glob(os.path.join(log_dir, "*", "audit-*.jsonl"))
+            # supervision/ guarda marcadores v1 não assinados do sampler de
+            # porta 22 (fora da trilha auditável) — não contam como sessão.
+            if os.path.basename(os.path.dirname(f)) != "supervision"
+        ]
     event_count = sum(_count_audit_lines(fpath) for fpath in audit_files)
     return len(audit_files), event_count
 

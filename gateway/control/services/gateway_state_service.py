@@ -35,10 +35,26 @@ def _check_capture_process_alive() -> bool:
     return False
 
 
-def build_operational_policy(*, logical_active: bool, service_running: bool | None = None) -> dict:
-    """Monta a política operacional desejada/efetiva para o gateway."""
+def build_operational_policy(
+    *,
+    logical_active: bool,
+    service_running: bool | None = None,
+    daemon_socket_present: bool | None = None,
+) -> dict:
+    """Monta a política operacional desejada/efetiva para o gateway.
+
+    ``daemon_socket_present=False`` indica capture-daemon fora do ar: as
+    sessões SSH entram em fallback (login normal, sem trilha auditável),
+    portanto a captura NÃO está disponível mesmo com gateway logicamente ativo.
+    """
     desired_ssh_route = "gateway_proxy" if logical_active else "direct_port_22"
-    capture_available = bool(logical_active)
+    daemon_down = bool(logical_active) and daemon_socket_present is False
+    capture_available = bool(logical_active) and not daemon_down
+    daemon_reason = (
+        "capture-daemon sem socket ativo — sessões SSH entram sem captura (fallback)"
+        if daemon_down
+        else None
+    )
 
     if service_running is None:
         return {
@@ -46,16 +62,18 @@ def build_operational_policy(*, logical_active: bool, service_running: bool | No
             "desired_ssh_route": desired_ssh_route,
             "effective_ssh_route": None,
             "capture_available": capture_available,
-            "policy_ok": None,
-            "reason": "estado efetivo do serviço não informado",
+            "policy_ok": False if daemon_down else None,
+            "reason": daemon_reason or "estado efetivo do serviço não informado",
         }
 
     effective_ssh_route = "gateway_proxy" if bool(service_running) else "direct_port_22"
-    policy_ok = effective_ssh_route == desired_ssh_route
+    policy_ok = effective_ssh_route == desired_ssh_route and not daemon_down
     reason = "ok"
-    if not policy_ok and logical_active:
+    if daemon_down:
+        reason = daemon_reason
+    elif effective_ssh_route != desired_ssh_route and logical_active:
         reason = "gateway lógico ativo, mas serviço SSH/Gateway não está ativo"
-    elif not policy_ok and not logical_active:
+    elif effective_ssh_route != desired_ssh_route and not logical_active:
         reason = "gateway lógico inativo, mas serviço SSH/Gateway permanece ativo"
 
     return {
@@ -142,8 +160,15 @@ def _check_ssh_service_running() -> bool:
         return False
 
 
-def get_gateway_state(con) -> dict:
-    """Retorna o estado atual do gateway a partir do banco (fonte única de verdade)."""
+def get_gateway_state(con, daemon_socket_present: bool | None = None) -> dict:
+    """Retorna o estado atual do gateway a partir do banco (fonte única de verdade).
+
+    Quando ``daemon_socket_present`` é informado e o gateway está logicamente
+    ativo mas o capture-daemon está sem socket, o estado reportado é
+    ``active=False`` (com ``logical_active=True``): sem o daemon as sessões
+    SSH entram em fallback e nada é capturado — o gateway não pode constar
+    como ativo.
+    """
     row = query_one(con, "SELECT * FROM gateway_state WHERE id=1")
     if not row:
         policy = build_operational_policy(logical_active=False)
@@ -174,10 +199,19 @@ def get_gateway_state(con) -> dict:
         state["environment"]["env_name"] = stored_env["env_name"]
     if stored_env.get("instance_id"):
         state["environment"]["instance_id"] = stored_env["instance_id"]
-    state["active"] = bool(state.get("active"))
+    logical_active = bool(state.get("active"))
+    state["active"] = logical_active
+    if daemon_socket_present is not None:
+        state["daemon_socket_present"] = daemon_socket_present
+    if logical_active and daemon_socket_present is False:
+        state["logical_active"] = True
+        state["active"] = False
+    # A política é calculada sobre o estado LÓGICO: sem o socket do daemon a
+    # captura não está disponível mesmo com o gateway ativo no banco.
     state["policy"] = build_operational_policy(
-        logical_active=state["active"],
+        logical_active=logical_active,
         service_running=_check_ssh_service_running(),
+        daemon_socket_present=daemon_socket_present,
     )
     state["capture_enabled"] = bool(state["policy"].get("capture_available"))
     # Modo de captura: 'strict' = fail-closed (aborta login se nao capturar)
@@ -207,6 +241,7 @@ def build_full_gateway_status(con, service_status: dict) -> dict:
     policy = build_operational_policy(
         logical_active=bool(logical_state.get("active")),
         service_running=bool(service_status.get("running")),
+        daemon_socket_present=service_status.get("daemon_socket_present"),
     )
     # Saúde real do processo: só está saudável se logical_active E processo
     # capture-session vivo.
@@ -244,6 +279,10 @@ def _fix_capture_dir_owner(log_dir: str, *, log=None) -> None:
         return
     try:
         os.chown(log_dir, uid, gid)
+        # setgid: arquivos criados por sessoes privilegiadas (ex.: root) herdam
+        # o grupo do diretorio em vez do grupo primario do processo, mantendo o
+        # append possivel para as demais sessoes da captura.
+        os.chmod(log_dir, 0o2770)
     except OSError as exc:
         if log:
             log.warning("[startup] nao foi possivel corrigir ownership de %s: %s", log_dir, exc)

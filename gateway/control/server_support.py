@@ -128,7 +128,32 @@ def _linux_gateway_units(*, run_cmd_fn) -> tuple[str | None, str | None]:
     return service, socket
 
 
-def gateway_service_status(*, run_cmd_fn) -> dict:
+def daemon_socket_status(daemon_socket_path: str) -> dict:
+    """Status do socket Unix do capture-daemon (escrita auditável).
+
+    O daemon é o único que grava a trilha HMAC; sem o socket, sessões SSH
+    caem em fallback local ou fail-closed (ver gateway/docs/ops.md).
+    """
+    if not daemon_socket_path:
+        return {"daemon_socket_path": "", "daemon_socket_present": None}
+    try:
+        import stat as _stat
+
+        st = os.stat(daemon_socket_path)
+        present = _stat.S_ISSOCK(st.st_mode)
+    except OSError:
+        present = False
+    return {"daemon_socket_path": daemon_socket_path, "daemon_socket_present": present}
+
+
+def gateway_service_status(*, run_cmd_fn, daemon_socket_path: str = "") -> dict:
+    """Status do serviço SSH da plataforma + socket do capture-daemon."""
+    status = _platform_service_status(run_cmd_fn=run_cmd_fn)
+    status.update(daemon_socket_status(daemon_socket_path))
+    return status
+
+
+def _platform_service_status(*, run_cmd_fn) -> dict:
     system = platform.system().lower()
 
     if "aix" in system:

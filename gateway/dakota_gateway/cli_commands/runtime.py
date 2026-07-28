@@ -47,7 +47,10 @@ def register_runtime_parsers(subparsers) -> None:
         help="Captura uma sessão SSH na captura ativa (uso via ForceCommand)",
     )
     ap_capture.add_argument("--db", default="")
-    ap_capture.add_argument("--hmac-key-file", required=True)
+    ap_capture.add_argument("--hmac-key-file", default="",
+                            help="Chave HMAC (só no fallback local, sem daemon)")
+    ap_capture.add_argument("--capture-socket", default="",
+                            help="Socket do capture-daemon (default: <state>/daemon/capture.sock)")
     ap_capture.add_argument("--capture-id", type=int, default=0)
     ap_capture.add_argument("--source-host", default="")
     ap_capture.add_argument("--source-user", default="")
@@ -57,6 +60,24 @@ def register_runtime_parsers(subparsers) -> None:
     ap_capture.add_argument("--checkpoint-quiet-ms", type=int, default=250)
     ap_capture.add_argument("--checkpoint-min-bytes", type=int, default=512)
     _add_terminal_args(ap_capture)
+
+    ap_daemon = subparsers.add_parser(
+        "capture-daemon",
+        help="Daemon privilegiado de captura (Unix socket; roda como usuário de serviço)",
+    )
+    ap_daemon.add_argument("--db", default="")
+    ap_daemon.add_argument("--hmac-key-file", required=True)
+    ap_daemon.add_argument("--socket", default="",
+                           help="Caminho do socket (default: <state>/daemon/capture.sock)")
+
+    ap_resolve = subparsers.add_parser(
+        "capture-resolve",
+        help="Verifica captura ativa via daemon (exit 0=ativa, 1=inativa, 2=indisponível)",
+    )
+    ap_resolve.add_argument("--db", default="")
+    ap_resolve.add_argument("--capture-id", type=int, default=0)
+    ap_resolve.add_argument("--socket", default="",
+                            help="Caminho do socket (default: <state>/daemon/capture.sock)")
 
 
 def _add_terminal_args(parser) -> None:
@@ -165,6 +186,29 @@ def _resolve_capture_log_dir(db_path: str, capture_id: int = 0) -> str:
     return _resolve_capture_session(db_path, capture_id)["log_dir"]
 
 
+def _chdir_user_home() -> None:
+    """Posiciona a sessão no HOME do usuário, como o sshd tradicional faz.
+
+    O ForceCommand herda o CWD de onde o wrapper foi lançado; profiles do
+    legado usam caminhos relativos ao CWD (ex.: o ".menu" do Recital em
+    /etc/.profile), então iniciar fora do HOME quebra o ambiente do usuário.
+    """
+    home = ""
+    try:
+        import pwd
+
+        home = pwd.getpwuid(os.getuid()).pw_dir
+    except Exception:
+        home = ""
+    if not home:
+        home = str(os.environ.get("HOME") or "").strip()
+    if home:
+        try:
+            os.chdir(home)
+        except OSError:
+            pass
+
+
 def handle_runtime_command(ns, read_key) -> int:
     if ns.cmd == "start":
         key = read_key(ns.hmac_key_file)
@@ -236,13 +280,75 @@ def handle_runtime_command(ns, read_key) -> int:
         print("OK")
         return 0
 
+    if ns.cmd == "capture-daemon":
+        from ..capture_daemon import default_socket_path, run_daemon
+
+        key = read_key(ns.hmac_key_file)
+        socket_path = str(ns.socket or "").strip() or default_socket_path(getattr(ns, "db", ""))
+        print(f"capture-daemon ouvindo em {socket_path}", file=sys.stderr)
+        return run_daemon(socket_path, getattr(ns, "db", ""), key)
+
+    if ns.cmd == "capture-resolve":
+        from ..audit_client import daemon_request
+        from ..capture_daemon import default_socket_path
+
+        socket_path = str(ns.socket or "").strip() or default_socket_path(getattr(ns, "db", ""))
+        resp = daemon_request(
+            socket_path,
+            {"op": "resolve", "capture_id": int(getattr(ns, "capture_id", 0) or 0)},
+        )
+        if resp is None:
+            return 2
+        if resp.get("ok"):
+            print(json.dumps(
+                {k: resp.get(k) for k in ("id", "session_uuid", "log_dir")},
+                ensure_ascii=False,
+            ))
+            return 0
+        return 1
+
     if ns.cmd == "capture-session":
         # --source-user vazio = captura TODOS os usuarios (fail-closed)
         source_user = str(ns.source_user or "").strip()
         actor = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
 
-        key = read_key(ns.hmac_key_file)
-        capture = _resolve_capture_session(getattr(ns, "db", ""), getattr(ns, "capture_id", 0))
+        from ..audit_client import AuditClient, daemon_resolve
+        from ..capture_daemon import default_socket_path
+
+        db_path = getattr(ns, "db", "")
+        capture_id = int(getattr(ns, "capture_id", 0) or 0)
+        socket_path = (
+            str(getattr(ns, "capture_socket", "") or "").strip()
+            or default_socket_path(db_path)
+        )
+
+        # Caminho preferido: capture-daemon. A chave HMAC e o banco ficam com
+        # o serviço privilegiado; este processo (usuário SSH final) só envia
+        # os eventos prontos via socket.
+        capture = daemon_resolve(socket_path, capture_id)
+        audit_sink = None
+        key = b""
+        if capture is not None:
+            try:
+                audit_sink = AuditClient(socket_path, str(capture["log_dir"]))
+            except OSError as exc:
+                print(
+                    f"AVISO: falha ao conectar no capture-daemon ({exc}); tentando fallback local",
+                    file=sys.stderr,
+                )
+                capture = None
+        if capture is None:
+            # Fallback local (comportamento anterior ao daemon): exige a chave
+            # HMAC e acesso ao banco — usado em dev ou com o daemon fora do ar.
+            if not str(ns.hmac_key_file or "").strip():
+                print(
+                    "ERRO: capture-daemon indisponível e --hmac-key-file não informado para o fallback local.",
+                    file=sys.stderr,
+                )
+                print("Contate o administrador. Login abortado.", file=sys.stderr)
+                return 1
+            key = read_key(ns.hmac_key_file)
+            capture = _resolve_capture_session(db_path, capture_id)
         term_opts = _resolve_terminal_options(ns)
         log_dir = str(capture["log_dir"])
         source_command = str(ns.source_command or "").strip()
@@ -265,7 +371,10 @@ def handle_runtime_command(ns, read_key) -> int:
             term=term_opts["term"],
             encoding=term_opts["encoding"],
             geometry_source=term_opts["geometry_source"],
+            audit_sink=audit_sink,
         )
+        # Sessao inicia no HOME do usuario (comportamento do sshd tradicional)
+        _chdir_user_home()
         try:
             return TerminalGateway(cfg).run()
         except GatewayCaptureError as exc:

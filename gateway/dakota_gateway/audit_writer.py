@@ -30,11 +30,24 @@ class AuditWriter:
         self.hmac_key = hmac_key
         self.rotate_bytes = int(rotate_bytes)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        # setgid no dir: arquivos criados aqui herdam o grupo do diretorio.
+        # Sem isso, uma sessao privilegiada (ex.: root) cria arquivos com o
+        # grupo primario dela e impede o append das demais sessoes da captura.
+        try:
+            os.chmod(self.log_dir, 0o2770)
+        except OSError:
+            pass
 
         self.lock_path = self.log_dir / "audit.lock"
         self.state_path = self.log_dir / "audit.state"
 
         self._lock_fd = open(self.lock_path, "a+", encoding="utf-8")
+        # lock/log sao compartilhados entre todos os usuarios da captura:
+        # 0660 + setgid no dir garante append por qualquer membro do grupo.
+        try:
+            os.fchmod(self._lock_fd.fileno(), 0o660)
+        except OSError:
+            pass
 
     def close(self):
         try:
@@ -144,7 +157,14 @@ class AuditWriter:
             ev.hmac = hmac_sha256_hex(self.hmac_key, payload)
 
             log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_created = not log_path.exists()
             with open(log_path, "a", encoding="utf-8") as out:
+                if log_created:
+                    # arquivo novo da cadeia: modo compartilhado (ver __init__)
+                    try:
+                        os.fchmod(out.fileno(), 0o660)
+                    except OSError:
+                        pass
                 out.write(json.dumps(asdict(ev), ensure_ascii=False) + "\n")
 
             st["prev_hash"] = ev.hash

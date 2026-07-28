@@ -68,7 +68,7 @@
         <strong>Playback local:</strong> Clique em Iniciar Playback para revisar a trilha bruta capturada.
         <div id="playback-status-message" class="mt-1 hidden text-xs text-emerald-200/90">Reprodução concluída. Você pode reproduzir novamente.</div>
       </div>
-      <button id="playback-start-btn" class="r2ctl-btn-pill r2ctl-btn-pill-success text-xs">▶ Iniciar Playback</button>
+      <button id="playback-start-btn" class="r2ctl-btn-pill r2ctl-btn-pill-success text-xs opacity-50 cursor-not-allowed" disabled>⏳ Carregando dados...</button>
     </div>
 
     <div class="rounded-2xl px-4 py-3 bg-emerald-900/20 border border-emerald-700/40">
@@ -78,8 +78,8 @@
           <div id="operational-replay-status" class="mt-1 text-xs text-emerald-200/80">carregando contexto operacional...</div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button id="run-raw-btn" class="r2ctl-btn-soft text-xs">Criar replay bruto</button>
-          <button id="run-deterministic-btn" class="r2ctl-btn-primary text-xs">Criar replay determinístico</button>
+          <button id="run-raw-btn" class="r2ctl-btn-soft text-xs opacity-50 cursor-not-allowed" disabled>Criar replay bruto</button>
+          <button id="run-deterministic-btn" class="r2ctl-btn-primary text-xs opacity-50 cursor-not-allowed" disabled>Criar replay determinístico</button>
           <a id="run-new-link" href="/runs/new" class="r2ctl-btn-soft text-xs hidden">Abrir em runs/new</a>
         </div>
       </div>
@@ -128,7 +128,7 @@
 
     <!-- Terminal para playback -->
     <div class="rounded-2xl bg-black/50 p-4 font-mono text-xs leading-relaxed border border-stone-700/40">
-      <div id="playback-terminal" class="min-h-[320px] max-h-[600px] overflow-auto">
+      <div id="playback-terminal" class="overflow-auto">
         <pre id="playback-output" class="text-gray-100 whitespace-pre"></pre>
       </div>
     </div>
@@ -176,6 +176,11 @@
   word-spacing: 0;
   font-variant-ligatures: none;
   font-kerning: none;
+  /* Tamanho ajustado via JS ao snapshot (rows x line-height + padding);
+     placeholder abaixo = 25 linhas x 14px + 2rem de padding */
+  height: 382px;
+  width: fit-content;
+  max-width: 100%;
 }
 
 #playback-output .rv {
@@ -318,10 +323,14 @@ input[type="range"] {
   // Timeline core — imported dynamically
   let _formatEventContent;
   let _renderEventsCards;
+  let _renderSingleEventCard;
+  let _attachInfiniteScroll;
   let _buildTimelineItems;
   let _findBestCheckpoint;
   let _createReplayState;
   let sessionEncoding = 'utf-8';
+  // Lista lazy da timeline (scroll infinito em lotes)
+  let eventsLazyList = null;
 
   function initRenderer(mod) {
     renderSnapshotToHtml = mod.renderSnapshotToHtml;
@@ -335,7 +344,8 @@ input[type="range"] {
   // Carrega módulos de timeline ANTES de qualquer renderização
   const _timelineReady = Promise.all([
     import('/assets/js/components/timeline_core.js').then(mod => { _formatEventContent = mod.formatEventContent; eventTimestamp = mod.eventTimestamp; }),
-    import('/assets/js/components/timeline_table.js').then(mod => { _renderEventsCards = mod.renderEventsCards; }),
+    import('/assets/js/components/timeline_table.js').then(mod => { _renderEventsCards = mod.renderEventsCards; _renderSingleEventCard = mod.renderSingleEventCard; }),
+    import('/assets/js/components/infinite_scroll_list.js').then(mod => { _attachInfiniteScroll = mod.attachInfiniteScroll; }),
     import('/assets/js/components/terminal_snapshot_renderer.js').then(mod => { initRenderer(mod); }),
     import('/assets/js/components/capture_replay_timeline.js').then(mod => { _buildTimelineItems = mod.buildTimelineItems; }),
     import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
@@ -406,18 +416,33 @@ input[type="range"] {
           cmpInfo.textContent = `Comparação: [${modes}] | default: ${defaultMode} | engine: ${replayData.engine_version || '-'}`;
         }
       }
+      // Ajusta a seção do terminal ao tamanho do snapshot (geometria da sessão)
+      fitTerminalToGeometry();
       // Aguarda módulos de timeline antes de renderizar
       await _timelineReady;
       renderSessionInfo();
       renderEventsList(eventsFilterMode);
     } catch (err) {
       console.error('Erro ao carregar dados de replay:', err);
+      const startBtn = document.getElementById('playback-start-btn');
+      if (startBtn) startBtn.textContent = '⚠ Falha ao carregar dados';
       document.getElementById('events-list').innerHTML = `
         <div class="text-red-300 text-sm p-4 rounded bg-red-900/20 border border-red-700/40">
           Erro ao carregar dados: ${escapeHtml(err.message)}
         </div>
       `;
     }
+  }
+
+  // Ajusta a seção do terminal ao tamanho exato do snapshot:
+  // altura = rows × line-height + padding vertical; largura = fit-content
+  function fitTerminalToGeometry() {
+    const terminal = document.getElementById('playback-terminal');
+    if (!terminal) return;
+    const style = window.getComputedStyle(terminal);
+    const lineH = parseFloat(style.lineHeight) || 14;
+    const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    terminal.style.height = `${Math.round(termGeometry.rows * lineH + padY)}px`;
   }
 
   function renderSessionInfo() {
@@ -528,6 +553,19 @@ input[type="range"] {
     }
 
     const decoratedEvents = decorateDeterministicRepeats(events);
+    // Scroll infinito: renderiza em lotes conforme a rolagem da página
+    if (typeof _attachInfiniteScroll === 'function' && typeof _renderSingleEventCard === 'function') {
+      if (!eventsLazyList) {
+        eventsLazyList = _attachInfiniteScroll({
+          container,
+          batchSize: 50,
+          renderItem: (ev) => _renderSingleEventCard(ev),
+          loadMoreLabel: 'Carregar mais eventos',
+        });
+      }
+      eventsLazyList.setItems(decoratedEvents);
+      return;
+    }
     // Usa módulo compartilhado timeline_table.js para renderizar cards
     if (typeof _renderEventsCards === "function") {
       _renderEventsCards(decoratedEvents, "#events-list");

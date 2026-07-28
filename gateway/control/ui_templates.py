@@ -77,6 +77,7 @@ _MENU_CONFIG = [
             {"label": "Fluxos sensiveis", "href": "/observability/flows", "key": "observability_flows"},
             {"label": "Assinaturas", "href": "/observability/signatures", "key": "observability_signatures"},
             {"label": "Automacao", "href": "/observability/automation", "key": "observability_automation"},
+            {"label": "Recursos", "href": "/observability/resources", "key": "observability_resources"},
         ],
     },
     {
@@ -556,6 +557,18 @@ ROUTES_CONFIG = [
         "submenu": "observability_automation",
         "script": "observability.js",
         "page_state": {"section": "automation"},
+    },
+    {
+        "path": "/observability/resources",
+        "template": "observability.html",
+        "title": "Dakota Calcados | Observability",
+        "page_title": "Observabilidade - Recursos do Host",
+        "page_description": "CPU, memoria, load e disco do servidor durante a execucao, com comparacao entre ambientes.",
+        "page_kicker": "Replay Suite",
+        "menu": "observability",
+        "submenu": "observability_resources",
+        "script": "observability.js",
+        "page_state": {"section": "resources"},
     },
     {
         "path": "/admin",

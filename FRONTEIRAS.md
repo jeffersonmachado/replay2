@@ -23,12 +23,22 @@ Replay2 é uma ferramenta de **validação de migração** de sistemas legados (
 - ❌ PostgreSQL (usa SQLite)
 - ❌ Docker / Kubernetes / containers
 - ❌ Multi-tenancy (tenant, tenant_id)
-- ❌ Infra monitoring (host_status, service_check, hostgroup)
+- ❌ Infra monitoring **externo** (host_status, service_check, hostgroup, probes
+  de outros servidores) — continua no r-observe
 - ❌ Porta 3000, 3001, 9090 (são do stack r-observe)
+
+Nota (decisão do mantenedor, v0.7.x): o Replay2 **coleta métricas de recursos
+do próprio host** (CPU/memória/load/disco do servidor onde o control plane
+roda) para correlacionar com runs de estresse e comparar ambientes —
+`dakota_gateway/host_metrics.py`, tabela `host_metrics`, painel
+`/observability/resources`. Isso **não** é monitoramento de infra de terceiros:
+é auto-observação local com fim de análise de estresse.
 
 ## O Replay2 JÁ TEM
 
 - ✅ Camada de observabilidade interna: `/observability`
+- ✅ Painel de recursos do host: `/observability/resources` (CPU/mem/load/disco
+  locais, export/import para comparar ambientes)
 - ✅ Relatórios: md, json, csv
 - ✅ Tendências entre runs
 - ✅ Comparação baseline (regressão)

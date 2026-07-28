@@ -5,6 +5,7 @@ import { textListCards } from "../components/status_cards.js";
 import { statList } from "../components/tables.js";
 import { buildQuery } from "../components/filters.js";
 import { activatePageSections } from "../components/page_sections.js";
+import { initHostMetricsPanel } from "../components/host_metrics_panel.js";
 
 function renderScenarios(items) {
   window.obsScenarios = items || [];
@@ -122,6 +123,7 @@ window.addEventListener("DOMContentLoaded", () => {
   activatePageSections("observability", "overview");
   loadOverview();
   loadScenarios();
+  initHostMetricsPanel();
   document.getElementById("obs_refresh_btn")?.addEventListener("click", loadOverview);
   document.getElementById("obs_save_scenario_btn")?.addEventListener("click", saveScenario);
   ["obs_scenario_visibility_filter", "obs_scenario_tag_filter"].forEach((id) => document.getElementById(id)?.addEventListener("input", loadScenarios));

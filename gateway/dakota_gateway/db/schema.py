@@ -544,5 +544,26 @@ CREATE TABLE IF NOT EXISTS screen_entity_bindings (
 
 CREATE INDEX IF NOT EXISTS screen_entity_bindings_entity ON screen_entity_bindings(entity_name);
 CREATE INDEX IF NOT EXISTS screen_entity_bindings_confidence ON screen_entity_bindings(confidence);
+
+-- Métricas de recursos do host (painel /observability/resources).
+-- Coletadas pelo HostMetricsSampler (dakota_gateway/host_metrics.py);
+-- campos indisponíveis na plataforma ficam NULL.
+
+CREATE TABLE IF NOT EXISTS host_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts_ms INTEGER NOT NULL,
+  cpu_pct REAL,
+  load1 REAL,
+  load5 REAL,
+  load15 REAL,
+  mem_total_mb REAL,
+  mem_used_mb REAL,
+  mem_pct REAL,
+  swap_pct REAL,
+  disk_read_kbs REAL,
+  disk_write_kbs REAL
+);
+
+CREATE INDEX IF NOT EXISTS host_metrics_ts ON host_metrics(ts_ms);
 """
 

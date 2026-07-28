@@ -165,8 +165,19 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return _runtime_env_bool(name, default)
 
 
+# Caminho do banco em uso pelo servidor (definido no main) — usado para
+# localizar o socket do capture-daemon (<dir do replay.db>/daemon/capture.sock).
+_SERVER_DB_PATH = ""
+
+
 def _gateway_service_status() -> dict:
-    return _support_gateway_service_status(run_cmd_fn=lambda cmd: _run_cmd(cmd))
+    from dakota_gateway.capture_daemon import default_socket_path
+
+    daemon_socket = default_socket_path(_SERVER_DB_PATH) if _SERVER_DB_PATH else ""
+    return _support_gateway_service_status(
+        run_cmd_fn=lambda cmd: _run_cmd(cmd),
+        daemon_socket_path=daemon_socket,
+    )
 
 
 def _full_gateway_status(con) -> dict:
@@ -246,6 +257,41 @@ class ControlServer(ThreadingHTTPServer):
             self.db_pool.release(con2)
         self.runner = Runner(db_path, hmac_key)
         self.port22_sampler = _Port22CaptureSampler()
+        # Sampler de recursos do host (CPU/mem/load/disco) para o painel
+        # /observability/resources e comparação de estresse entre ambientes.
+        self.host_metrics_sampler = None
+        if os.environ.get("HOST_METRICS_ENABLED", "1") != "0":
+            from dakota_gateway.host_metrics import HostMetricsSampler
+            interval = float(os.environ.get("HOST_METRICS_INTERVAL_S", "5") or 5)
+            retention = int(os.environ.get("HOST_METRICS_RETENTION_DAYS", "7") or 7)
+            self.host_metrics_sampler = HostMetricsSampler(
+                self.db_pool, interval_s=interval, retention_days=retention,
+            )
+            self.host_metrics_sampler.start()
+            log.info("[startup] sampler de recursos do host ativo (intervalo=%ss, retencao=%sd)", interval, retention)
+        # Boot com captura ativa (retomada ou recem auto-ativada acima): liga
+        # o observador passivo da porta 22. Na ativacao via API/UI quem o liga
+        # e a rota /api/gateway/activate; sem isto o boot deixava o sampler
+        # desligado ate a proxima ativacao manual.
+        con3 = self.db_pool.acquire()
+        try:
+            active_capture = query_one(
+                con3,
+                "SELECT id, session_uuid, log_dir FROM capture_sessions"
+                " WHERE status='active' ORDER BY id DESC LIMIT 1",
+                (),
+            )
+        finally:
+            self.db_pool.release(con3)
+        if active_capture:
+            started = self.port22_sampler.start(
+                {k: active_capture[k] for k in active_capture.keys()}
+            )
+            if started.get("started"):
+                log.info(
+                    "[startup] sampler da porta 22 ativo para a captura id=%s",
+                    active_capture["id"],
+                )
         self.runtime_capture = _RuntimeContentCaptureRunner(
             project_root=default_project_root_from_file(__file__),
             hmac_key_file=hmac_key_file,
@@ -667,6 +713,8 @@ def main():
         port = int(port_s)
         db_path = args.db or (Path(__file__).resolve().parents[1] / "state" / "replay.db")
         db_path = str(db_path)
+        global _SERVER_DB_PATH
+        _SERVER_DB_PATH = db_path
 
         cookie_secret = Path(args.cookie_secret_file).read_bytes().strip()
         hmac_key = Path(args.hmac_key_file).read_bytes().strip()

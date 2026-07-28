@@ -15,5 +15,7 @@ gateway/control/static/js/components/capture_replay_timeline.test.mjs
 gateway/control/static/js/components/terminal_snapshot_renderer.test.mjs
 gateway/control/static/js/components/replay_snapshot_state.test.mjs
 gateway/control/static/js/components/checkpoint_seek.test.mjs
+gateway/control/static/js/components/infinite_scroll_list.test.mjs
+gateway/control/static/js/components/host_metrics_panel.test.mjs
 gateway/control/static/js/components/template_syntax.test.mjs
 gateway/control/static/js/components/production_no_terminal_parser.test.mjs

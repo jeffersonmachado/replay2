@@ -123,6 +123,10 @@ replay2/
 - `gateway.py` — proxy SSH auditável; captura `bytes in/out`, `checkpoint`,
   `session_start/end` e eventos `deterministic_input` (tela estável + input);
 - `audit_writer.py` — ordem global (`seq_global`), hash-chain, HMAC e manifest;
+- `capture_daemon.py` — daemon privilegiado de captura (AF_UNIX, JSON-lines):
+  resolve a captura ativa e assina/grava os eventos como usuário de serviço;
+- `audit_client.py` — cliente/sink remoto do daemon, usado pelo
+  `capture-session` (roda como o usuário SSH final, sem chave HMAC nem DB);
 - `crypto.py` — primitivas criptográficas (HMAC, hash-chain);
 - `verifier.py` — verificação de integridade da trilha;
 - `replay.py` — replay no destino (modos `raw` e `deterministic`);
@@ -137,6 +141,9 @@ replay2/
 - `auth.py` — autenticação/usuários do control plane;
 - `assessment.py` — AI Assessment (análise consolidada do sistema legado);
 - `terminal_config.py` — configuração de terminal (geometria, encoding);
+- `host_metrics.py` — coletor de recursos do host (CPU/memória/load/disco;
+  Linux via `/proc`, AIX via `vmstat`/`lsattr`/`lsps`) + `HostMetricsSampler`
+  (thread do control plane que grava na tabela `host_metrics`);
 - `state_db.py` — **helpers de acesso a SQLite** (`connect`, `now_ms`,
   `query_one`, `query_all`, `exec1`): é a API de persistência de facto, usada
   por todo o control plane (`server.py`, `auth_support.py`, services). O
@@ -235,7 +242,9 @@ Variáveis de ambiente de dev: `LISTEN` (default `127.0.0.1:8090`), `DB_PATH`
 (default `gateway/state/replay.db`), `DAKOTA_ENV` (`lab` default |
 `homologation` | `production`), `DAKOTA_ADMIN` (`user:senha` p/ bootstrap),
 `SECRETS_DIR`, `COOKIE_SECRET_FILE`, `HMAC_KEY_FILE`, `WATCH_MODE` (0 desliga
-hot-reload). O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
+hot-reload), `HOST_METRICS_ENABLED` (0 desliga o sampler de recursos do host),
+`HOST_METRICS_INTERVAL_S` (default `5`), `HOST_METRICS_RETENTION_DAYS`
+(default `7`). O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
 sobe o servidor com `--gateway-auto-activate`.
 
 Execução manual do control plane:
@@ -307,6 +316,11 @@ Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
 bash scripts/final-acceptance.sh   # pipeline de aceitação completo (fases 01–08);
                                    #   gera artifacts/ exigidos pelo build
 ./scripts/build-tarball.sh         # gera dist/dakota-replay2-<VERSION>-<ts>.tar.gz
+bash scripts/build-selfinstall.sh  # gera dist/...run — self-installing archive
+                                   #   (stub selfinstall-stub.sh + tarball); no
+                                   #   servidor: `sh <pkg>.run` instala ou
+                                   #   atualiza (stop→backup db→overlay→perms→
+                                   #   restart+health). Opções: --build, --tarball
 make tailwind                      # rebuilda gateway/control/static/tailwind.css
 bash scripts/bump.sh [patch|minor|major]   # incrementa VERSION
 ```
@@ -390,6 +404,11 @@ De `CONTRIBUTING.md` + prática observada:
   `ts_ms`, hash-chain e HMAC. Sempre rodar `verify` antes de replay/migração.
   Não apontar `verify`/`replay` para diretório misto de capturas (eventos
   passivos de porta 22 não compartilham a cadeia HMAC da sessão PTY).
+- **Capture daemon**: em operação, a escrita auditável é do `capture-daemon`
+  (usuário de serviço) via socket Unix `gateway/state/daemon/capture.sock`;
+  o `capture-session` (ForceCommand, usuário SSH final) só envia eventos.
+  Chave HMAC `0600` e `replay.db` `0660`, sem depender do grupo do usuário.
+  Fallback local (daemon fora) só com `--hmac-key-file`; senão fail-closed.
 - **Bootstrap admin**: preferir `DAKOTA_ADMIN` a `--bootstrap-admin` (o argumento
   expõe senha em histórico de shell e process list). Em `DAKOTA_ENV=production`,
   `DAKOTA_ADMIN` é **obrigatório** e o servidor aborta sem ele.
@@ -419,8 +438,11 @@ De `FRONTEIRAS.md` e `CONTRIBUTING.md`:
 - ❌ PostgreSQL ou outro banco — **SQLite apenas**
 - ❌ Docker / Kubernetes / containers — processo direto no host
 - ❌ Multi-tenancy (`tenant`, `tenant_id`)
-- ❌ Monitoramento de infra (`host_status`, `service_check`) — isso é do
-  projeto separado `r-observe/`
+- ❌ Monitoramento de infra **externa** (`host_status`, `service_check`,
+  probes de outros hosts) — isso é do projeto separado `r-observe/`.
+  Exceção aprovada: o replay2 coleta métricas de recursos do **próprio host**
+  (`host_metrics.py`, painel `/observability/resources`) para correlação com
+  runs de estresse e comparação entre ambientes (ver FRONTEIRAS.md)
 - ❌ Portas 3000/3001/9090 (stack r-observe); control plane usa 8090 (dev) /
   8080 (produção)
 - ❌ Misturar com os projetos irmãos: `remoto_dakota/` (camada operacional de
@@ -458,20 +480,36 @@ Unitários (Py+JS+Tcl) → tests/ + gateway/tests/ + static/js/*.test.mjs + test
 
 ## 8.5. Deploy no Servidor (REGRA OBRIGATÓRIA)
 
-**Sempre usar o script de deploy. NUNCA fazer deploy manual com `scp`/`ssh` soltos.**
+**Sempre usar o script de deploy/instalador. NUNCA fazer deploy manual com `scp`/`ssh` soltos.**
 
 ### Deploy no MIG24 (AIX 10.5.8.25):
 ```bash
 cd /home/jmachado/projetos/dakota/remoto_dakota
 bash scripts/deploy.sh --target aix
 ```
+O deploy AIX usa o **self-installing archive** (`.run`): o script gera o
+instalador em `dist/`, copia via scp e executa `sh <pkg>.run --prefix
+/opt/dakota/replay2` no servidor. O instalador para os serviços, faz backup do
+banco, sobrepõe o código, corrige permissões, atualiza o wrapper SSH, reinicia
+e faz health check.
+
+Manualmente (sem o deploy.sh), o fluxo equivalente é:
+```bash
+cd /home/jmachado/projetos/dakota/replay2
+bash scripts/build-selfinstall.sh
+scp dist/dakota-replay2-<VERSAO>-<ts>.run root@10.5.8.25:/tmp/
+ssh root@10.5.8.25 "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakota/replay2 && rm -f /tmp/dakota-replay2-<VERSAO>-<ts>.run"
+```
 
 ### Deploy no Linux (10.5.8.24):
 ```bash
 SSH_PASSWORD="$SSH_PASSWORD" bash scripts/deploy.sh --target linux
 ```
+(Deploy Linux ainda usa o fluxo tar-pipe; o caminho `.run` ainda não foi
+homologado para Linux.)
 
-O script cuida de: build do tarball, backup do banco, parada do serviço, sincronização, chown, restart e health check.
+O script cuida de: build do tarball/instalador, backup do banco, parada do
+serviço, sincronização, chown, restart e health check.
 
 ### Hotfix (apenas emergência, 1-2 arquivos):
 ```bash

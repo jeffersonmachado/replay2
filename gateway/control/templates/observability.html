@@ -10,8 +10,36 @@ Observability
       <a href="/observability/flows" class="r2ctl-btn-soft" data-tab-link="flows">Fluxos</a>
       <a href="/observability/signatures" class="r2ctl-btn-soft" data-tab-link="signatures">Assinaturas</a>
       <a href="/observability/automation" class="r2ctl-btn-soft" data-tab-link="automation">Automacao</a>
+      <a href="/observability/resources" class="r2ctl-btn-soft" data-tab-link="resources">Recursos</a>
     </div>
   </nav>
+
+  <section id="obs-resources" data-section="resources" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20 space-y-4">
+    <div class="flex flex-wrap items-end gap-3">
+      <div>
+        <label for="obs_res_run" class="text-xs uppercase tracking-[0.14em] text-stone-400">Run (janela da execução)</label>
+        <select id="obs_res_run" class="r2ctl-input mt-1 min-w-56"><option value="">— janela manual —</option></select>
+      </div>
+      <div>
+        <label for="obs_res_from" class="text-xs uppercase tracking-[0.14em] text-stone-400">De</label>
+        <input id="obs_res_from" type="datetime-local" step="1" class="r2ctl-input mt-1" />
+      </div>
+      <div>
+        <label for="obs_res_to" class="text-xs uppercase tracking-[0.14em] text-stone-400">Até</label>
+        <input id="obs_res_to" type="datetime-local" step="1" class="r2ctl-input mt-1" />
+      </div>
+      <button id="obs_res_apply" class="r2ctl-btn-soft text-xs">Aplicar</button>
+      <button id="obs_res_export" class="r2ctl-btn-soft text-xs">Exportar JSON (comparar ambientes)</button>
+      <label class="r2ctl-btn-soft text-xs cursor-pointer">
+        Importar comparação…
+        <input id="obs_res_compare" type="file" accept=".json,application/json" class="hidden" />
+      </label>
+      <button id="obs_res_compare_clear" class="r2ctl-btn-soft text-xs hidden">Limpar comparação</button>
+    </div>
+    <div id="obs_res_status" class="text-xs text-stone-400">Selecione uma run ou uma janela manual para ver os recursos do host.</div>
+    <div id="obs_res_charts" class="grid gap-4 lg:grid-cols-2"></div>
+    <div id="obs_res_stats" class="r2ctl-detail-surface rounded-2xl p-4 hidden"></div>
+  </section>
 
   <section id="obs-overview" data-section="overview" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">

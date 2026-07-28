@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from dakota_gateway.replay_control import query_one
 from control.routes.route_helpers import parse_int, write_json
 from control.routes.gateway_routes import _validated_log_dir
+from control.services.host_metrics_service import build_export, query_host_metrics, run_window
 from control.services.report_service import build_observability_overview, build_runs_trend_report
 from control.services.scenario_service import (
     delete_analytics_scenario,
@@ -16,6 +17,53 @@ from control.services.scenario_service import (
 
 def handle_observability_get_route(handler, parsed_path) -> bool:
     path = parsed_path.path
+    if path == "/api/observability/host-metrics":
+        user = handler._require()
+        if not user:
+            return True
+        qs = parse_qs(parsed_path.query or "")
+        run_id = parse_int((qs.get("run_id") or ["0"])[0] or 0, 0, min_value=0)
+        max_points = parse_int((qs.get("max_points") or ["360"])[0] or 360, 360, min_value=10, max_value=2000)
+        con = handler._db()
+        try:
+            if run_id:
+                window = run_window(con, run_id)
+                if not window:
+                    write_json(handler, 404, {"error": f"run {run_id} nao encontrada"})
+                    return True
+                from_ms, to_ms = window["from_ms"], window["to_ms"]
+            else:
+                from_ms = parse_int((qs.get("from_ms") or ["0"])[0] or 0, 0, min_value=0)
+                to_ms = parse_int((qs.get("to_ms") or ["0"])[0] or 0, 0, min_value=0)
+            if not from_ms or not to_ms or to_ms < from_ms:
+                write_json(handler, 400, {"error": "informe run_id ou from_ms/to_ms validos"})
+                return True
+            payload = query_host_metrics(con, from_ms, to_ms, max_points=max_points)
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
+        return True
+
+    if path == "/api/observability/host-metrics/export":
+        user = handler._require()
+        if not user:
+            return True
+        qs = parse_qs(parsed_path.query or "")
+        run_id = parse_int((qs.get("run_id") or ["0"])[0] or 0, 0, min_value=0)
+        if not run_id:
+            write_json(handler, 400, {"error": "run_id obrigatorio"})
+            return True
+        con = handler._db()
+        try:
+            payload = build_export(con, run_id)
+        finally:
+            handler._db_release(con)
+        if not payload:
+            write_json(handler, 404, {"error": f"run {run_id} nao encontrada"})
+            return True
+        write_json(handler, 200, payload)
+        return True
+
     if path == "/api/observability/overview":
         user = handler._require()
         if not user:

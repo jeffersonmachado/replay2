@@ -29,6 +29,66 @@ from pathlib import Path
 from typing import Optional
 
 
+# Daemons que se auto-destacam por design (double-fork/setsid proprio, ex.:
+# o crashpad handler do Chromium — comm truncada de "chrome_crashpad_handler"
+# para 15 chars pelo kernel) e nao representam vazamento do bloco de teste.
+# Eles herdam o DAKOTA_PROCESS_RUN_ID via ambiente mas vivem em sessao propria
+# e morrem com o browser que os lancou. NUNCA adicionar comms genericas como
+# "sleep"/"cat"/"bash": sao exatamente o formato de um vazamento real.
+_IGNORED_COMMS = frozenset({"chrome_crashpad"})
+
+
+def _is_ignored_comm(p: dict) -> bool:
+    return p.get("comm", "") in _IGNORED_COMMS
+
+
+# Helpers internos lancados por browsers (ex.: os dois `cat` do startup do
+# Chromium, renderers, o crashpad) herdam a sessao isolada que o
+# chromedriver/selenium cria para o browser (setsid por design). Sem este
+# filtro eles eram reportados como "escaped" mesmo com o browser sob controle
+# do teste (falso positivo em tests/test_web_ui_selenium.py).
+_BROWSER_COMMS = frozenset({
+    "chrome", "chromium", "chromium-browser", "chrome_crashpad",
+    "headless_shell", "chromedriver",
+})
+
+_BROWSER_ANCESTOR_MAX_DEPTH = 8
+
+
+def _has_browser_ancestor(p: dict, by_pid: dict[int, dict]) -> bool:
+    """True se a cadeia de ppid (ate _BROWSER_ANCESTOR_MAX_DEPTH niveis) passa
+    por um processo com comm de browser. Usa apenas os processos conhecidos
+    pelo detector; quando o ancestral sai do mapa (morreu entre scans), tenta
+    um ultimo salto via `parent_comm` capturado vivo no scan. Sem evidencia de
+    ancestral browser, retorna False (comportamento anterior se mantem)."""
+    node = p
+    for _ in range(_BROWSER_ANCESTOR_MAX_DEPTH):
+        parent = by_pid.get(node.get("ppid", 0))
+        if parent is None:
+            return node.get("parent_comm", "") in _BROWSER_COMMS
+        if parent.get("comm", "") in _BROWSER_COMMS:
+            return True
+        node = parent
+    return False
+
+
+def _is_escape_ignorable(p: dict, by_pid: dict[int, dict]) -> bool:
+    """escaped: a sessao isolada do browser e' por design — perdoa o browser e
+    seus helpers quando ha evidencia de ancestral browser."""
+    return _is_ignored_comm(p) or _has_browser_ancestor(p, by_pid)
+
+
+def _is_leak_ignorable(p: dict, by_pid: dict[int, dict]) -> bool:
+    """leaked/alive: um browser/chromedriver vivo no fim do bloco e' vazamento
+    real (teste sem quit()) e NUNCA e' perdoado; apenas helpers internos
+    (comm fora de _BROWSER_COMMS) com ancestral browser sao filtrados."""
+    if _is_ignored_comm(p):
+        return True
+    if p.get("comm", "") in _BROWSER_COMMS:
+        return False
+    return _has_browser_ancestor(p, by_pid)
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
@@ -99,12 +159,17 @@ def _find_by_run_id(run_id: str) -> list[dict]:
         env = _proc_environ(pid)
         if env.get("DAKOTA_PROCESS_RUN_ID") == run_id:
             s = _proc_stat(pid)
+            # comm do pai lido vivo: permite identificar helpers de browser
+            # (ex.: os `cat` do Chromium) mesmo quando o browser morre entre
+            # dois scans e nunca entra no mapa de processos conhecidos.
+            parent = _proc_stat(s.get("ppid", 0)) if s.get("ppid", 0) > 0 else {}
             found.append({
                 "pid": pid, "ppid": s.get("ppid", 0),
                 "pgid": s.get("pgid", 0), "sid": s.get("sid", 0),
                 "state": s.get("state", "?"),
                 "start_time_ticks": s.get("start_time_ticks", 0),
                 "comm": s.get("comm", ""),
+                "parent_comm": parent.get("comm", ""),
                 "identity": _pid_identity(pid),
                 "is_zombie": s.get("state") == "Z",
                 "process_run_id": run_id,
@@ -339,14 +404,18 @@ def run_with_timeout(
     result.process_groups_seen = list(set(p["pgid"] for p in all_pids_list))
     result.sessions_seen = list(set(p["sid"] for p in all_pids_list))
 
+    by_pid = {p["pid"]: p for p in all_pids_list}
+
     def _is_escaped(p: dict) -> bool:
         if p["pid"] == pid or p.get("is_zombie"):
             return False
         return p["sid"] != result.sid or p["ppid"] == 1
 
-    result.escaped_processes = [p for p in all_pids_list if _is_escaped(p)]
+    result.escaped_processes = [p for p in all_pids_list
+                                if _is_escaped(p) and not _is_escape_ignorable(p, by_pid)]
     result.leaked_processes = [p for p in all_pids_list
-                                if _pid_alive(p["pid"]) and not p.get("is_zombie")]
+                               if _pid_alive(p["pid"]) and not p.get("is_zombie")
+                               and not _is_leak_ignorable(p, by_pid)]
 
     killed, alive_after_term = _kill_tree(process_run_id, sid, pgid, all_pids_list,
                                           term_deadline, kill_deadline)
@@ -364,7 +433,8 @@ def run_with_timeout(
     result.zombies_after_cleanup = [p for p in zombies_all if _pid_alive(p["pid"])]
 
     result.alive_after_cleanup = [p for p in all_pids_list
-                                   if _pid_alive(p["pid"]) and not _is_zombie(p["pid"]) and p["pid"] != my_pid]
+                                   if _pid_alive(p["pid"]) and not _is_zombie(p["pid"])
+                                   and p["pid"] != my_pid and not _is_leak_ignorable(p, by_pid)]
     result.remaining_processes = len(result.alive_after_cleanup)
     result.remaining_zombies = len(result.zombies_after_cleanup)
 

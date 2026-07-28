@@ -25,10 +25,10 @@ def test_visual_gate_runs_real_chromium_pixel_contract():
     visual = Path("scripts/acceptance/run-phase-07-visual-runner.sh").read_text(encoding="utf-8")
     browser_contract = Path("tests/test_terminal_snapshot_css_contract.py").read_text(encoding="utf-8")
     assert "tests/test_terminal_snapshot_css_contract.py" in visual
-    assert "--headless" in browser_contract
-    assert "--remote-debugging-port" in browser_contract
-    assert "Page.captureScreenshot" in browser_contract
-    assert "Page.setDocumentContent" in browser_contract  # CDP-based, no HTTP
+    assert "puppeteer.launch" in browser_contract
+    assert "headless: 'new'" in browser_contract
+    assert "page.setContent" in browser_contract
+    assert "page.screenshot" in browser_contract
     assert "--dump-dom" not in browser_contract
     # Antifalso-positivo test verifies no HTTP server in visual function source
     assert "from PIL import Image" in browser_contract

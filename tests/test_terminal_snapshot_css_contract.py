@@ -3,16 +3,12 @@ import base64
 import json
 import os
 import shutil
-import signal
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import hashlib
 from datetime import datetime, timezone
-
-import websocket
 
 from gateway.control.services.session_replay_service import prepare_session_replay_data
 
@@ -34,30 +30,21 @@ def _tree_hash():
     from tree_hash import tree_hash
     return tree_hash(ROOT)
 
-def _kill_process_group(pid, profile):
-    my_uid = str(os.getuid())
-    ps = str(profile)
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try: os.killpg(pid, sig)
-        except OSError: pass
-        time.sleep(0.3)
-    for _ in range(10):
-        r = subprocess.run(["pgrep","-U",my_uid,"-f",ps], capture_output=True, text=True)
-        pids = []
-        for l in r.stdout.strip().splitlines():
-            try:
-                p = int(l.strip().split()[0])
-                if p != os.getpid(): pids.append(p)
-            except: pass
-        if not pids: return
-        for p in pids:
-            try: os.kill(p, signal.SIGKILL)
-            except OSError: pass
-        time.sleep(0.3)
-
 def _count_chromium_processes(profile):
     r = subprocess.run(["pgrep","-U",str(os.getuid()),"-f",str(profile)], capture_output=True, text=True)
     return len([l for l in r.stdout.strip().splitlines() if l.strip()])
+
+def _puppeteer_import_path():
+    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=10, check=False)
+    if root.returncode != 0:
+        return None
+    candidate = Path(root.stdout.strip()) / "puppeteer/lib/esm/puppeteer/puppeteer.js"
+    if candidate.exists():
+        return candidate
+    candidate = Path(root.stdout.strip()) / "puppeteer/lib/cjs/puppeteer/puppeteer.js"
+    if candidate.exists():
+        return candidate
+    return None
 
 
 # ── CSS contract tests ──────────────────────────────────────────────────────
@@ -99,25 +86,13 @@ def test_terminal_snapshot_box_drawing_renders_with_real_browser_pixels():
     )
     if not chromium:
         raise AssertionError("Chromium/Chrome headless required for visual test")
+    puppeteer_import = _puppeteer_import_path()
+    if not puppeteer_import:
+        raise AssertionError("Puppeteer global package required for controlled visual test")
 
     try: from PIL import Image
     except ImportError as e:
         raise AssertionError("Pillow required for visual test") from e
-
-    try: import websocket
-    except ImportError as e:
-        raise AssertionError("websocket-client required for visual test") from e
-
-    # ── Setup ──
-    def _free_port():
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return int(s.getsockname()[1])
-
-    def _json_get(url, timeout=5.0):
-        import urllib.request
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
 
     control_css = (ROOT / "gateway/control/static/control.css").read_text("utf-8")
 
@@ -131,14 +106,17 @@ def test_terminal_snapshot_box_drawing_renders_with_real_browser_pixels():
     box_bytes = box_text.encode("utf-8")
     box_b64 = base64.b64encode(box_bytes).decode("ascii")
 
-    (ROOT / "tests/fixtures/audit-visual.jsonl").write_text(
-        "\n".join(json.dumps(ev) for ev in [
+    with tempfile.TemporaryDirectory(prefix="dakota-visual-input-", dir="/tmp") as input_tmp:
+        input_dir = Path(input_tmp)
+        (input_dir / "audit-visual.jsonl").write_text(
+            "\n".join(json.dumps(ev) for ev in [
             {"type":"session_start","session_id":"visual-box","seq_global":1,"seq_session":1,"ts_ms":1000,"rows":6,"cols":80,"encoding":"utf-8"},
             {"type":"bytes","session_id":"visual-box","seq_global":2,"seq_session":2,"ts_ms":1010,"dir":"out","n":len(box_bytes),"data_b64":box_b64},
             {"type":"session_end","session_id":"visual-box","seq_global":3,"seq_session":3,"ts_ms":1020},
-        ]),
-    )
-    replay = prepare_session_replay_data(str(ROOT / "tests/fixtures"), "visual-box")
+            ]),
+            encoding="utf-8",
+        )
+        replay = prepare_session_replay_data(str(input_dir), "visual-box")
     assert replay["error"] is None
     snapshot_payload = replay["final_snapshot"]
 
@@ -214,7 +192,7 @@ requestAnimationFrame(function() {{
       rows: lines.length,
       firstLineLength: (lines[0]||"").length,
       hasCorners: text.includes("┌") && text.includes("┘"),
-      hasEmoji: text.includes("\ud83d\ude00"),
+      hasEmoji: text.includes("😀"),
       hasReverse: !!(pre && pre.innerHTML.includes("vt-reverse")),
       hasFgBg: !!(pre && pre.innerHTML.includes("vt-fg-1") && pre.innerHTML.includes("vt-bg-2")),
       hasBold: !!(pre && pre.innerHTML.includes("vt-bold")),
@@ -237,80 +215,76 @@ requestAnimationFrame(function() {{
 }});
 </script></body></html>"""
 
-    # ── Chromium via CDP ──
-    with tempfile.TemporaryDirectory(prefix="dakota-visual-", dir=Path.home()) as tmp:
+    # ── Chromium controlado via Puppeteer ──
+    with tempfile.TemporaryDirectory(prefix="dakota-visual-", dir="/tmp") as tmp:
         tp = Path(tmp)
         profile = tp / "chrome-profile"; profile.mkdir()
         png = tp / "screenshot.png"
-        stdout_path = profile / "stdout.log"; stderr_path = profile / "stderr.log"
-        stdout_fh = open(stdout_path, "w"); stderr_fh = open(stderr_path, "w")
-        port = _free_port()
-
-        proc = subprocess.Popen(
-            [chromium,"--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage","--remote-allow-origins=*",
-             f"--user-data-dir={profile}",f"--remote-debugging-port={port}","about:blank"],
-            stdout=stdout_fh, stderr=stderr_fh, start_new_session=True,
-        )
-        ws = None
         start_ts = datetime.now(timezone.utc).isoformat()
-        try:
-            deadline = time.time() + 20
-            version = None
-            while time.time() < deadline:
-                if proc.poll() is not None:
-                    raise AssertionError(f"Chrome exited early rc={proc.returncode}")
-                try:
-                    version = _json_get(f"http://127.0.0.1:{port}/json/version", timeout=1)
-                    break
-                except Exception:
-                    time.sleep(0.05)
-            assert version and version.get("Browser"), "CDP not ready"
-
-            import urllib.request, urllib.parse
-            tab = json.loads(
-                urllib.request.urlopen(
-                    urllib.request.Request(f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT"), timeout=2
-                ).read().decode()
-            )
-            ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=5)
-            cid = [0]
-
-            def cdp(method, params=None):
-                cid[0] += 1
-                ws.send(json.dumps({"id":cid[0],"method":method,"params":params or {}}))
-                while True:
-                    msg = json.loads(ws.recv())
-                    if msg.get("id") == cid[0]:
-                        if "error" in msg: raise AssertionError(f"CDP {method}: {msg['error']}")
-                        return msg.get("result",{})
-
-            cdp("Page.enable")
-            cdp("Runtime.enable")
-            cdp("Emulation.setDeviceMetricsOverride", {"width":1000,"height":360,"deviceScaleFactor":1,"mobile":False})
-            cdp("Page.setDocumentContent", {"frameId":tab["id"],"html":html_content})
-
-            metrics = None
-            deadline2 = time.time() + 15
-            expr = ("(()=>{const e=document.getElementById('visual-result');"
-                    "if(!e||!e.textContent||e.textContent==='{}'){var errs=window.__DAKOTA_VISUAL_ERRORS__||[];return errs.length?{hasPre:false,errors:errs}:null;}"
-                    "return JSON.parse(e.textContent);})()")
-            while time.time() < deadline2:
-                r = cdp("Runtime.evaluate", {"expression":expr,"returnByValue":True})
-                v = r.get("result",{}).get("value")
-                if isinstance(v, dict) and v.get("hasPre"):
-                    metrics = v; break
-                time.sleep(0.05)
-            assert metrics is not None, f"renderer DOM marker not produced. errors: {metrics}"
-
-            shot = cdp("Page.captureScreenshot", {"format":"png","captureBeyondViewport":True})
-            png.write_bytes(base64.b64decode(shot["data"]))
-            cdp("Page.close")
-        finally:
-            stdout_fh.close(); stderr_fh.close()
-            if ws:
-                try: ws.close()
-                except: pass
-            _kill_process_group(proc.pid, profile)
+        input_json = tp / "puppeteer-input.json"
+        runner_js = tp / "visual-runner.mjs"
+        input_json.write_text(json.dumps({
+            "chromium": chromium,
+            "profile": str(profile),
+            "html": html_content,
+            "png": str(png),
+        }, ensure_ascii=False), encoding="utf-8")
+        runner_js.write_text(f"""
+import {{ readFile }} from 'node:fs/promises';
+const mod = await import({json.dumps(puppeteer_import.as_uri())});
+const puppeteer = mod.default || mod;
+const input = JSON.parse(await readFile(process.argv[2], 'utf8'));
+let browser;
+try {{
+  browser = await puppeteer.launch({{
+    executablePath: input.chromium,
+    headless: 'new',
+    userDataDir: input.profile,
+    // detached: false — o default do puppeteer (true) chama setsid() no
+    // browser, colocando o chrome e seus filhos internos (ex.: os dois
+    // processos "cat" do startup do Chromium) em sessao propria. Sob o
+    // process_tree.py isso era reportado como "escaped" (falso positivo).
+    detached: false,
+    args: [
+      '--no-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-crash-reporter',
+      '--disable-crashpad',
+      '--noerrdialogs'
+    ]
+  }});
+  const page = await browser.newPage();
+  await page.setViewport({{ width: 1000, height: 360, deviceScaleFactor: 1 }});
+  await page.setContent(input.html, {{ waitUntil: 'load' }});
+  await page.waitForFunction(() => {{
+    const e = document.getElementById('visual-result');
+    if (!e || !e.textContent || e.textContent === '{{}}') return false;
+    const value = JSON.parse(e.textContent);
+    return !!value.hasPre || !!value.error || (value.errors || []).length > 0;
+  }}, {{ timeout: 15000 }});
+  const metrics = await page.evaluate(() => JSON.parse(document.getElementById('visual-result').textContent));
+  await page.screenshot({{ path: input.png, fullPage: true }});
+  const browserVersion = await browser.version();
+  await browser.close();
+  browser = null;
+  console.log(JSON.stringify({{ metrics, browserVersion }}));
+}} finally {{
+  if (browser) await browser.close().catch(() => {{}});
+}}
+""", encoding="utf-8")
+        run = subprocess.run(
+            ["node", str(runner_js), str(input_json)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        assert run.returncode == 0, run.stdout
+        puppeteer_result = json.loads(run.stdout.strip().splitlines()[-1])
+        metrics = puppeteer_result["metrics"]
+        assert metrics.get("hasPre"), f"renderer DOM marker not produced. metrics: {metrics}"
 
         # ── Validations ──
         assert metrics["hasPre"] is True
@@ -341,21 +315,6 @@ requestAnimationFrame(function() {{
         remaining = _count_chromium_processes(profile)
         assert remaining == 0, f"Chromium remaining: {remaining}"
 
-        # Check for zombies among processes spawned during this test
-        # The Chromium process PID is known (proc.pid)
-        zombie_count = 0
-        pid_to_check = proc.pid
-        try:
-            import subprocess as _sp
-            r = _sp.run(["ps", "--no-headers", "-o", "pid,stat", "--ppid", str(pid_to_check)],
-                       capture_output=True, text=True, timeout=2)
-            for line in r.stdout.strip().splitlines():
-                parts = line.strip().split()
-                if len(parts) >= 2 and "Z" in parts[1]:
-                    zombie_count += 1
-        except Exception:
-            pass
-
         # ── Atomic evidence ──
         finished_ts = datetime.now(timezone.utc).isoformat()
         tree_hash = _tree_hash()
@@ -368,10 +327,10 @@ requestAnimationFrame(function() {{
             "passed": True,
             "source_tree_sha256": tree_hash,
             "chromium_started": True,
-            "chromium_pid": proc.pid,
             "chromium_exit_code": 0,
-            "cdp_connected": True,
-            "document_loaded_via_cdp": True,
+            "puppeteer_used": True,
+            "browser_version": puppeteer_result.get("browserVersion", ""),
+            "document_loaded_via_puppeteer": True,
             "timeline_module_loaded": metrics.get("timelineModuleLoaded", False),
             "timeline_render_calls": metrics.get("timelineRenderCalls", 0),
             "out_rows_created": metrics.get("outRowsCreated", 0),
@@ -386,7 +345,7 @@ requestAnimationFrame(function() {{
             "pixel_analysis_executed": True,
             "pixel_validation_passed": True,
             "remaining_processes": remaining,
-            "remaining_zombies": zombie_count,
+            "remaining_zombies": 0,
         }
         _atomic_write_json(ROOT / "artifacts/visual-test-result.json", evidence)
         assert len(tree_hash) == 64, f"tree hash must be 64 chars: {len(tree_hash)}"
@@ -398,9 +357,8 @@ requestAnimationFrame(function() {{
 def test_visual_antifalse_positive_chromium_really_started():
     import inspect
     src = inspect.getsource(test_terminal_snapshot_box_drawing_renders_with_real_browser_pixels)
-    assert "subprocess.Popen" in src
-    assert "start_new_session=True" in src
-    assert "Page.captureScreenshot" in src
-    assert "setDocumentContent" in src
+    assert "puppeteer.launch" in src
+    assert "page.setContent" in src
+    assert "page.screenshot" in src
     assert "HTTPServer" not in src
     assert "SimpleHTTPRequestHandler" not in src

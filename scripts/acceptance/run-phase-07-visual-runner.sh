@@ -74,8 +74,8 @@ assert v.get('source_tree_sha256')!='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649
 assert v.get('screenshot_sha256') is not None and len(v.get('screenshot_sha256',''))==64, f'screenshot_hash_len={len(v.get(\"screenshot_sha256\",\"\"))}'
 assert v.get('run_id','').startswith('visual-'), f'run_id={v.get(\"run_id\")}'
 assert v.get('chromium_started')==True
-assert v.get('cdp_connected')==True
-assert v.get('document_loaded_via_cdp')==True
+assert v.get('puppeteer_used')==True
+assert v.get('document_loaded_via_puppeteer')==True
 assert v.get('renderer_marker_found')==True
 assert v.get('computed_styles_collected')==True
 assert v.get('pixel_analysis_executed')==True

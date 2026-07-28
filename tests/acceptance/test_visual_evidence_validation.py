@@ -76,14 +76,14 @@ def test_evidence_chromium_started():
     assert v.get("chromium_started") is True
 
 
-def test_evidence_cdp_connected():
+def test_evidence_browser_connected():
     v = _load_evidence()
-    assert v.get("cdp_connected") is True
+    assert v.get("puppeteer_used") is True
 
 
 def test_evidence_document_loaded():
     v = _load_evidence()
-    assert v.get("document_loaded_via_cdp") is True
+    assert v.get("document_loaded_via_puppeteer") is True
 
 
 def test_evidence_timeline_module_loaded():

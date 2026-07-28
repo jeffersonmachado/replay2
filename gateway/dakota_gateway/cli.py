@@ -1146,7 +1146,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ns = ap.parse_args(argv)
 
-    if ns.cmd in {"start", "verify", "replay", "capture-session"}:
+    if ns.cmd in {"start", "verify", "replay", "capture-session", "capture-daemon", "capture-resolve"}:
         return handle_runtime_command(ns, _read_key)
 
     if ns.cmd == "env-profiles":
@@ -1317,11 +1317,8 @@ def main(argv: list[str] | None = None) -> int:
                 if ns.match_ignore_case:
                     params["match_ignore_case"] = True
                 if partial:
-                    merged = {}
-                    if params:
-                        merged.update(params)
-                    merged.update(partial)
-                    con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), rid))
+                    params.update(partial)
+                con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (json.dumps(params, ensure_ascii=False), rid))
                 print(rid)
                 return 0
 

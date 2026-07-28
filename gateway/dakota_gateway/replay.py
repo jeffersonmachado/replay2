@@ -123,7 +123,7 @@ class _TargetSession:
         self.session_id = session_id
         self.target_user_override = target_user_override
         self.master_fd, self.slave_fd = pty.openpty()
-        self._configure_pty(rows=cfg.rows, cols=cfg.cols)
+        self._configure_pty(self.slave_fd, rows=cfg.rows, cols=cfg.cols)
         self.proc = subprocess.Popen(
             self._ssh_argv(),
             stdin=self.slave_fd,

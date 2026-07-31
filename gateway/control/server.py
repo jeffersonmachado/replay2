@@ -55,6 +55,8 @@ from control.routes import (
     handle_journey_post_route,
     handle_synthetic_get_route,
     handle_synthetic_post_route,
+    handle_benchmark_get_route,
+    handle_benchmark_post_route,
     handle_ui_get_route,
 )
 from control.routes.route_helpers import write_json
@@ -108,6 +110,7 @@ from control.runtime_supervision import (
     env_bool as _runtime_env_bool,
     reconcile_gateway_capture_startup,
 )
+from control.services.benchmark_service import BenchmarkSupervisor
 from control.page_state_builders import (
     build_audit_state as _build_audit_state_helper,
     build_business_rules_state as _build_business_rules_state_helper,
@@ -219,6 +222,7 @@ class ControlServer(ThreadingHTTPServer):
         capture_log_dir: str = "",
         hmac_key_file: str = "",
         gateway_auto_activate: bool = False,
+        benchmark_artifacts_dir: str = "",
     ):
         super().__init__(addr, handler)
         self.db_path = db_path
@@ -296,6 +300,12 @@ class ControlServer(ThreadingHTTPServer):
             project_root=default_project_root_from_file(__file__),
             hmac_key_file=hmac_key_file,
         )
+        # Execuções de benchmark real (§21): threads daemon supervisionadas,
+        # artefatos em artifacts/benchmarks/<experiment_id>/.
+        self.benchmark_artifacts_dir = benchmark_artifacts_dir or os.path.join(
+            default_project_root_from_file(__file__), "artifacts", "benchmarks")
+        self.benchmark_supervisor = BenchmarkSupervisor(
+            db_path, self.benchmark_artifacts_dir)
 
     def _auto_activate_gateway(self, con):
         """Ativa o gateway automaticamente no boot (regra em gateway_state_service)."""
@@ -600,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if handle_synthetic_get_route(self, p):
             return
+        if handle_benchmark_get_route(self, p):
+            return
 
         # ── P2-A: Knowledge Base API ──
         if p.path == "/api/knowledge-base" or p.path.startswith("/api/knowledge-base/"):
@@ -662,6 +674,8 @@ class Handler(BaseHTTPRequestHandler):
         if handle_journey_post_route(self, p, body):
             return
         if handle_synthetic_post_route(self, p, body):
+            return
+        if handle_benchmark_post_route(self, p, body):
             return
         if handle_observability_post_route(self, p, body):
             return

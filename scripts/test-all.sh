@@ -9,7 +9,7 @@ set -u
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-RESULT_DIR="$ROOT_DIR/artifacts/acceptance-logs/results"
+RESULT_DIR="${DAKOTA_TEST_ALL_RESULTS_DIR:-$ROOT_DIR/artifacts/acceptance-logs/results}"
 mkdir -p "$RESULT_DIR"
 # Remove resultados de execuções anteriores para não misturar suítes antigas
 # (renomeadas/removidas) no resumo desta execução
@@ -61,6 +61,44 @@ echo ""
 printf "${ESC_BOLD}=== test-all.sh — Suite Completa ===${ESC_RESET}\n"
 echo ""
 
+if [ "${DAKOTA_TEST_ALL_SUITES:-}" = "selftest" ]; then
+  # ═════════════════════════════════════════════════════════════════════════
+  # Modo selftest (autoteste do PRÓPRIO runner, usado pelos testes de
+  # desenvolvimento em tests/acceptance/test_gate_process_escape.py).
+  # Não roda as suites reais JS/Python/Tcl. As suites vêm de
+  # DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD no formato "nome=cmd;;nome=cmd",
+  # cada cmd executado via bash -c. Nunca defina essas variáveis em CI,
+  # release ou produção — qualquer valor presente no ambiente será executado.
+  # ═════════════════════════════════════════════════════════════════════════
+  SELFTEST_CMDS="${DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD:-}"
+  if [ -z "$SELFTEST_CMDS" ]; then
+    printf "${ESC_RED}[FAIL]${ESC_RESET} DAKOTA_TEST_ALL_SUITES=selftest exige DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD (formato: nome=cmd;;nome=cmd)\n"
+    exit 2
+  fi
+  _remaining="$SELFTEST_CMDS"
+  while [ -n "$_remaining" ]; do
+    case "$_remaining" in
+      *";;"*)
+        _entry="${_remaining%%;;*}"
+        _remaining="${_remaining#*;;}"
+        ;;
+      *)
+        _entry="$_remaining"
+        _remaining=""
+        ;;
+    esac
+    case "$_entry" in
+      *=*) ;;
+      *)
+        printf "${ESC_RED}[FAIL]${ESC_RESET} entrada de selftest malformada (esperado nome=cmd): %s\n" "$_entry"
+        exit 2
+        ;;
+    esac
+    _name="${_entry%%=*}"
+    _cmd="${_entry#*=}"
+    run_suite "$_name" "$TIMEOUT" bash -c "$_cmd" || true
+  done
+else
 # ═══════════════════════════════════════════════════════════════════════════
 # JavaScript suites — lista única em scripts/js-tests.manifest
 # ═══════════════════════════════════════════════════════════════════════════
@@ -90,6 +128,7 @@ run_suite gateway-tests 120 env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q gat
 
 # Tcl
 run_suite tcl-tests 30 env -u DAKOTA_PROCESS_RUN_ID tclsh tests/all.tcl || true
+fi
 
 echo ""
 printf "${ESC_BOLD}=== Resumo ===${ESC_RESET}\n"

@@ -243,6 +243,7 @@ def handle_engineering_page_get_route(req, p: ParseResult) -> bool:
             "active_menu": "engineering",
             "active_submenu": "engineering_benchmark",
             "state_builder": req._build_pipeline_last_state,
+            "scripts": ["/assets/js/pages/benchmark.js"],
         },
         "/assess": {
             "template": "assess.html",
@@ -273,6 +274,7 @@ def handle_engineering_page_get_route(req, p: ParseResult) -> bool:
         active_menu=page["active_menu"],
         active_submenu=page["active_submenu"],
         page_state=page["state_builder"](),
+        page_scripts=page.get("scripts") or [],
     )
     _send_html(req, html)
     return True

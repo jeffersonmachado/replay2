@@ -14,6 +14,12 @@ Algorithm:
   3. For each file: hash(relpath + "\\n" + size + "\\n" + content)
   4. SHA-256 of concatenated per-file hashes
 
+  O hash composto (passo 3) é o canônico da árvore e sai no stdout (e em
+  artifacts/source-tree-hash.json). Com --manifest, o arquivo
+  artifacts/source-tree-manifest.sha256 leva o sha256 PURO do conteúdo de
+  cada arquivo, no formato "<sha256(content)>  <relpath>" — validável com
+  `sha256sum -c` a partir da raiz.
+
 Excludes:
   .git/, dist/, __pycache__/, .pytest_cache/, *.pyc,
   artifacts/acceptance-logs/, artifacts/visual-failure/,
@@ -57,7 +63,9 @@ EXCLUDE_FILES = {
     "REFATORACAO_ESTABILIZACAO_RELATORIO.md", "REPLAY_FLUXO.md", "ROADMAP.md",
     "SYNTHETIC_DATA_ARQUITETURA.md", "TESTES.md",
     # Build/dev configs not in distributable tarball
-    "Makefile", "package.json", "pytest.ini", "tailwind.config.cjs", "dev.sh",
+    # (package.json e package-lock.json VÃO ao tarball desde 0.7.21 —
+    #  §29: puppeteer pinned reproduzível — por isso NÃO são excluídos aqui)
+    "Makefile", "pytest.ini", "tailwind.config.cjs", "dev.sh",
     # Old artifacts not in tarball
     "artifacts/acceptance-matrix.json",
     # Scripts excluded from tarball (contain credentials/hosts)
@@ -111,7 +119,9 @@ def tree_hash(root: Path, *, manifest: bool = False) -> str:
         ).hexdigest()
         h.update(file_hash.encode())
         if manifest:
-            manifest_lines.append(f"{file_hash}  {rel}")
+            # Manifesto: sha256 PURO do conteudo (compativel com sha256sum -c).
+            content_hash = hashlib.sha256(content).hexdigest()
+            manifest_lines.append(f"{content_hash}  {rel}")
 
     if manifest:
         manifest_path = root / "artifacts/source-tree-manifest.sha256"

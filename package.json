@@ -26,6 +26,9 @@
   ],
   "author": "Dakota Team",
   "license": "Proprietary",
+  "devDependencies": {
+    "puppeteer": "24.40.0"
+  },
   "engines": {
     "node": ">=18.0.0"
   }

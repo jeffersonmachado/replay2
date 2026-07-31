@@ -5,6 +5,7 @@ No whitelist. No || true. No vague assertions.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -175,108 +176,124 @@ def test_gate_fails_on_leak():
 
 # ── 4.6 scripts/test.sh ─────────────────────────────────────────────────────
 
-def test_test_sh_fails_on_escape():
-    """test.sh with adversarial command must detect and fail."""
-    script = _escape_child_script(setsid=True)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(script)
-        escape_py = f.name
-
+def test_test_sh_fails_on_escape(tmp_path):
+    """Executa scripts/test.sh DE VERDADE (modo --js) com o hook
+    DAKOTA_TEST_SH_SELFTEST_CMD apontando para um script (em tmp_path) que
+    deixa um processo destacado vivo. O runner DEVE falhar (exit != 0) e o
+    result.json do bloco selftest em log/test-sh/ DEVE registrar o escape.
+    Nada e' escrito em artifacts/ (logs do test.sh vivem em log/test-sh/)."""
+    pidfile = tmp_path / "escape-child.pid"
+    leaver = tmp_path / "leaver.sh"
+    leaver.write_text(
+        "#!/usr/bin/env bash\n"
+        "# deixa um processo destacado (sessao propria) vivo apos o exit\n"
+        "setsid sleep 60 >/dev/null 2>&1 < /dev/null &\n"
+        f"echo $! > {pidfile}\n"
+        "exit 0\n"
+    )
+    env = {**os.environ, "DAKOTA_TEST_SH_SELFTEST_CMD": f"bash {leaver}"}
     try:
-        # Run process_tree directly on the escape script - this is the same
-        # mechanism test.sh uses via run_with_timeout_pg
         r = subprocess.run(
-            [sys.executable, PT_CLI, "run",
-             "--name", "test-sh-adv", "--timeout", "5",
-             "--stdout-log", "/tmp/test-sh-adv.log",
-             "--result-json", "/tmp/test-sh-adv.json",
-             "--", sys.executable, escape_py],
-            capture_output=True, text=True, timeout=20,
-            cwd=str(ROOT), env={**os.environ, "PYTHONPATH": f"{ROOT}/gateway"},
+            ["bash", TEST_SH, "--js"],
+            capture_output=True, text=True, timeout=240,
+            cwd=str(ROOT), env=env,
         )
-        # process_tree must return non-zero when child escapes
-        assert r.returncode != 0, f"must fail on escape, rc={r.returncode}\n{r.stderr[:500]}"
-
-        # Verify result JSON
-        rj_path = Path("/tmp/test-sh-adv.json")
-        assert rj_path.exists(), "result JSON must exist"
-        rj = json.loads(rj_path.read_text())
-        assert rj["success"] is False, f"must have success=false: {rj}"
+        assert r.returncode != 0, (
+            f"test.sh deveria falhar com escape no bloco selftest, rc={r.returncode}\n"
+            f"stdout={r.stdout[-800:]}"
+        )
+        # Evidencia estruturada do bloco selftest (label "Runner: selftest" ->
+        # tr ' /:' '___' no run_with_timeout_pg do test.sh).
+        result_json = ROOT / "log" / "test-sh" / "test-sh-Runner__selftest.result.json"
+        assert result_json.exists(), f"result JSON do selftest ausente: {result_json}"
+        rj = json.loads(result_json.read_text())
+        assert rj["success"] is False, f"selftest deveria ter success=false: {rj}"
         assert len(rj.get("escaped_processes", [])) >= 1 or len(rj.get("leaked_processes", [])) >= 1, \
-            f"must detect escaped or leaked: {rj}"
-        assert rj["remaining_processes"] == 0
+            f"escape/leak nao registrado no result do selftest: {rj}"
+        assert rj["remaining_processes"] == 0, "processo destacado deveria ter sido eliminado"
     finally:
-        os.unlink(escape_py)
-        for p in ["/tmp/test-sh-adv.log", "/tmp/test-sh-adv.json"]:
+        # Garante que o filho destacado nao vaza do teste se o runner falhar
+        # em elimina-lo.
+        if pidfile.exists():
             try:
-                os.unlink(p)
-            except OSError:
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+            except (OSError, ValueError):
                 pass
 
 
 # ── 4.7 scripts/test-all.sh ─────────────────────────────────────────────────
 
-def test_test_all_sh_continues_on_failure():
-    """test-all.sh must continue other suites when one fails.
-    
-    Uses a minimal inline test that creates one failing suite and verifies
-    the runner continues to subsequent suites and produces summary.
-    Does NOT run the full test-all.sh to avoid recursion with python-full.
-    """
-    import json, tempfile
-    script = f'''#!/usr/bin/env bash
-set -u
-ROOT_DIR="{ROOT}"
-RESULT_DIR="$ROOT_DIR/artifacts/acceptance-logs/results"
-mkdir -p "$RESULT_DIR"
-PYTHONPATH="$ROOT_DIR/gateway"
-echo "=== test-all.sh ==="
-echo "--- suite-a ---"
-python3 "$ROOT_DIR/scripts/process_tree.py" run --name suite-a --timeout 10 --stdout-log /tmp/suite-a.log --result-json "$RESULT_DIR/test-all-suite-a.result.json" -- python3 -c "print('ok')" >/dev/null 2>&1 && echo "  [PASS] suite-a" || echo "  [FAIL] suite-a"
-echo "--- suite-b ---"
-python3 "$ROOT_DIR/scripts/process_tree.py" run --name suite-b --timeout 10 --stdout-log /tmp/suite-b.log --result-json "$RESULT_DIR/test-all-suite-b.result.json" -- python3 -c "import sys; sys.exit(1)" >/dev/null 2>&1 && echo "  [PASS] suite-b" || echo "  [FAIL] suite-b"
-echo "--- suite-c ---"
-python3 "$ROOT_DIR/scripts/process_tree.py" run --name suite-c --timeout 10 --stdout-log /tmp/suite-c.log --result-json "$RESULT_DIR/test-all-suite-c.result.json" -- python3 -c "print('ok')" >/dev/null 2>&1 && echo "  [PASS] suite-c" || echo "  [FAIL] suite-c"
-echo "=== Resumo ==="
-echo "Total: 3 | Pass: 2 | Fail: 1"
-python3 -c "
-import json
-from pathlib import Path
-suites = []
-for name in ['suite-a','suite-b','suite-c']:
-    f = Path('$RESULT_DIR') / f'test-all-{{name}}.result.json'
+def test_test_all_sh_continues_on_failure(tmp_path):
+    """Executa scripts/test-all.sh DE VERDADE com suites de autoteste.
+
+    Contrato esperado (implementacao futura em scripts/test-all.sh):
+    - DAKOTA_TEST_ALL_SUITES="selftest" limita a execucao as suites de
+      autoteste (sem rodar as suites reais JS/Python/Tcl);
+    - DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD define 2+ suites como entradas
+      "nome=comando" separadas por ";;" (comando executado via bash -c);
+    - DAKOTA_TEST_ALL_RESULTS_DIR redireciona TODOS os artefatos de resultado
+      (default historico: artifacts/acceptance-logs/results).
+
+    Cenario: a primeira suite FALHA (exit 1) e a seguinte PASSA (exit 0).
+    Asserts: execucao continuou apos a falha (suite seguinte rodou e consta no
+    summary), exit != 0, e NADA foi escrito em artifacts/."""
+    real_results = ROOT / "artifacts" / "acceptance-logs" / "results"
+    results_dir = tmp_path / "results"
+
+    def _snapshot(d: Path) -> dict:
+        if not d.exists():
+            return {}
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in d.iterdir() if p.is_file()}
+
+    before = _snapshot(real_results)
+
+    env = {
+        **os.environ,
+        "DAKOTA_TEST_ALL_SUITES": "selftest",
+        "DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD": "selftest-falha=exit 1;;selftest-passa=exit 0",
+        "DAKOTA_TEST_ALL_RESULTS_DIR": str(results_dir),
+    }
+    proc = subprocess.Popen(
+        ["bash", TEST_ALL_SH], cwd=str(ROOT), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        start_new_session=True,  # permite matar o grupo inteiro no timeout
+    )
     try:
-        d = json.loads(f.read_text())
-        suites.append({{'name': name, 'success': d.get('success', False), 'exit_code': d.get('exit_code')}})
-    except Exception:
-        suites.append({{'name': name, 'success': False}})
-summary = {{'total': 3, 'passed': sum(1 for s in suites if s.get('success')),
-            'failed': sum(1 for s in suites if not s.get('success')),
-            'all_passed': False, 'suites': suites}}
-(Path('$RESULT_DIR') / 'test-all-summary.json').write_text(json.dumps(summary, indent=2))
-"
-exit 1
-'''
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-        f.write(script)
-        script_path = f.name
-    try:
-        import os, stat
-        os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IEXEC)
-        r = subprocess.run(["bash", script_path], capture_output=True, text=True,
-                           timeout=30, cwd=str(ROOT))
-        output = r.stdout + r.stderr
-        assert "=== Resumo ===" in output, f"no summary: {output}"
-        assert "suite-a" in output and "suite-b" in output and "suite-c" in output, \
-            f"not all suites ran: {output}"
-        summary_json = ROOT / "artifacts" / "acceptance-logs" / "results" / "test-all-summary.json"
-        assert summary_json.exists(), "summary JSON missing"
-        summary = json.loads(summary_json.read_text())
-        assert summary["total"] == 3
-        assert summary["passed"] == 2
-        assert summary["failed"] == 1
-    finally:
-        os.unlink(script_path)
+        out, _ = proc.communicate(timeout=180)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait(timeout=10)
+        pytest.fail(
+            "test-all.sh nao honrou DAKOTA_TEST_ALL_SUITES/DAKOTA_TEST_ALL_SELFTEST_SUITE_CMD "
+            "(rodou as suites reais e estourou o timeout de 180s) — hook de selftest ausente"
+        )
+
+    assert proc.returncode != 0, (
+        f"test-all.sh deveria sair != 0 com uma suite falha, rc={proc.returncode}\n{out[-800:]}"
+    )
+
+    summary_path = results_dir / "test-all-summary.json"
+    assert summary_path.exists(), (
+        f"summary ausente em DAKOTA_TEST_ALL_RESULTS_DIR: {summary_path}\n{out[-800:]}"
+    )
+    summary = json.loads(summary_path.read_text())
+    by_name = {s.get("name"): s for s in summary.get("suites", [])}
+    assert "selftest-falha" in by_name, f"suite falha ausente do summary: {summary}"
+    assert "selftest-passa" in by_name, (
+        f"execucao NAO continuou apos a falha (suite seguinte ausente): {summary}"
+    )
+    assert by_name["selftest-falha"].get("success") is False
+    assert by_name["selftest-passa"].get("success") is True
+
+    after = _snapshot(real_results)
+    assert after == before, (
+        "test-all.sh escreveu em artifacts/acceptance-logs/results mesmo com "
+        "DAKOTA_TEST_ALL_RESULTS_DIR definido — contaminacao de evidencias"
+    )
 
 
 # ── 4.8 exit_code=null ──────────────────────────────────────────────────────

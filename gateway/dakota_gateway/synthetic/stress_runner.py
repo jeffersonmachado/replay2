@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import random
 import threading
 import time
 from dataclasses import dataclass, field
@@ -48,7 +47,14 @@ class StressSessionResult:
 
 @dataclass
 class StressRunResult:
-    """Resultado agregado de uma execução de stress."""
+    """Resultado agregado de uma execução de stress.
+
+    ATENÇÃO: o SyntheticStressRunner não executa terminal real — as telas
+    verificadas são sintetizadas da definição da jornada (ver
+    ``_simulate_screens``). Os resultados são sempre SIMULAÇÃO e jamais
+    podem fundamentar veredito oficial de benchmark ou recomendação de
+    migração (esses exigem amostras reais, ver dakota_gateway/benchmark/).
+    """
     total_sessions: int = 0
     completed: int = 0
     failed: int = 0
@@ -56,6 +62,7 @@ class StressRunResult:
     session_results: list[StressSessionResult] = field(default_factory=list)
     aggregate_verification: Optional[dict] = None
     duration_ms: int = 0
+    simulation: bool = True
 
 
 class SyntheticStressRunner:

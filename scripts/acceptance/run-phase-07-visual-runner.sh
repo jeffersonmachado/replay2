@@ -12,6 +12,22 @@ require_file gateway/control/static/js/components/terminal_snapshot_renderer.tes
 require_file gateway/control/static/js/components/replay_snapshot_state.test.mjs
 assert_no_unexpected_skip tests/acceptance/test_contamination_regression.py
 
+# Preflight: o teste visual exige o pacote npm `puppeteer` (devDependency
+# pinada no package.json da raiz; fallback: instalacao global). Falha cedo
+# com mensagem clara em vez de quebrar no meio da fase.
+PUPPETEER_RESOLVED=$(node -e "
+const paths = ['$ROOT_DIR'];
+try { paths.push(require('child_process').execSync('npm root -g').toString().trim()); } catch (e) {}
+try { require.resolve('puppeteer', { paths }); console.log('ok'); }
+catch (e) { console.log('missing'); }
+" 2>/dev/null || echo "missing")
+if [ "$PUPPETEER_RESOLVED" != "ok" ]; then
+  log_gate "ERROR: pacote npm 'puppeteer' nao resolvivel (node_modules local da raiz nem global)."
+  log_gate "  Instale com: npm install   (na raiz do repo — devDependency pinada no package.json)"
+  exit 1
+fi
+log_gate "preflight: puppeteer resolvido"
+
 PHASE7_ID="phase7-$(date +%Y%m%d-%H%M%S)"
 log_gate "PHASE7 id=$PHASE7_ID"
 

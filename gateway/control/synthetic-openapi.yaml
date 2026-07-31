@@ -86,7 +86,12 @@ paths:
   /api/synthetic/stress:
     post:
       operationId: runStress
-      summary: Executar stress sintético
+      summary: Executar stress sintético (SIMULAÇÃO — telas sintetizadas, sem terminal real)
+      description: >
+        O stress sintético não executa terminal real: as telas verificadas são
+        sintetizadas da definição da jornada. A resposta sempre traz
+        `simulation: true` e o resultado NÃO sustenta veredito oficial de
+        benchmark nem recomendação de migração.
       requestBody:
         required: true
         content:
@@ -99,6 +104,25 @@ paths:
                 concurrency: { type: integer, default: 10 }
                 max_sessions: { type: integer }
                 seed: { type: integer }
+      responses:
+        "200":
+          description: Resultado da simulação de stress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, simulation]
+                properties:
+                  status: { type: string, example: completed }
+                  simulation:
+                    type: boolean
+                    enum: [true]
+                    description: Sempre true — resultado é simulação, não medição real
+                  total_sessions: { type: integer }
+                  completed: { type: integer }
+                  failed: { type: integer }
+                  errors: { type: integer }
+                  duration_ms: { type: integer }
 
   # ── Datasets ──
   /api/synthetic/datasets:

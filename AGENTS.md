@@ -142,7 +142,8 @@ replay2/
 - `assessment.py` — AI Assessment (análise consolidada do sistema legado);
 - `terminal_config.py` — configuração de terminal (geometria, encoding);
 - `host_metrics.py` — coletor de recursos do host (CPU/memória/load/disco;
-  Linux via `/proc`, AIX via `vmstat`/`lsattr`/`lsps`) + `HostMetricsSampler`
+  Linux via `/proc`, AIX via `vmstat`/`lsattr`/`lsps`/`iostat` — disco no AIX
+  cobre taxas, IOPS, % tm_act, iowait e latência via `iostat`/`iostat -D`) + `HostMetricsSampler`
   (thread do control plane que grava na tabela `host_metrics`);
 - `state_db.py` — **helpers de acesso a SQLite** (`connect`, `now_ms`,
   `query_one`, `query_all`, `exec1`): é a API de persistência de facto, usada
@@ -184,7 +185,8 @@ terminal — isso é garantido pelo teste
   (~900 linhas): auth/cookies, helpers e despacho;
 - `routes/` — acoplamento HTTP por domínio (`run_routes`, `capture_routes`,
   `gateway_routes`, `observability_routes`, `catalog_routes`,
-  `operational_routes`, `journey_routes`, `synthetic_routes`, `ui_routes`,
+  `operational_routes`, `journey_routes`, `synthetic_routes`,
+  `benchmark_routes` (benchmark real §21), `ui_routes`,
   `admin_routes`);
 - `services/` — regras e payloads reutilizáveis (reports, cenários, captura,
   sessão/replay, observabilidade, analytics, ambiente);
@@ -329,7 +331,9 @@ bash scripts/bump.sh [patch|minor|major]   # incrementa VERSION
 `artifacts/` não existirem — rode `scripts/final-acceptance.sh` antes. O build
 remove automaticamente do artefato: segredos (`*.key`, `*.pem`, `.env*`, chaves
 SSH), bancos (`*.db*`, `*.sqlite*`), `gateway/state/`, `__pycache__`, `.venv`,
-`node_modules`, `dist/`, `log/`. Ver `CHECKLIST_EMPACOTAMENTO.md` para a
+`node_modules`, `dist/`, `log/`. Quando existe, `artifacts/benchmarks/`
+(evidência do benchmark real AIX×Linux: contrato, runs, agregados, relatório)
+é incluído no pacote. Ver `CHECKLIST_EMPACOTAMENTO.md` para a
 verificação pós-build e o processo de release completo (build → copiar para
 `remoto_dakota/artifacts/` → homologação → `git tag v$(cat VERSION)`).
 

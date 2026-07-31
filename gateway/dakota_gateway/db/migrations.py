@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-from .schema import SCHEMA_SQL
+from .schema import BENCHMARK_SCHEMA_SQL, SCHEMA_SQL
 
 
 def _now_ms() -> int:
@@ -21,6 +21,17 @@ def init_db(con: sqlite3.Connection) -> None:
     _add_column_if_missing(con, "gateway_state", "capture_scope_json", "TEXT")
     # Set default scope: all users, all groups
     _ensure_default_capture_scope(con)
+    # Benchmark real (P2): tabelas benchmark_* (idempotente)
+    migrate_benchmark_tables(con)
+    # host_metrics: colunas de IO detalhado do coletor AIX via iostat
+    # (taxas, IOPS, latência, % tm_act, iowait) — v0.7.22
+    for _col in ("iops", "disk_latency_ms", "disk_busy_pct", "cpu_iowait_pct"):
+        _add_column_if_missing(con, "host_metrics", _col, "REAL")
+
+
+def migrate_benchmark_tables(con: sqlite3.Connection) -> None:
+    """Cria as tabelas do benchmark real de forma idempotente (IF NOT EXISTS)."""
+    con.executescript(BENCHMARK_SCHEMA_SQL)
 
 
 def _add_column_if_missing(con: sqlite3.Connection, table: str, column: str, col_type: str) -> None:

@@ -128,7 +128,14 @@ def handle_journey_get_route(handler, parsed_path) -> bool:
             analysis = verifier.analyze_errors(all_vr)
         finally:
             handler._db_release(con)
-        write_json(handler, 200, {"journey_id": journey_id, "sessions": results, "analysis": analysis})
+        write_json(handler, 200, {
+            "journey_id": journey_id,
+            # telas sintetizadas da definicao da jornada (_simulate_screens):
+            # verificacao de auto-consistencia, NAO execucao real de terminal
+            "simulation": True,
+            "sessions": results,
+            "analysis": analysis,
+        })
         return True
 
     # GET /api/journeys/{id}/report
@@ -297,6 +304,7 @@ def handle_journey_post_route(handler, parsed_path, body: dict | None = None) ->
         write_json(handler, 200, {
             "journey_id": journey_id,
             "journey_name": journey.name,
+            "simulation": stress_result.simulation,
             "sessions": sessions,
             "completed": stress_result.completed,
             "failed": stress_result.failed,

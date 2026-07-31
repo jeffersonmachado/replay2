@@ -1,94 +1,240 @@
-<!-- benchmark.html — Benchmark AIX vs Linux -->
+<!-- benchmark.html — Benchmark real AIX vs Linux (contrato §21) -->
 <div class="r2ctl-section">
   <h2 class="r2ctl-section-title">Benchmark — AIX vs Linux</h2>
-  <p class="r2ctl-section-copy text-sm">Compara performance entre ambientes com mesmas jornadas e massa de dados.</p>
+  <p class="r2ctl-section-copy text-sm">Benchmark REAL: replay pareado das mesmas jornadas e massa de dados nos dois ambientes, com contrato imutável e evidência auditável.</p>
 </div>
 
-<div class="r2ctl-card mb-4">
-  <div class="p-4">
-    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2">
-      <div>
-        <label class="block text-sm text-stone-300 mb-1">Nome do Benchmark</label>
-        <input id="bench_name" type="text" value="Lojas AIX vs Linux" class="r2ctl-input w-full">
-      </div>
-      <div>
-        <label class="block text-sm text-stone-300 mb-1">Journey ID</label>
-        <input id="bench_journey" type="text" value="crud_clientes" class="r2ctl-input w-full">
-      </div>
-    </div>
-
-    <label class="block text-sm text-stone-300 mb-1">Ambientes (JSON)</label>
-    <textarea id="bench_envs" rows="4" class="r2ctl-input w-full mb-3" placeholder='[{"name":"aix","host":"192.0.2.25"},{"name":"linux","host":"192.0.2.30"}]'>[{"name":"aix","host":"192.0.2.25"},{"name":"linux","host":"192.0.2.30"}]</textarea>
-
-    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-3">
-      <div>
-        <label class="block text-sm text-stone-300 mb-1">Concorrencia</label>
-        <input id="bench_concurrency" type="number" value="5" min="1" class="r2ctl-input w-full">
-      </div>
-      <div>
-        <label class="block text-sm text-stone-300 mb-1">Iteracoes</label>
-        <input id="bench_iterations" type="number" value="3" min="1" max="10" class="r2ctl-input w-full">
-      </div>
-      <div>
-        <label class="block text-sm text-stone-300 mb-1">Seed</label>
-        <input id="bench_seed" type="number" value="0" class="r2ctl-input w-full">
-      </div>
-    </div>
-
-    <button id="bench_run_btn" class="r2ctl-btn-brand" onclick="runBenchmark()">
-      ▶ Executar Benchmark
-    </button>
-    <span id="bench_status" class="ml-3 text-sm text-stone-400 hidden"></span>
+<!-- Selo do tipo de resultado (REAL / SIMULATION / INCONCLUSIVE) -->
+<div id="bench_seal" class="r2ctl-card mb-4 p-4 border-stone-600/40">
+  <div class="flex items-center gap-3">
+    <span id="bench_seal_badge" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVE</span>
+    <span id="bench_seal_text" class="text-sm text-stone-300">Nenhum experimento selecionado. Crie um experimento real ou selecione um existente — números só aparecem após execução com amostras reais.</span>
   </div>
 </div>
 
-<div id="bench_result" class="hidden">
-  <div id="bench_summary" class="r2ctl-card mb-3 p-4 text-sm text-stone-200"></div>
-  <div id="bench_envs_result" class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2"></div>
-  <div id="bench_comparisons" class="space-y-2"></div>
+<div class="grid grid-cols-1 gap-4 mb-4 lg:grid-cols-2">
+  <!-- Novo experimento real -->
+  <div class="r2ctl-card">
+    <div class="p-4">
+      <h3 class="text-sm font-semibold text-stone-200 mb-3">Novo experimento real</h3>
+      <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2">
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">ID do experimento (opcional)</label>
+          <input id="bexp_id" type="text" placeholder="bench-auto" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Seed</label>
+          <input id="bexp_seed" type="number" value="0" min="0" class="r2ctl-input w-full">
+        </div>
+      </div>
+      <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2">
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Hash das jornadas (SHA-256)</label>
+          <input id="bexp_journey_hash" type="text" placeholder="journey_set_sha256" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Hash do dataset (SHA-256)</label>
+          <input id="bexp_dataset_hash" type="text" placeholder="dataset_sha256" class="r2ctl-input w-full">
+        </div>
+      </div>
+      <label class="block text-sm text-stone-300 mb-1">Ambientes (JSON — hardware + acesso)</label>
+      <textarea id="bexp_envs" rows="6" class="r2ctl-input w-full mb-3" placeholder='[{"environment_id":"aix","platform":"AIX","architecture":"POWER","host":"192.0.2.25","cpu":{"model":"POWER10","virtual_processors":4,"entitled_capacity":1.0},"memory_mb":16384}]'></textarea>
+      <label class="block text-sm text-stone-300 mb-1">Jornadas (JSON, opcional — executadas no replay)</label>
+      <textarea id="bexp_journeys" rows="3" class="r2ctl-input w-full mb-3" placeholder='[{"journey_id":"crud_clientes","steps":[]}]'></textarea>
+      <div class="grid grid-cols-2 gap-3 mb-3 sm:grid-cols-4">
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Concorrência</label>
+          <input id="bexp_concurrency" type="text" value="1,5,10" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Iterações</label>
+          <input id="bexp_iterations" type="number" value="3" min="1" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Warm-up (s)</label>
+          <input id="bexp_warmup" type="number" value="30" min="0" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Medição (s)</label>
+          <input id="bexp_measurement" type="number" value="60" min="0" class="r2ctl-input w-full">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-3 sm:grid-cols-4">
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Cooldown (s)</label>
+          <input id="bexp_cooldown" type="number" value="10" min="0" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Geometria</label>
+          <input id="bexp_geometry" type="text" value="80x24" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Think time</label>
+          <input id="bexp_think_time" type="text" value="none" class="r2ctl-input w-full">
+        </div>
+        <div>
+          <label class="block text-sm text-stone-300 mb-1">Stop: erro % / p99 ms</label>
+          <div class="flex gap-2">
+            <input id="bexp_stop_error" type="number" value="5" min="0" step="0.1" class="r2ctl-input w-full">
+            <input id="bexp_stop_p99" type="number" value="5000" min="0" class="r2ctl-input w-full">
+          </div>
+        </div>
+      </div>
+      <button id="bexp_create_btn" class="r2ctl-btn-brand">Criar experimento</button>
+      <span id="bexp_create_status" class="ml-3 text-sm text-stone-400"></span>
+    </div>
+  </div>
+
+  <!-- Experimentos existentes -->
+  <div class="r2ctl-card">
+    <div class="p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-stone-200">Experimentos</h3>
+        <button id="bexp_refresh_list_btn" class="r2ctl-btn-soft text-xs">Atualizar</button>
+      </div>
+      <div id="bexp_list_empty" class="text-sm text-stone-400 hidden">Nenhum experimento real criado ainda. Preencha o formulário ao lado para criar o primeiro.</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-stone-400 border-b border-stone-700/40">
+              <th class="py-1 pr-2">Experimento</th>
+              <th class="py-1 pr-2">Status</th>
+              <th class="py-1 pr-2">Veredito</th>
+              <th class="py-1">Criado</th>
+            </tr>
+          </thead>
+          <tbody id="bexp_rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
-<script>
-function escapeHtml(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");}
-async function runBenchmark() {
-  const btn = document.getElementById('bench_run_btn');
-  const status = document.getElementById('bench_status');
-  const result = document.getElementById('bench_result');
-  btn.disabled = true; status.classList.remove('hidden'); status.textContent = 'Executando...'; result.classList.add('hidden');
+<!-- Detalhe do experimento selecionado -->
+<div id="bench_detail" class="hidden">
+  <div class="r2ctl-card mb-4">
+    <div class="p-4">
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        <h3 id="bdetail_title" class="text-sm font-semibold text-stone-200"></h3>
+        <span id="bdetail_status" class="text-xs rounded-full px-2 py-0.5 bg-stone-700/60 text-stone-300"></span>
+        <span class="flex-1"></span>
+        <button id="bdetail_start_btn" class="r2ctl-btn-brand text-xs">▶ Executar</button>
+        <button id="bdetail_cancel_btn" class="r2ctl-btn-soft text-xs">Cancelar</button>
+        <button id="bdetail_refresh_btn" class="r2ctl-btn-soft text-xs">Atualizar</button>
+        <a id="bdetail_report_json" href="#" target="_blank" class="text-xs text-rose-300 hover:underline">report.json</a>
+        <a id="bdetail_report_md" href="#" target="_blank" class="text-xs text-rose-300 hover:underline">report.md</a>
+      </div>
+      <div id="bdetail_reason" class="text-sm text-stone-400 mb-3"></div>
 
-  let envs;
-  try { envs = JSON.parse(document.getElementById('bench_envs').value); } catch(e) { status.textContent = 'JSON invalido'; btn.disabled = false; return; }
+      <!-- Veredito -->
+      <div class="mb-4">
+        <span id="bdetail_verdict" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVE</span>
+        <ul id="bdetail_reasons" class="mt-2 text-sm text-stone-300 list-disc list-inside"></ul>
+        <div id="bdetail_recommendation" class="mt-2 text-sm text-emerald-300 hidden"></div>
+      </div>
 
-  try {
-    const resp = await fetch('/api/synthetic/benchmark', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        name: document.getElementById('bench_name').value,
-        journey_id: document.getElementById('bench_journey').value,
-        environments: envs,
-        concurrency: parseInt(document.getElementById('bench_concurrency').value)||5,
-        iterations: parseInt(document.getElementById('bench_iterations').value)||3,
-        seed: parseInt(document.getElementById('bench_seed').value)||0,
-      }),
-    });
-    const data = await resp.json();
+      <!-- Contrato -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Contrato imutável</h4>
+      <div class="grid grid-cols-1 gap-2 mb-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Contrato SHA-256</span><br><code id="bdetail_contract_sha" class="text-stone-200 break-all"></code></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Hash das jornadas</span><br><code id="bdetail_journey_sha" class="text-stone-200 break-all"></code></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Hash do dataset</span><br><code id="bdetail_dataset_sha" class="text-stone-200 break-all"></code></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Concorrência</span><br><span id="bdetail_concurrency" class="text-stone-200"></span></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Iterações</span><br><span id="bdetail_iterations" class="text-stone-200"></span></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Warm-up / Medição / Cooldown</span><br><span id="bdetail_phases" class="text-stone-200"></span></div>
+      </div>
 
-    if (resp.ok) {
-      document.getElementById('bench_summary').innerHTML = '<strong>' + escapeHtml(data.summary||'').replace(/\n/g, '<br>') + '</strong>';
-      document.getElementById('bench_envs_result').innerHTML = (data.environments||[]).map(e =>
-        `<div class="r2ctl-card p-3"><span class="text-sm text-stone-300">${escapeHtml(e.name)} (${escapeHtml(e.host)})</span><br>
-         TPS: ${e.tps} | Lat: ${e.avg_latency_ms}ms | Erros: ${e.errors} | Diverg: ${e.divergences}</div>`
-      ).join('');
-      document.getElementById('bench_comparisons').innerHTML = (data.comparisons||[]).map(c =>
-        `<div class="r2ctl-card p-3 ${c.verdict==='PASS'?'border-green-700/40':c.verdict==='WARN'?'border-amber-700/40':'border-red-700/40'}">
-          <span class="text-sm font-medium ${c.verdict==='PASS'?'text-green-300':c.verdict==='WARN'?'text-amber-300':'text-red-300'}">${escapeHtml(c.verdict)}</span>
-          <span class="text-sm text-stone-300 ml-2">${escapeHtml(c.baseline)} vs ${escapeHtml(c.target)}</span>
-          <div class="text-xs text-stone-400 mt-1">${escapeHtml((c.recommendations||[]).join(' | '))}</div>
-        </div>`
-      ).join('');
-      status.textContent = 'Concluido'; result.classList.remove('hidden');
-    } else { status.textContent = 'Erro: ' + (data.error||'desconhecido'); }
-  } catch(e) { status.textContent = 'Erro: ' + e.message; }
-  btn.disabled = false;
-}
-</script>
+      <!-- Ambientes + hardware -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Ambientes e hardware</h4>
+      <div id="bdetail_envs" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
+
+      <!-- Desempenho por ambiente -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Desempenho (amostras de MEASUREMENT, pooling)</h4>
+      <div id="bdetail_stats_empty" class="text-sm text-stone-400 mb-4 hidden">Sem amostras reais — execute o experimento para ver TPS, percentis e erros.</div>
+      <div id="bdetail_stats" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
+
+      <!-- Degradação e limites -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Degradação, limites e recuperação</h4>
+      <div id="bdetail_degradation" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
+
+      <!-- Resultado absoluto e normalizado -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Capacidade absoluta e eficiência normalizada</h4>
+      <div id="bdetail_capacity" class="grid grid-cols-1 gap-3 mb-2 sm:grid-cols-2"></div>
+      <div id="bdetail_normalization" class="mb-4"></div>
+
+      <!-- Host (CPU/memória/I/O) -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Recursos do host durante a medição</h4>
+      <div id="bdetail_host_empty" class="text-sm text-stone-400 mb-4 hidden">Sem amostras de host coletadas.</div>
+      <div id="bdetail_host" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
+
+      <!-- Runs -->
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Runs</h4>
+      <div id="bdetail_runs_empty" class="text-sm text-stone-400 hidden">Nenhuma run registrada.</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-stone-400 border-b border-stone-700/40">
+              <th class="py-1 pr-2">Run</th>
+              <th class="py-1 pr-2">Ambiente</th>
+              <th class="py-1 pr-2">Iteração</th>
+              <th class="py-1 pr-2">Concorrência</th>
+              <th class="py-1 pr-2">Status</th>
+              <th class="py-1">Erro</th>
+            </tr>
+          </thead>
+          <tbody id="bdetail_runs_rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Benchmark sintético legado (SIMULAÇÃO) -->
+<div class="r2ctl-card mb-4 border-amber-700/40">
+  <div class="p-4">
+    <h3 class="text-sm font-semibold text-amber-300 mb-2">Benchmark sintético (legado) — SIMULAÇÃO</h3>
+    <div class="rounded-xl border border-amber-600/50 bg-amber-950/40 p-3 mb-3 text-sm text-amber-200">
+      <strong>ATENÇÃO:</strong> os números desta seção são gerados por simulação determinística por seed.
+      <strong>NÃO são medição real</strong> e <strong>NÃO sustentam decisão de migração</strong>.
+      Para decisão, use o experimento real acima.
+    </div>
+    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2">
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Nome</label>
+        <input id="bsim_name" type="text" value="Simulacao AIX vs Linux" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Journey ID</label>
+        <input id="bsim_journey" type="text" value="crud_clientes" class="r2ctl-input w-full">
+      </div>
+    </div>
+    <label class="block text-sm text-stone-300 mb-1">Ambientes (JSON)</label>
+    <textarea id="bsim_envs" rows="3" class="r2ctl-input w-full mb-3">[{"name":"aix","host":"192.0.2.25"},{"name":"linux","host":"192.0.2.30"}]</textarea>
+    <div class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-3">
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Concorrencia</label>
+        <input id="bsim_concurrency" type="number" value="5" min="1" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Iteracoes</label>
+        <input id="bsim_iterations" type="number" value="3" min="1" max="10" class="r2ctl-input w-full">
+      </div>
+      <div>
+        <label class="block text-sm text-stone-300 mb-1">Seed</label>
+        <input id="bsim_seed" type="number" value="0" class="r2ctl-input w-full">
+      </div>
+    </div>
+    <button id="bsim_run_btn" class="r2ctl-btn-soft border-amber-600/50 text-amber-200">▶ Executar simulação</button>
+    <span id="bsim_status" class="ml-3 text-sm text-stone-400 hidden"></span>
+  </div>
+</div>
+
+<div id="bsim_result" class="hidden mb-4">
+  <div class="rounded-xl border border-amber-600/50 bg-amber-950/40 p-3 mb-3 text-sm text-amber-200">
+    <span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-amber-600/30 text-amber-200 mr-2">SIMULATION</span>
+    Resultado de simulação — os números abaixo NÃO são medição real e NÃO sustentam decisão de migração.
+  </div>
+  <div id="bsim_summary" class="r2ctl-card mb-3 p-4 text-sm text-stone-200"></div>
+  <div id="bsim_envs_result" class="grid grid-cols-1 gap-3 mb-3 sm:grid-cols-2"></div>
+  <div id="bsim_comparisons" class="space-y-2"></div>
+</div>

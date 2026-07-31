@@ -56,6 +56,7 @@ class HomologationReport:
         }
 
         if stress_result:
+            report["simulation"] = getattr(stress_result, "simulation", True)
             report["summary"] = {
                 "total_sessions": stress_result.total_sessions,
                 "completed": stress_result.completed,

@@ -21,11 +21,15 @@ from dakota_gateway.host_metrics import (
     HostMetricsSampler,
     LinuxCollector,
     _base_sample,
+    parse_iostat_aix,
+    parse_iostat_d_aix,
     parse_lsattr_realmem_kb,
     parse_lsps_swap_pct,
     parse_proc_diskstats,
+    parse_proc_diskstats_full,
     parse_proc_meminfo,
     parse_proc_stat_cpu,
+    parse_proc_stat_iowait,
     parse_uptime_loadavg,
     parse_vmstat_aix,
 )
@@ -83,6 +87,70 @@ LSPS_S = """Total Paging Space   Percent Used
 UPTIME_AIX = """  01:30PM   up 10 days,  2:34,  5 users,  load average: 1.20, 1.10, 1.05
 """
 
+# Formato real capturado no MIG24 (AIX 7300-02): `iostat 1 2` — o 1º relatório
+# é o acumulado desde o boot; o 2º é o do intervalo de 1 s.
+IOSTAT_AIX = """
+System configuration: lcpu=4 drives=6 paths=5 vdisks=3
+
+tty:      tin         tout    avg-cpu: % user % sys % idle % iowait
+          0.0          0.0                0.9  34.6   61.5      3.0
+
+Disks:         % tm_act     Kbps      tps    Kb_read   Kb_wrtn
+cd0               0.0       0.0       0.0          0         0
+hdisk9            0.0       8.0       2.0          0         8
+hdisk8            0.0      68.0      17.0          0        68
+hdisk6            0.0       0.0       0.0          0         0
+hdisk7            0.0       0.0       0.0          0         0
+hdisk0           36.0     324.0      64.0         32       292
+
+tty:      tin         tout    avg-cpu: % user % sys % idle % iowait
+          0.0          0.0                1.1   1.4   97.5      0.0
+
+Disks:         % tm_act     Kbps      tps    Kb_read   Kb_wrtn
+cd0               0.0       0.0       0.0          0         0
+hdisk9            0.0       0.0       0.0          0         0
+hdisk8            0.0       0.0       0.0          0         0
+hdisk6            0.0       0.0       0.0          0         0
+hdisk7            0.0       0.0       0.0          0         0
+hdisk0            0.0       8.0       2.0          8         0
+"""
+
+# `iostat -D 1 2` no formato real do MIG24 (2 intervalos; valores do 2º
+# relatório sintéticos para exercitar a ponderação — formato é o real).
+IOSTAT_D_AIX = """
+System configuration: lcpu=4 drives=6 paths=5 vdisks=3
+
+hdisk0          xfer:  %tm_act      bps      tps      bread      bwrtn
+                         36.0   33000.0     64.0      32.0     292.0
+                read:      rps  avgserv  minserv  maxserv   timeouts      fails
+                          5.0      9.9      0.1     20.0           0          0
+               write:      wps  avgserv  minserv  maxserv   timeouts      fails
+                         10.0      8.4      1.2     16.2           0          0
+               queue:  avgtime  mintime  maxtime  avgwqsz    avgsqsz     sqfull
+                          0.0      0.0      0.0      0.0        0.0         0.0
+--------------------------------------------------------------------------------
+hdisk0          xfer:  %tm_act      bps      tps      bread      bwrtn
+                         12.0   40000.0     15.0      8192.0   32768.0
+                read:      rps  avgserv  minserv  maxserv   timeouts      fails
+                         10.0      2.0      0.1      8.4           0          0
+               write:      wps  avgserv  minserv  maxserv   timeouts      fails
+                          5.0      4.0      1.2     16.2           0          0
+               queue:  avgtime  mintime  maxtime  avgwqsz    avgsqsz     sqfull
+                          0.0      0.0      0.0      0.0        0.0         0.0
+"""
+
+IOSTAT_D_AIX_SEM_IO = """
+hdisk0          xfer:  %tm_act      bps      tps      bread      bwrtn
+                          0.0      0.0      0.0        0.0        0.0
+                read:      rps  avgserv  minserv  maxserv   timeouts      fails
+                          0.0      0.0      0.0      0.0           0          0
+               write:      wps  avgserv  minserv  maxserv   timeouts      fails
+                          0.0      0.0      0.9      9.9           0          0
+               queue:  avgtime  mintime  maxtime  avgwqsz    avgsqsz     sqfull
+                          0.0      0.0      0.0      0.0        0.0         0.0
+"""
+
+
 
 class TestParsersLinux(unittest.TestCase):
     def test_proc_stat_cpu(self):
@@ -109,6 +177,19 @@ class TestParsersLinux(unittest.TestCase):
         # sda (2000/4000) + nvme0n1 (8000/16000); sda1, nvme0n1p1 e loop0 fora
         self.assertEqual(read, 10000)
         self.assertEqual(written, 20000)
+
+    def test_proc_diskstats_full_campos_por_disco(self):
+        discos = parse_proc_diskstats_full(PROC_DISKSTATS)
+        self.assertEqual(set(discos), {"sda", "nvme0n1"})  # sem partições/loop
+        # sda: rd_ios=100, rd_sectors=2000, rd_ticks=0, wr_ios=50,
+        #      wr_sectors=4000, wr_ticks=0, time_in_io=0
+        self.assertEqual(discos["sda"], (100, 2000, 0, 50, 4000, 0, 0))
+        self.assertEqual(discos["nvme0n1"], (200, 8000, 0, 100, 16000, 0, 0))
+
+    def test_proc_stat_iowait(self):
+        iowait, total = parse_proc_stat_iowait(PROC_STAT)
+        self.assertEqual((iowait, total), (20, 975))
+        self.assertEqual(parse_proc_stat_iowait(""), (0, 0))
 
 
 class TestParsersAix(unittest.TestCase):
@@ -141,6 +222,88 @@ class TestParsersAix(unittest.TestCase):
     def test_uptime_loadavg(self):
         self.assertEqual(parse_uptime_loadavg(UPTIME_AIX), (1.20, 1.10, 1.05))
         self.assertIsNone(parse_uptime_loadavg("sem load average"))
+
+    def test_iostat_usa_ultimo_relatorio(self):
+        """O 1º relatório do iostat é desde-boot; o parser usa o do intervalo."""
+        io = parse_iostat_aix(IOSTAT_AIX)
+        # 2º relatório: hdisk0 Kb_read=8 Kb_wrtn=0 tps=2 tm_act=0; iowait=0
+        self.assertEqual(io["disk_read_kbs"], 8.0)
+        self.assertEqual(io["disk_write_kbs"], 0.0)
+        self.assertEqual(io["iops"], 2.0)
+        self.assertEqual(io["disk_busy_pct"], 0.0)
+        self.assertEqual(io["cpu_iowait_pct"], 0.0)
+        # se usasse o relatório desde-boot: read=32, write=360, iowait=3.0
+        self.assertNotEqual(io["disk_read_kbs"], 32.0)
+        self.assertNotEqual(io["cpu_iowait_pct"], 3.0)
+
+    def test_iostat_disco_saturado(self):
+        saturado = IOSTAT_AIX.replace(
+            "hdisk0            0.0       8.0       2.0          8         0",
+            "hdisk0           94.5     512.0     128.0        64       448",
+        )
+        io = parse_iostat_aix(saturado)
+        self.assertEqual(io["disk_busy_pct"], 94.5)
+        self.assertEqual(io["disk_read_kbs"], 64.0)
+        self.assertEqual(io["disk_write_kbs"], 448.0)
+        self.assertEqual(io["iops"], 128.0)
+
+    def test_iostat_vazio_retorna_dict_vazio(self):
+        self.assertEqual(parse_iostat_aix(""), {})
+        self.assertEqual(parse_iostat_aix("lixo\n"), {})
+
+    def test_iostat_d_latencia_ponderada_do_ultimo_relatorio(self):
+        # último relatório: read 10 ops @2.0ms + write 5 ops @4.0ms → 40/15
+        self.assertEqual(parse_iostat_d_aix(IOSTAT_D_AIX), 2.67)
+
+    def test_iostat_d_sem_io_retorna_none(self):
+        """Sem operações no intervalo não há latência medida (nunca 0.0)."""
+        self.assertIsNone(parse_iostat_d_aix(IOSTAT_D_AIX_SEM_IO))
+        self.assertIsNone(parse_iostat_d_aix(""))
+
+    def test_iostat_d_tolerante_a_sufixos(self):
+        """Sob carga o AIX imprime sufixos (caso real: maxtime '1.1S' no MIG24)."""
+        com_sufixo = IOSTAT_D_AIX.replace(
+            "                         10.0      2.0      0.1      8.4           0          0",
+            "                         1.2K      1.1S     0.1      8.4           0          0",
+        )
+        # read: 1200 ops @1100 ms; write: 5 ops @4.0 ms → (1200*1100+20)/1205
+        self.assertEqual(parse_iostat_d_aix(com_sufixo), 1095.45)
+
+    def test_aix_collector_coleta_disco_via_iostat(self):
+        outputs = {
+            "vmstat": VMSTAT_AIX,
+            "lsattr": LSATTR_REALMEM,
+            "lsps": LSPS_S,
+            "uptime": UPTIME_AIX,
+            "iostat": IOSTAT_AIX,
+        }
+        collector = AixCollector()
+        collector._run = lambda cmd: outputs.get(cmd[0], "") if "-D" not in cmd else IOSTAT_D_AIX
+        with mock.patch.object(os, "getloadavg", None):
+            sample = collector.sample(123)
+        self.assertEqual(sample["disk_read_kbs"], 8.0)
+        self.assertEqual(sample["iops"], 2.0)
+        self.assertEqual(sample["disk_latency_ms"], 2.67)
+        self.assertIn("disk_busy_pct", sample)
+        self.assertIn("cpu_iowait_pct", sample)
+
+    def test_aix_collector_sem_iostat_campos_none(self):
+        """iostat ausente/falho deixa os campos de IO None (nunca zero)."""
+        outputs = {
+            "vmstat": VMSTAT_AIX,
+            "lsattr": LSATTR_REALMEM,
+            "lsps": LSPS_S,
+            "uptime": UPTIME_AIX,
+        }
+        collector = AixCollector()
+        collector._run = lambda cmd: outputs.get(cmd[0], "")
+        with mock.patch.object(os, "getloadavg", None):
+            sample = collector.sample(123)
+        self.assertIsNone(sample["disk_read_kbs"])
+        self.assertIsNone(sample["iops"])
+        self.assertIsNone(sample["disk_latency_ms"])
+        self.assertIsNone(sample["disk_busy_pct"])
+        self.assertIsNone(sample["cpu_iowait_pct"])
 
     def test_aix_collector_sem_getloadavg_usa_uptime(self):
         """AIX não tem os.getloadavg: load vem do `uptime`; amostra não quebra."""
@@ -184,6 +347,55 @@ class TestLinuxCollectorComProcFake(unittest.TestCase):
             self.assertGreater(second["cpu_pct"], 0)
             self.assertEqual(second["mem_pct"], 50.0)
 
+    PROC_STAT_2 = "cpu  600 0 50 1250 70 0 5 0 0 0\n"
+    PROC_DISKSTATS_2 = (
+        "   8       0 sda 200 0 4000 500 100 0 8000 150 0 600 0\n"
+        "   8       1 sda1 10 0 200 0 5 0 400 0 0 0 0\n"
+        " 259       0 nvme0n1 200 0 8000 0 100 0 16000 0 0 0 0\n"
+    )
+
+    def test_disco_e_iowait_por_delta_parcidade_aix(self):
+        """IOPS, latência, % busy e iowait derivados de /proc (paridade AIX)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            (proc / "meminfo").write_text(PROC_MEMINFO)
+            (proc / "diskstats").write_text(PROC_DISKSTATS)
+            (proc / "stat").write_text(PROC_STAT)
+            # clock injetado (nunca patch global de time.monotonic — flake)
+            collector = LinuxCollector(proc_root=tmp, clock=iter([100.0, 105.0]).__next__)
+            first = collector.sample(1000)
+            self.assertIsNone(first["iops"])           # sem delta na 1ª
+            self.assertIsNone(first["disk_latency_ms"])
+            self.assertIsNone(first["cpu_iowait_pct"])
+            (proc / "diskstats").write_text(self.PROC_DISKSTATS_2)
+            (proc / "stat").write_text(self.PROC_STAT_2)
+            second = collector.sample(2000)
+            # sda em 5 s: Δrd_ios=100, Δwr_ios=50 → 150 ops → 30 IOPS
+            self.assertEqual(second["iops"], 30.0)
+            # latência ponderada: (500+150) ms ÷ 150 ops = 4.33 ms
+            self.assertEqual(second["disk_latency_ms"], 4.33)
+            # busy: Δtime_in_io=600 ms em 5000 ms → 12.0%
+            self.assertEqual(second["disk_busy_pct"], 12.0)
+            # iowait: Δ50 jiffies em Δ1000 → 5.0%
+            self.assertEqual(second["cpu_iowait_pct"], 5.0)
+            # taxas seguem funcionando: Δrd_sectors=2000, Δwr_sectors=4000
+            self.assertEqual(second["disk_read_kbs"], round(2000 * 512 / 1024 / 5, 1))
+            self.assertEqual(second["disk_write_kbs"], round(4000 * 512 / 1024 / 5, 1))
+
+    def test_disco_sem_io_no_delta_latencia_none(self):
+        """Sem operações no intervalo: latência None (nunca 0.0 fingido)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            (proc / "meminfo").write_text(PROC_MEMINFO)
+            (proc / "diskstats").write_text(PROC_DISKSTATS)
+            (proc / "stat").write_text(PROC_STAT)
+            collector = LinuxCollector(proc_root=tmp, clock=iter([100.0, 105.0]).__next__)
+            collector.sample(1000)
+            second = collector.sample(2000)  # diskstats idêntico → Δios=0
+            self.assertIsNone(second["disk_latency_ms"])
+            self.assertIsNone(second["iops"])
+            self.assertEqual(second["disk_busy_pct"], 0.0)  # busy medido: 0
+
 
 class HostMetricsDbCase(unittest.TestCase):
     def setUp(self):
@@ -208,6 +420,29 @@ class HostMetricsDbCase(unittest.TestCase):
                 )
         finally:
             self.pool.release(con)
+
+    def test_migracao_adiciona_colunas_de_io_em_db_antigo(self):
+        """DB criado antes da v0.7.22 (sem colunas de IO) é migrado pelo init_db."""
+        import sqlite3
+        from dakota_gateway.host_metrics import INSERT_SQL
+        raw = sqlite3.connect(str(Path(self.tmp.name) / "old.db"))
+        raw.row_factory = sqlite3.Row
+        raw.execute(
+            "CREATE TABLE host_metrics ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL,"
+            " cpu_pct REAL, load1 REAL, load5 REAL, load15 REAL,"
+            " mem_total_mb REAL, mem_used_mb REAL, mem_pct REAL, swap_pct REAL,"
+            " disk_read_kbs REAL, disk_write_kbs REAL)"
+        )
+        init_db(raw)
+        cols = {row["name"] for row in raw.execute("PRAGMA table_info(host_metrics)")}
+        for col in ("iops", "disk_latency_ms", "disk_busy_pct", "cpu_iowait_pct"):
+            self.assertIn(col, cols)
+        # INSERT do sampler (todos os FIELDS) funciona no DB migrado
+        raw.execute(INSERT_SQL, (1,) + tuple(None for _ in FIELDS))
+        # idempotente: segunda passada não falha
+        init_db(raw)
+        raw.close()
 
     def test_sampler_grava_amostra(self):
         sampler = HostMetricsSampler(self.pool, interval_s=1)

@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import signal
+import subprocess
 import tempfile
 import threading
 import time
@@ -31,6 +34,53 @@ try:
     from selenium.webdriver.chrome.options import Options as ChromeOptions
 except Exception:  # pragma: no cover - optional dependency
     webdriver = None
+
+
+def _kill_process_tree(pid):
+    """Mata o processo e todos os descendentes (chromedriver -> chrome ->
+    helpers). Teardown obrigatorio: sem allowlist por nome no process_tree.py,
+    qualquer processo do browser que sobreviva ao teste e' classificado como
+    vazamento/escape."""
+    if not pid:
+        return
+
+    def _descendants(root_pid):
+        try:
+            r = subprocess.run(
+                ["ps", "--no-headers", "-eo", "pid,ppid"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            return []
+        children = {}
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                children.setdefault(int(parts[1]), []).append(int(parts[0]))
+        found, stack = [], [root_pid]
+        while stack:
+            cur = stack.pop()
+            for child in children.get(cur, []):
+                found.append(child)
+                stack.append(child)
+        return found
+
+    for _ in range(5):
+        alive = []
+        for target in _descendants(pid) + [pid]:
+            try:
+                os.kill(target, 0)
+                alive.append(target)
+            except OSError:
+                pass
+        if not alive:
+            return
+        for target in alive:
+            try:
+                os.kill(target, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(1)
 
 
 @unittest.skipUnless(webdriver is not None, "selenium nao instalado — testes de UI pulados (sem falso positivo)")
@@ -70,11 +120,26 @@ class TestWebUISelenium(unittest.TestCase):
         chrome_opts.add_argument("--headless=new")
         chrome_opts.add_argument("--no-sandbox")
         chrome_opts.add_argument("--disable-dev-shm-usage")
+        # Sem crashpad: o handler se auto-destaca (sessao propria) e seria
+        # flagado como escape/vazamento pelo process_tree.py.
+        chrome_opts.add_argument("--disable-crashpad")
+        chrome_opts.add_argument("--disable-crash-reporter")
         self.driver = webdriver.Chrome(options=chrome_opts)
 
     def tearDown(self):
-        if getattr(self, "driver", None):
-            self.driver.quit()
+        driver = getattr(self, "driver", None)
+        if driver is not None:
+            service_pid = None
+            try:
+                service_pid = driver.service.process.pid
+            except Exception:
+                service_pid = None
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            # Garante que nada do browser sobrevive (quit() best-effort).
+            _kill_process_tree(service_pid)
         if getattr(self, "server", None):
             self.server.shutdown()
         if getattr(self, "tmpdir", None):

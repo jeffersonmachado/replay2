@@ -561,9 +561,108 @@ CREATE TABLE IF NOT EXISTS host_metrics (
   mem_pct REAL,
   swap_pct REAL,
   disk_read_kbs REAL,
-  disk_write_kbs REAL
+  disk_write_kbs REAL,
+  iops REAL,
+  disk_latency_ms REAL,
+  disk_busy_pct REAL,
+  cpu_iowait_pct REAL
 );
 
 CREATE INDEX IF NOT EXISTS host_metrics_ts ON host_metrics(ts_ms);
+"""
+
+# ── Benchmark real (AIX vs Linux) ──────────────────────────────────────────
+# Tabelas do pacote dakota_gateway/benchmark (contrato dev/benchmark-api-contract.md).
+# Criadas de forma idempotente pela migração migrate_benchmark_tables() em
+# db/migrations.py. Campos de host indisponíveis ficam NULL (nunca zero fingido).
+BENCHMARK_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS benchmark_experiments (
+  experiment_id TEXT PRIMARY KEY,
+  contract_json TEXT NOT NULL,
+  contract_sha256 TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'CREATED',
+  verdict TEXT NOT NULL DEFAULT 'INCONCLUSIVE',
+  reason TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_runs (
+  run_id TEXT PRIMARY KEY,
+  experiment_id TEXT NOT NULL REFERENCES benchmark_experiments(experiment_id),
+  environment_id TEXT NOT NULL,
+  iteration INTEGER NOT NULL,
+  concurrency INTEGER NOT NULL,
+  phase_order TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,
+  started_at_ms INTEGER,
+  finished_at_ms INTEGER,
+  error_reason TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS benchmark_runs_experiment
+ON benchmark_runs(experiment_id, iteration, concurrency);
+
+CREATE TABLE IF NOT EXISTS benchmark_app_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES benchmark_runs(run_id) ON DELETE CASCADE,
+  virtual_user_id TEXT NOT NULL DEFAULT '',
+  journey_id TEXT NOT NULL DEFAULT '',
+  step_id TEXT NOT NULL DEFAULT '',
+  phase TEXT NOT NULL,
+  started_ns INTEGER NOT NULL,
+  finished_ns INTEGER NOT NULL,
+  latency_ms REAL NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0,
+  timeout INTEGER NOT NULL DEFAULT 0,
+  functional_divergence INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT
+);
+
+CREATE INDEX IF NOT EXISTS benchmark_app_samples_run
+ON benchmark_app_samples(run_id, phase);
+
+CREATE TABLE IF NOT EXISTS benchmark_host_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id TEXT NOT NULL,
+  environment_id TEXT NOT NULL,
+  run_id TEXT NOT NULL DEFAULT '',
+  iteration INTEGER NOT NULL DEFAULT 0,
+  concurrency INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL DEFAULT '',
+  host_id TEXT NOT NULL DEFAULT '',
+  platform TEXT NOT NULL DEFAULT '',
+  architecture TEXT NOT NULL DEFAULT '',
+  ts_ms INTEGER,
+  cpu_user REAL,
+  cpu_system REAL,
+  cpu_wait REAL,
+  cpu_idle REAL,
+  load1 REAL,
+  mem_total_mb REAL,
+  mem_used_mb REAL,
+  swap_pct REAL,
+  disk_read_kbs REAL,
+  disk_write_kbs REAL,
+  iops REAL,
+  disk_latency_ms REAL,
+  net_rx_kbs REAL,
+  net_tx_kbs REAL,
+  processes REAL,
+  run_queue REAL,
+  extra_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS benchmark_host_samples_run
+ON benchmark_host_samples(run_id, ts_ms);
+
+CREATE TABLE IF NOT EXISTS benchmark_comparisons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id TEXT NOT NULL REFERENCES benchmark_experiments(experiment_id),
+  payload_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS benchmark_comparisons_experiment
+ON benchmark_comparisons(experiment_id, id DESC);
 """
 

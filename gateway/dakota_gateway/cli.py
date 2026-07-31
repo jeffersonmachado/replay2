@@ -517,6 +517,7 @@ def _handle_synthetic(ns) -> int:
 
             output = {
                 "status": "completed",
+                "simulation": result.simulation,
                 "total_sessions": result.total_sessions,
                 "completed": result.completed,
                 "failed": result.failed,
@@ -619,7 +620,9 @@ def _handle_synthetic(ns) -> int:
             return 0
 
         elif ns.synthetic_cmd == "benchmark":
-            from .benchmark import BenchmarkOrchestrator, BenchmarkConfig
+            # Subcomando legado (simulação determinística por seed). O benchmark
+            # REAL é o subcomando top-level `benchmark` (dakota_gateway.benchmark).
+            from .benchmark_legacy import BenchmarkOrchestrator, BenchmarkConfig
             envs = json.loads(ns.envs)
             config = BenchmarkConfig(
                 benchmark_id=f"bench-{int(time.time())}",
@@ -693,7 +696,6 @@ def _handle_synthetic(ns) -> int:
             watcher = WatchMode(ns.source_dir, on_change)
             try:
                 watcher.start()
-                import time
                 while True:
                     time.sleep(1)
             except KeyboardInterrupt:
@@ -712,6 +714,347 @@ def _handle_synthetic(ns) -> int:
 
     finally:
         con.close()
+
+
+# ── Benchmark real (AIX vs Linux) — subcomando top-level (§22) ────────────
+
+
+def _bench_experiment_dir(ns) -> "Path | None":
+    """Resolve o diretório do experimento (--experiment-dir ou id+artifacts)."""
+    from pathlib import Path
+    if getattr(ns, "experiment_dir", ""):
+        return Path(ns.experiment_dir)
+    if getattr(ns, "experiment_id", ""):
+        return Path(ns.artifacts_dir) / ns.experiment_id
+    print("Erro: informe --experiment-dir ou --experiment-id", file=sys.stderr)
+    return None
+
+
+def _bench_load_env_models(paths: list[str]) -> dict:
+    """Carrega EnvironmentModels de arquivos JSON (--env, repetível)."""
+    from .benchmark.environments import EnvironmentModel
+    modelos = {}
+    for caminho in paths or []:
+        with open(caminho, encoding="utf-8") as fh:
+            modelo = EnvironmentModel.from_dict(json.load(fh))
+        modelos[modelo.environment_id] = modelo
+    return modelos
+
+
+def _bench_load_journeys(caminho: str) -> list[dict]:
+    """Carrega jornadas de JSON (lista) ou JSONL de captura auditável (v2).
+
+    JSONL: eventos ``deterministic_input`` viram passos com ``key_b64`` (bytes
+    exatos da captura) em uma única jornada. Cada passo recebe também a
+    ``expected_screen_sig``: pela semântica canônica (``replay_compare``), a
+    assinatura do evento E é o estado de tela em que o input E foi enviado;
+    como o adaptador drena a saída APÓS o envio do input i, o estado
+    resultante é aquele em que o input i+1 foi enviado — logo a sig esperada
+    do passo i é a do evento SEGUINTE (o último passo fica sem sig).
+    """
+    from pathlib import Path
+    path = Path(caminho)
+    if path.suffix == ".jsonl":
+        eventos = []
+        with open(path, encoding="utf-8") as fh:
+            for linha in fh:
+                linha = linha.strip()
+                if not linha:
+                    continue
+                evento = json.loads(linha)
+                if evento.get("type") != "deterministic_input":
+                    continue
+                eventos.append(evento)
+        steps = []
+        for idx, evento in enumerate(eventos):
+            step = {
+                "step_id": f"ev-{evento.get('seq_global')}",
+                "key_b64": evento.get("key_b64"),
+            }
+            if idx + 1 < len(eventos):
+                proximo = eventos[idx + 1]
+                esperada = (proximo.get("expected_text_sig")
+                            or proximo.get("text_sig") or "")
+                if esperada:
+                    step["expected_screen_sig"] = esperada
+            steps.append(step)
+        return [{"journey_id": path.stem, "steps": steps}]
+    with open(path, encoding="utf-8") as fh:
+        dados = json.load(fh)
+    if isinstance(dados, dict):
+        dados = dados.get("journeys", [])
+    return list(dados)
+
+
+def _bench_rebuild_result(experiment_dir, contract):
+    """Reconstrói ExperimentResult a partir dos artefatos gravados (§24)."""
+    from .benchmark.models import EnvironmentRunResult, ExperimentResult, OperationSample
+
+    resultado = ExperimentResult(
+        contract_sha256=contract.sha256(), status="COMPLETED", runs=[])
+    exp_result_path = experiment_dir / "execution-result.json"
+    if exp_result_path.is_file():
+        dados = json.loads(exp_result_path.read_text(encoding="utf-8"))
+        resultado.status = dados.get("status", "COMPLETED")
+        resultado.verdict = dados.get("verdict", "INCONCLUSIVE")
+        resultado.reason = dados.get("reason", "")
+    runs_dir = experiment_dir / "runs"
+    if not runs_dir.is_dir():
+        return resultado
+    for run_dir in sorted(runs_dir.iterdir()):
+        resumo_path = run_dir / "execution-result.json"
+        if not resumo_path.is_file():
+            continue
+        resumo = json.loads(resumo_path.read_text(encoding="utf-8"))
+        por_fase = {"WARMUP": [], "MEASUREMENT": [], "COOLDOWN": []}
+        samples_path = run_dir / "application-samples.jsonl"
+        if samples_path.is_file():
+            with open(samples_path, encoding="utf-8") as fh:
+                for linha in fh:
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    amostra = OperationSample(**json.loads(linha))
+                    por_fase.setdefault(amostra.phase, []).append(amostra)
+        run = EnvironmentRunResult(
+            environment_id=resumo.get("environment_id", ""),
+            iteration=int(resumo.get("iteration", 0)),
+            concurrency=int(resumo.get("concurrency", 0)),
+            status=resumo.get("status", "COMPLETED"),
+            samples=por_fase.get("MEASUREMENT", []),
+            warmup_samples=por_fase.get("WARMUP", []),
+            cooldown_samples=por_fase.get("COOLDOWN", []),
+            host_samples_path=str(run_dir / "host-samples.jsonl"),
+            error_reason=resumo.get("error_reason", ""),
+        )
+        resultado.runs.append(run)
+    return resultado
+
+
+def _bench_persist_run(con, contract, executor, result) -> None:
+    """Persiste experimento, runs, amostras e host metrics no SQLite."""
+    from .benchmark import persistence as bp
+
+    bp.save_experiment(con, contract, status=result.status,
+                       verdict=result.verdict, reason=result.reason)
+    ordens = {(o["iteration"], o["concurrency"]): o["environment_order"]
+              for o in executor.order_history}
+    for run in result.runs:
+        run_id = f"{run.environment_id}-iter{run.iteration}-conc{run.concurrency}"
+        bp.save_run(con, run_id, contract.experiment_id, run,
+                    phase_order=ordens.get((run.iteration, run.concurrency), []))
+        bp.save_app_samples(
+            con, run_id,
+            [*run.warmup_samples, *run.samples, *run.cooldown_samples])
+        if run.host_samples_path:
+            host_samples = []
+            try:
+                with open(run.host_samples_path, encoding="utf-8") as fh:
+                    host_samples = [json.loads(l) for l in fh if l.strip()]
+            except OSError:
+                host_samples = []
+            bp.save_host_samples(
+                con, experiment_id=contract.experiment_id,
+                environment_id=run.environment_id, run_id=run_id,
+                iteration=run.iteration, concurrency=run.concurrency,
+                phase="MEASUREMENT", samples=host_samples)
+
+
+def _handle_benchmark(ns) -> int:
+    """Dispatch do subcomando top-level ``benchmark`` (§22 do contrato)."""
+    from pathlib import Path
+    from .benchmark.contract import ContractViolation, create_contract, load_contract
+    from .state_db import connect as _connect, default_db_path as _default_db_path, init_db as _init_db
+
+    if ns.benchmark_cmd == "create":
+        with open(ns.contract, encoding="utf-8") as fh:
+            dados = json.load(fh)
+        contract = create_contract(**dados)
+        experiment_dir = Path(ns.artifacts_dir) / contract.experiment_id
+        manifesto = contract.write_manifest(experiment_dir)
+        con = _connect(ns.db or _default_db_path())
+        _init_db(con)
+        try:
+            from .benchmark import persistence as bp
+            bp.save_experiment(con, contract)
+        finally:
+            con.close()
+        print(json.dumps({
+            "experiment_id": contract.experiment_id,
+            "contract_sha256": contract.sha256(),
+            "manifest": str(manifesto),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    experiment_dir = _bench_experiment_dir(ns)
+    if experiment_dir is None:
+        return 2
+    manifesto = experiment_dir / "experiment-manifest.json"
+    if not manifesto.is_file():
+        print(f"Erro: manifesto não encontrado em {manifesto} "
+              "(rode 'benchmark create' antes)", file=sys.stderr)
+        return 2
+    contract = load_contract(manifesto)
+    env_models = _bench_load_env_models(getattr(ns, "env", []) or [])
+
+    if ns.benchmark_cmd == "preflight":
+        from .benchmark.adapters import SSHReplayAdapter
+        resultados = {}
+        for env_id in contract.environments:
+            modelo = env_models.get(env_id)
+            if modelo is None:
+                resultados[env_id] = {"ok": False, "checks": [
+                    {"name": "environment_model", "ok": False,
+                     "detail": "modelo de ambiente não informado (--env)"}]}
+                continue
+            resultados[env_id] = SSHReplayAdapter(modelo, contract).preflight()
+        ok = all(r.get("ok") for r in resultados.values())
+        print(json.dumps({"ok": ok, "environments": resultados},
+                         ensure_ascii=False, indent=2))
+        return 0 if ok else 1
+
+    if ns.benchmark_cmd == "run":
+        from .benchmark.adapters import SSHReplayAdapter
+        from .benchmark.comparison import (
+            build_capacity, build_comparison, build_decision)
+        from .benchmark.executor import BenchmarkExecutor
+        from .benchmark.report import write_experiment_artifacts
+        from .benchmark import persistence as bp
+
+        faltantes = [e for e in contract.environments if e not in env_models]
+        if faltantes:
+            print(f"Erro: ambientes do contrato sem modelo (--env): {faltantes}",
+                  file=sys.stderr)
+            return 2
+        try:
+            from .benchmark.contract import validate_environment_parity
+            validate_environment_parity([
+                {
+                    "environment_id": env_id,
+                    "journey_set_sha256": contract.journey_set_sha256,
+                    "dataset_sha256": contract.dataset_sha256,
+                    "seed": contract.seed,
+                    "concurrency_levels": list(contract.concurrency_levels),
+                    "measurement_seconds": contract.measurement_seconds,
+                }
+                for env_id in contract.environments
+            ])
+        except ContractViolation as exc:
+            print(f"Erro de paridade: {exc}", file=sys.stderr)
+            return 2
+
+        journeys = _bench_load_journeys(ns.journeys) if ns.journeys else []
+        adapters = {
+            env_id: SSHReplayAdapter(env_models[env_id], contract)
+            for env_id in contract.environments
+        }
+        executor = BenchmarkExecutor(contract, adapters,
+                                     Path(ns.artifacts_dir), journeys=journeys)
+        result = executor.run()
+
+        comparison = build_comparison(result, env_models)
+        capacity = build_capacity(result)
+        decision = build_decision(result, comparison)
+        result.verdict = decision.verdict
+        # O executor grava execution-result.json com verdict=INCONCLUSIVE
+        # (nunca se auto-declara PASS). Regravar com o veredito FINAL da
+        # decisão ANTES dos artefatos, para o evidence-manifest cobrir a
+        # versão definitiva (o smoke real mostrou o arquivo dizendo
+        # INCONCLUSIVE enquanto o CLI imprimia PASS).
+        reason_final = result.reason or "; ".join(decision.reasons)
+        exp_result_path = experiment_dir / "execution-result.json"
+        if exp_result_path.is_file():
+            dados_result = json.loads(
+                exp_result_path.read_text(encoding="utf-8"))
+            dados_result["verdict"] = decision.verdict
+            dados_result["reason"] = reason_final
+            exp_result_path.write_text(
+                json.dumps(dados_result, indent=2, ensure_ascii=False),
+                encoding="utf-8")
+        write_experiment_artifacts(experiment_dir, result, comparison,
+                                   capacity, decision)
+
+        con = _connect(ns.db or _default_db_path())
+        _init_db(con)
+        try:
+            _bench_persist_run(con, contract, executor, result)
+            bp.save_comparison(con, contract.experiment_id, {
+                "verdict": decision.verdict,
+                "recommendation": decision.recommendation,
+                "reasons": decision.reasons,
+                "comparison": comparison,
+            })
+            bp.update_experiment_status(
+                con, contract.experiment_id, status=result.status,
+                verdict=decision.verdict,
+                reason=result.reason or "; ".join(decision.reasons))
+        finally:
+            con.close()
+
+        print(json.dumps({
+            "experiment_id": contract.experiment_id,
+            "status": result.status,
+            "verdict": decision.verdict,
+            "reason": result.reason,
+            "recommendation": decision.recommendation,
+            "reasons": decision.reasons,
+        }, ensure_ascii=False, indent=2))
+        return 0 if decision.verdict in ("PASS", "WARN") else 1
+
+    if ns.benchmark_cmd == "status":
+        con = _connect(ns.db or _default_db_path())
+        _init_db(con)
+        try:
+            from .benchmark import persistence as bp
+            experimento = bp.get_experiment(con, contract.experiment_id)
+            runs = bp.list_runs(con, contract.experiment_id)
+        finally:
+            con.close()
+        if not experimento:
+            print(f"Erro: experimento '{contract.experiment_id}' não encontrado",
+                  file=sys.stderr)
+            return 2
+        print(json.dumps({"experiment": experimento, "runs": runs},
+                         ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if ns.benchmark_cmd in ("compare", "report"):
+        from .benchmark.comparison import (
+            build_capacity, build_comparison, build_decision)
+        from .benchmark.report import write_experiment_artifacts
+        from .benchmark import persistence as bp
+
+        result = _bench_rebuild_result(experiment_dir, contract)
+        comparison = build_comparison(result, env_models or None)
+        capacity = build_capacity(result)
+        decision = build_decision(result, comparison)
+        if ns.benchmark_cmd == "report":
+            write_experiment_artifacts(experiment_dir, result, comparison,
+                                       capacity, decision)
+        con = _connect(ns.db or _default_db_path())
+        _init_db(con)
+        try:
+            bp.save_comparison(con, contract.experiment_id, {
+                "verdict": decision.verdict,
+                "recommendation": decision.recommendation,
+                "reasons": decision.reasons,
+                "comparison": comparison,
+            })
+            bp.update_experiment_status(
+                con, contract.experiment_id, status=result.status,
+                verdict=decision.verdict,
+                reason=result.reason or "; ".join(decision.reasons))
+        finally:
+            con.close()
+        print(json.dumps({
+            "experiment_id": contract.experiment_id,
+            "verdict": decision.verdict,
+            "recommendation": decision.recommendation,
+            "reasons": decision.reasons,
+        }, ensure_ascii=False, indent=2))
+        return 0 if decision.verdict in ("PASS", "WARN") else 1
+
+    return 2
 
 
 def _handle_knowledge_base(ns) -> int:
@@ -1136,6 +1479,41 @@ def main(argv: list[str] | None = None) -> int:
     ap_runs_start.add_argument("--run-id", type=int, required=True)
     ap_runs_start.add_argument("--hmac-key-file", required=True)
 
+    # Benchmark real AIX vs Linux (§22 do contrato dev/benchmark-api-contract.md)
+    ap_bmark = sub.add_parser(
+        "benchmark", help="Benchmark real AIX vs Linux (replay pareado auditável)")
+    ap_bmark_sub = ap_bmark.add_subparsers(dest="benchmark_cmd", required=True)
+
+    ap_bmark_create = ap_bmark_sub.add_parser(
+        "create", help="Cria contrato + experimento (manifesto imutável)")
+    ap_bmark_create.add_argument("--contract", required=True,
+                                 help="JSON com os campos do contrato (§6)")
+    ap_bmark_create.add_argument("--artifacts-dir", default="artifacts/benchmarks")
+    ap_bmark_create.add_argument("--db", default="", help="Caminho do banco SQLite")
+
+    for nome, ajuda in [
+        ("preflight", "Valida acessibilidade SSH dos ambientes do contrato"),
+        ("run", "Executa o experimento pareado completo"),
+        ("status", "Mostra status/verdict do experimento no banco"),
+        ("compare", "Recalcula comparação/decisão a partir dos artefatos"),
+        ("report", "Regera report.md/report.json/aggregates + evidence-manifest"),
+    ]:
+        p = ap_bmark_sub.add_parser(nome, help=ajuda)
+        p.add_argument("--db", default="", help="Caminho do banco SQLite")
+        p.add_argument("--experiment-id", default="")
+        p.add_argument("--experiment-dir", default="",
+                       help="Diretório do experimento (alternativa a --experiment-id)")
+        p.add_argument("--artifacts-dir", default="artifacts/benchmarks")
+        if nome in ("preflight", "run"):
+            p.add_argument("--env", action="append", default=[],
+                           help="JSON do EnvironmentModel (repetível)")
+        else:
+            p.add_argument("--env", action="append", default=[],
+                           help="JSON do EnvironmentModel p/ normalização (repetível)")
+        if nome == "run":
+            p.add_argument("--journeys", default="",
+                           help="Jornadas: JSON (lista) ou JSONL de captura auditável")
+
     for name in ["pause", "resume", "cancel", "status", "retry"]:
         p2 = ap_runs_sub.add_parser(name)
         p2.add_argument("--run-id", type=int, required=True)
@@ -1387,6 +1765,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "synthetic":
         return _handle_synthetic(ns)
+
+    if ns.cmd == "benchmark":
+        return _handle_benchmark(ns)
 
     return 1
 

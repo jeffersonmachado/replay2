@@ -30,7 +30,12 @@ class RemoteSessionResult:
 
 @dataclass
 class RemoteExecutionResult:
-    """Resultado de execução remota completa."""
+    """Resultado de execução remota completa.
+
+    ``simulation`` é True quando as telas foram sintetizadas (modo dry_run
+    ou sem target_host): nesse caso o resultado é SIMULAÇÃO e não pode
+    fundamentar veredito oficial de benchmark nem recomendação de migração.
+    """
     journey_id: str = ""
     total_sessions: int = 0
     completed: int = 0
@@ -38,6 +43,8 @@ class RemoteExecutionResult:
     session_results: list[RemoteSessionResult] = field(default_factory=list)
     aggregate_verification: Optional[dict] = None
     duration_ms: int = 0
+    mode: str = "dry_run"
+    simulation: bool = True
 
 
 class RemoteExecutor:
@@ -68,6 +75,8 @@ class RemoteExecutor:
         result = RemoteExecutionResult(
             journey_id=journey.journey_id,
             total_sessions=session_count,
+            mode=self.mode,
+            simulation=not (self.mode == "real" and bool(target_host)),
         )
         start_ms = int(time.time() * 1000)
         semaphore = threading.Semaphore(5)  # max 5 sessões SSH simultâneas

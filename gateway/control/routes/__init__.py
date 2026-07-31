@@ -31,3 +31,7 @@ from control.routes.run_routes import (
 )
 from control.routes.journey_routes import handle_journey_get_route, handle_journey_post_route
 from control.routes.synthetic_routes import handle_synthetic_get_route, handle_synthetic_post_route
+from control.routes.benchmark_routes import (
+    handle_benchmark_get_route,
+    handle_benchmark_post_route,
+)

@@ -58,6 +58,10 @@ cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAG
 # conftest.py da raiz aplica os markers do pytest (necessário para rodar a suíte no tarball)
 if [ -f "$ROOT_DIR/conftest.py" ]; then cp -f "$ROOT_DIR/conftest.py" "$STAGE_DIR/"; fi
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
+# package.json + package-lock.json: puppeteer pinned (§29) — a árvore
+# extraída resolve a dependência visual sem instalação global silenciosa
+if [ -f "$ROOT_DIR/package.json" ]; then cp -f "$ROOT_DIR/package.json" "$STAGE_DIR/"; fi
+if [ -f "$ROOT_DIR/package-lock.json" ]; then cp -f "$ROOT_DIR/package-lock.json" "$STAGE_DIR/"; fi
 if [ -d "$ROOT_DIR/scripts" ]; then
   mkdir -p "$STAGE_DIR/scripts"
   cp -R "$ROOT_DIR/scripts/." "$STAGE_DIR/scripts/"
@@ -99,6 +103,12 @@ Não execute build-tarball.sh manualmente sem antes rodar o release completo."
     cp -R "$ROOT_DIR/artifacts/acceptance-logs" "$STAGE_DIR/artifacts/"
   else
     die "Missing artifacts/acceptance-logs/"
+  fi
+  # Evidência do benchmark real AIX×Linux (contrato, runs, agregados,
+  # relatório e manifesto de evidência do experimento) — §33 da spec de
+  # benchmark: o pacote final carrega artifacts/benchmarks/ quando existir
+  if [ -d "$ROOT_DIR/artifacts/benchmarks" ]; then
+    cp -R "$ROOT_DIR/artifacts/benchmarks" "$STAGE_DIR/artifacts/"
   fi
 fi
 

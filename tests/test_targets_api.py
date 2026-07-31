@@ -56,10 +56,39 @@ class TargetAndProfileApiTests(unittest.TestCase):
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        time.sleep(0.2)
+        self._wait_ready()
 
         self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        self._request("POST", "/api/login", {"username": "admin", "password": "admin123"})
+        # Login com retry: sob carga extrema da suíte completa o accept loop
+        # e o pbkdf2 podem estourar o timeout de 5s do primeiro request
+        # (flake observado no test-all interno da fase 08, host saturado).
+        last_exc: Exception | None = None
+        for _ in range(3):
+            try:
+                self._request("POST", "/api/login", {"username": "admin", "password": "admin123"})
+                break
+            except (TimeoutError, OSError) as exc:
+                last_exc = exc
+                time.sleep(0.5)
+        else:
+            raise last_exc  # type: ignore[misc]
+
+    def _wait_ready(self, timeout_s: float = 10.0) -> None:
+        """Espera o accept loop do servidor de teste ficar pronto.
+
+        O `time.sleep(0.2)` fixo original não bastava sob a carga da suíte
+        completa: a thread do ThreadingHTTPServer pode demorar segundos para
+        ser escalonada. Se o prazo estourar, segue o fluxo e o erro real do
+        request aparece (não mascara falha genuína do servidor).
+        """
+        import socket
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=0.5):
+                    return
+            except OSError:
+                time.sleep(0.05)
 
     def tearDown(self):
         if hasattr(self, "server"):

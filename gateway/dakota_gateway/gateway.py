@@ -671,19 +671,25 @@ class TerminalGateway:
         except Exception:
             pass
 
-        # Captura inicia assim que a conexão de gateway é estabelecida.
-        self._append_session_start(gateway_endpoint=gateway_endpoint)
+        # Ao fechar o canal (ex.: usuario fecha a janela do terminal), o sshd
+        # envia SIGHUP/SIGTERM ao processo. Sem handler, o Python morre sem
+        # passar pelo finally e o session_end nunca e gravado. Os handlers
+        # precisam ser instalados ANTES do session_start: sob carga, o sinal
+        # pode chegar na janela entre o registro do evento e a instalacao do
+        # handler, matando o processo com rc=-signum sem SystemExit (race
+        # observada no test-all sob carga). Convertemos o sinal em SystemExit
+        # para que o finally grave o session_end e encerre o filho.
+        def _exit_on_signal(signum, _frame):
+            raise SystemExit(128 + signum)
 
-        screen_state = TerminalScreenState(
-            rows=self.cfg.rows,
-            cols=self.cfg.cols,
-            encoding=self.cfg.encoding,
-            session_id=self.session_id,
-        )
-        last_out_ms = self._ts_ms()
-        last_checkpoint_ms = 0
-        stable_state = _StableScreenState()
-        screen_dirty = False
+        previous_signal_handlers = {}
+        try:
+            for _sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+                previous_signal_handlers[_sig] = signal.signal(_sig, _exit_on_signal)
+        except ValueError:
+            # fora da main thread (ex.: embed/testes): mantem o comportamento
+            # anterior em vez de quebrar a sessao
+            previous_signal_handlers = {}
 
         def maybe_checkpoint(force: bool = False):
             nonlocal last_checkpoint_ms, stable_state, screen_dirty
@@ -735,25 +741,23 @@ class TerminalGateway:
             self._append(ev)
             last_checkpoint_ms = now
 
-        # Ao fechar o canal (ex.: usuario fecha a janela do terminal), o sshd
-        # envia SIGHUP/SIGTERM ao processo. Sem handler, o Python morre sem
-        # passar pelo finally e o session_end nunca e gravado. Convertemos o
-        # sinal em SystemExit para que o finally grave o session_end e
-        # encerre o filho normalmente.
-        def _exit_on_signal(signum, _frame):
-            raise SystemExit(128 + signum)
-
-        previous_signal_handlers = {}
-        try:
-            for _sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
-                previous_signal_handlers[_sig] = signal.signal(_sig, _exit_on_signal)
-        except ValueError:
-            # fora da main thread (ex.: embed/testes): mantem o comportamento
-            # anterior em vez de quebrar a sessao
-            previous_signal_handlers = {}
-
         # proxy loop
         try:
+            # Captura inicia assim que a conexao de gateway e estabelecida.
+            # O session_start so e gravado apos a instalacao dos handlers de
+            # sinal (acima), eliminando a janela em que um sinal mataria o
+            # processo sem gravar o session_end correspondente.
+            self._append_session_start(gateway_endpoint=gateway_endpoint)
+            screen_state = TerminalScreenState(
+                rows=self.cfg.rows,
+                cols=self.cfg.cols,
+                encoding=self.cfg.encoding,
+                session_id=self.session_id,
+            )
+            last_out_ms = self._ts_ms()
+            last_checkpoint_ms = 0
+            stable_state = _StableScreenState()
+            screen_dirty = False
             session_done = False
             while not session_done:
                 if proc.poll() is not None:

@@ -68,6 +68,26 @@ tar tzf dist/dakota-replay2-*.tar.gz | grep -E '\.(db|env|pem|key|crt|pfx)$$' &&
 tar tzf dist/dakota-replay2-*.tar.gz | grep '__pycache__' && echo "FALHA: cache Python" || echo "OK"
 ```
 
+## Evidências Incluídas no Artefato
+
+Além do código, o tarball carrega as evidências da cadeia de aceitação:
+
+- [ ] `artifacts/final-acceptance-report.md` e `final-acceptance-results.json`
+- [ ] `artifacts/source-tree-manifest.sha256` e `source-tree-hash.json`
+- [ ] `artifacts/evidence-manifest.sha256` (validado por `sha256sum -c` antes do build)
+- [ ] `artifacts/acceptance-test-baseline.sha256` (hashes reais, sem linha vazia `e3b0c442...  -`)
+- [ ] `artifacts/acceptance-logs/` — logs das fases de aceitação
+- [ ] `artifacts/benchmarks/` — evidência do benchmark real AIX×Linux
+  (contrato imutável, runs com amostras de aplicação/host, agregados,
+  relatório e manifesto de evidência do experimento), quando presente
+
+Verificar a presença das evidências de benchmark:
+
+```bash
+tar tzf dist/dakota-replay2-*.tar.gz | grep 'artifacts/benchmarks/.*/experiment-manifest.json' \
+  || echo "SEM evidência de benchmark no pacote"
+```
+
 ## Processo de Release
 
 1. Atualizar `VERSION`

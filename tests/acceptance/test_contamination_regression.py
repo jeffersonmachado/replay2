@@ -36,7 +36,7 @@ def test_visual_then_canonical_does_not_hang():
     assert r.zombies_after_cleanup == [], f"Zombies: {r.zombies_after_cleanup}"
 
 
-def test_contamination_regression_iterations():
+def test_contamination_regression_iterations(tmp_path):
     _check_deps()
     python = sys.executable
     env = {**os.environ, "PYTHONPATH": f"{ROOT}/gateway"}
@@ -59,8 +59,9 @@ def test_contamination_regression_iterations():
         assert r.zombies_after_cleanup == [], f"Iter {i+1} zombies: {r.zombies_after_cleanup}"
         assert not r.timed_out
 
-    out = ROOT / "artifacts/acceptance-logs/results/contamination-regression.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
+    # Evidencia da regressao em diretorio temporario — NUNCA em artifacts/,
+    # que e' reservado para evidencias reais de release (contaminacao).
+    out = tmp_path / "contamination-regression.json"
     out.write_text(json.dumps({
         "name": "contamination-regression",
         "iterations": 3,

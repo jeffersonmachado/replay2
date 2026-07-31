@@ -706,6 +706,7 @@ ROUTES_CONFIG = [
         "page_kicker": "Engenharia de Validacao",
         "menu": "engineering",
         "submenu": "engineering_benchmark",
+        "script": "benchmark.js",
     },
     {
         "path": "/assess",

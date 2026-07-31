@@ -41,6 +41,11 @@ echo "=== CLEANING ==="
 rm -f artifacts/final-acceptance-report.md artifacts/final-acceptance-results.json
 rm -f artifacts/manual-validation.json artifacts/visual-test-result.json
 rm -f artifacts/source-tree-manifest.sha256 artifacts/source-tree-hash.json
+# NOTA: artifacts/evidence-manifest.sha256 NÃO é removido aqui — ele cobre
+# apenas evidência ESTÁVEL (artifacts/benchmarks/**), que não muda durante o
+# pipeline; removê-lo quebraria os testes de aceitação que o validam durante
+# a execução. A regeneração no passo 10.5 é fail-closed (gerador único
+# scripts/acceptance/gen-evidence-manifest.sh + validação sha256sum -c).
 rm -rf artifacts/acceptance-logs/
 mkdir -p artifacts/acceptance-logs/
 # NOTA: dist/ NÃO é limpo — releases anteriores (tarballs, manifestos e
@@ -316,21 +321,22 @@ Path('artifacts/source-tree-hash.json').write_text(json.dumps({
     'schema_version': '1.0', 'algorithm': 'sha256-path-mode-size-content-v1',
     'file_count': fcount, 'tree_sha256': os.environ['SOURCE_TREE_SHA256_BEFORE'],
 }, indent=2))
-# evidence-manifest.sha256 — evidence files generated during this release run
-elines = []
-for ep in sorted(Path('artifacts').glob('**/*')):
-    if ep.is_dir(): continue
-    erel = str(ep.relative_to('.'))
-    # Include only evidence artifacts, not source manifests
-    if erel.startswith('artifacts/acceptance-test-baseline'): continue
-    if erel.startswith('artifacts/source-tree-'): continue
-    try:
-        eh = hashlib.sha256(ep.read_bytes()).hexdigest()
-        elines.append(f'{eh}  {erel}')
-    except: pass
-Path('artifacts/evidence-manifest.sha256').write_text('\n'.join(sorted(elines)) + '\n')
 print('Internal reports and manifests generated')
 PYEOF
+
+# ── 10.5. Evidence manifest — gerado POR ULTIMO, antes do tarball ──
+# Todos os artefatos de artifacts/ já existem neste ponto e artifacts/ NÃO é
+# mais modificado depois daqui (a validação de árvore extraída atua em
+# $EXTRACT_ROOT e o tarball vai para dist/). Por isso os hashes ficam frescos.
+# Gerador ÚNICO: scripts/acceptance/gen-evidence-manifest.sh (§28) — regras:
+# - NÃO auto-incluir a própria entrada (hash stale por construção);
+# - NÃO incluir artefatos velhos/proibidos: *.tar.gz, acceptance-matrix.json,
+#   final-artifact-manifest.json, test-all-suite-*.result.json;
+# - NÃO incluir artifacts/acceptance-logs/** (logs voláteis de execução);
+# - incluir apenas arquivos existentes, com hash do conteúdo recém-computado;
+# - validar com `sha256sum -c` ainda no pipeline — release falha se inválido.
+echo "=== EVIDENCE MANIFEST ==="
+bash scripts/acceptance/gen-evidence-manifest.sh
 
 # ── 11. Build tarball ──
 echo "=== BUILDING TARBALL ==="
@@ -500,6 +506,14 @@ echo "$TB_HASH  $(basename "$TB")" > "dist/$(basename "$TB").sha256"
 
 # ── 18. Cleanup ──
 rm -rf "$EXTRACT_DIR"
+
+# ── 18.5. Revalidação final do evidence manifest e da baseline ──
+# Nada em artifacts/ pode ter mudado desde a geração — se mudou, a cadeia de
+# evidências está comprometida e o release falha aqui.
+sha256sum -c --quiet artifacts/evidence-manifest.sha256 \
+  || { echo "ERROR: evidence manifest stale no fim do pipeline"; exit 1; }
+sha256sum -c --quiet artifacts/acceptance-test-baseline.sha256 \
+  || { echo "ERROR: baseline de testes violada no fim do pipeline"; exit 1; }
 
 # ── 19. Final report ──
 echo ""

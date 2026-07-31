@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -35,16 +36,39 @@ def _count_chromium_processes(profile):
     return len([l for l in r.stdout.strip().splitlines() if l.strip()])
 
 def _puppeteer_import_path():
+    # Resolve o node_modules LOCAL do repo ANTES do fallback global
+    # (`npm root -g`) — puppeteer e' devDependency pinada no package.json raiz.
+    candidates = [ROOT / "node_modules"]
     root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=10, check=False)
-    if root.returncode != 0:
-        return None
-    candidate = Path(root.stdout.strip()) / "puppeteer/lib/esm/puppeteer/puppeteer.js"
-    if candidate.exists():
-        return candidate
-    candidate = Path(root.stdout.strip()) / "puppeteer/lib/cjs/puppeteer/puppeteer.js"
-    if candidate.exists():
-        return candidate
+    if root.returncode == 0:
+        candidates.append(Path(root.stdout.strip()))
+    for base in candidates:
+        for rel in ("puppeteer/lib/esm/puppeteer/puppeteer.js",
+                    "puppeteer/lib/cjs/puppeteer/puppeteer.js"):
+            candidate = base / rel
+            if candidate.exists():
+                return candidate
     return None
+
+
+def _kill_chromium_by_profile(profile):
+    """Mata o browser e filhos remanescentes do perfil do teste (o
+    chrome_crashpad se auto-destaca em sessao propria; sem teardown ele
+    sobrevive ao bloco e e' flagado como vazamento pelo process_tree.py —
+    a spec da cadeia de release proibe allowlist por nome de comm)."""
+    for _ in range(5):
+        r = subprocess.run(["pgrep", "-U", str(os.getuid()), "-f", str(profile)],
+                           capture_output=True, text=True)
+        pids = [l.strip() for l in r.stdout.strip().splitlines()
+                if l.strip().isdigit() and l.strip() != str(os.getpid())]
+        if not pids:
+            return
+        for p in pids:
+            try:
+                os.kill(int(p), signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(1)
 
 
 # ── CSS contract tests ──────────────────────────────────────────────────────
@@ -88,7 +112,7 @@ def test_terminal_snapshot_box_drawing_renders_with_real_browser_pixels():
         raise AssertionError("Chromium/Chrome headless required for visual test")
     puppeteer_import = _puppeteer_import_path()
     if not puppeteer_import:
-        raise AssertionError("Puppeteer global package required for controlled visual test")
+        raise AssertionError("Puppeteer npm package required (node_modules local da raiz ou global) — rode 'npm install' na raiz do repo")
 
     try: from PIL import Image
     except ImportError as e:
@@ -273,14 +297,20 @@ try {{
   if (browser) await browser.close().catch(() => {{}});
 }}
 """, encoding="utf-8")
-        run = subprocess.run(
-            ["node", str(runner_js), str(input_json)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=45,
-            check=False,
-        )
+        try:
+            run = subprocess.run(
+                ["node", str(runner_js), str(input_json)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        finally:
+            # Teardown obrigatorio: nenhum processo do browser (inclusive o
+            # crashpad, que se auto-destaca) pode sobreviver ao teste — sem
+            # allowlist por nome, qualquer sobrevivente e' vazamento.
+            _kill_chromium_by_profile(profile)
         assert run.returncode == 0, run.stdout
         puppeteer_result = json.loads(run.stdout.strip().splitlines()[-1])
         metrics = puppeteer_result["metrics"]

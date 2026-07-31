@@ -101,32 +101,23 @@ def _run_with_fake_daemon(tmp_path: Path, comm: str) -> ProcessTreeResult:
                             name=f"test-fake-{comm}")
 
 
-def test_executor_allowlist_ignora_daemon_auto_destacado(tmp_path):
-    """comm na allowlist (chrome_crashpad): daemon que se auto-destaca por
-    design (double-fork do crashpad handler do Chromium) nao pode ser
-    reportado como escaped/leaked."""
+def test_executor_crashpad_comm_nao_tem_excecao(tmp_path):
+    """comm chrome_crashpad NAO tem excecao: um daemon que se auto-destaca
+    (double-fork/setsid, como o crashpad handler do Chromium) e' reportado
+    como escaped E leaked como qualquer outro processo — a spec da cadeia de
+    release proibe allowlist por nome de comm."""
     r = _run_with_fake_daemon(tmp_path, "chrome_crashpad")
     assert r.exit_code == 0
-    assert r.escaped_processes == []
-    assert r.leaked_processes == []
-    assert r.success
-
-
-def test_executor_allowlist_nao_enfraquece_deteccao(tmp_path):
-    """comm fora da allowlist (sleep): o MESMO cenario deve continuar sendo
-    reportado — a allowlist nao pode enfraquecer a deteccao de vazamentos."""
-    r = _run_with_fake_daemon(tmp_path, "sleep")
-    assert r.exit_code == 0
-    assert len(r.escaped_processes) >= 1
-    assert len(r.leaked_processes) >= 1
+    assert "chrome_crashpad" in [p["comm"] for p in r.escaped_processes]
+    assert "chrome_crashpad" in [p["comm"] for p in r.leaked_processes]
     assert not r.success
 
 
 def _run_with_fake_browser(tmp_path: Path, parent_comm: str) -> ProcessTreeResult:
-    """Sobe um "browser" falso (symlink de python3 com o comm desejado) em
+    """Sobe um processo-pai falso (symlink de python3 com o comm desejado) em
     sessao propria que spawna um helper com comm "cat" (symlink de sleep) —
     reproduz o cenario do chromedriver/selenium, que isola o browser em
-    sessao propria e cujos helpers internos herdavam escaped por tabela."""
+    sessao propria. Sem allowlist por nome, pai e helper sao flagados."""
     real_sleep = shutil.which("sleep")
     assert real_sleep, "binario 'sleep' nao encontrado no PATH"
     fake_cat = tmp_path / "cat"
@@ -148,17 +139,16 @@ def _run_with_fake_browser(tmp_path: Path, parent_comm: str) -> ProcessTreeResul
                             name=f"test-fake-browser-{parent_comm}")
 
 
-def test_executor_helper_de_browser_nao_e_flagado(tmp_path):
-    """Filho `cat` de um processo com comm de browser (chrome) em sessao
-    propria nao pode ser reportado como escaped/leaked. O proprio browser
-    continua flagado: um browser vivo no fim do bloco e' vazamento real."""
+def test_executor_helper_de_browser_tambem_e_flagado(tmp_path):
+    """Sem allowlist por nome, o filho `cat` de um processo com comm de
+    browser (chrome) em sessao propria e' reportado como escaped/leaked
+    junto com o pai — browsers reais devem ser mortos no teardown do teste."""
     r = _run_with_fake_browser(tmp_path, "chrome")
     assert r.exit_code == 0
     escaped_comms = [p["comm"] for p in r.escaped_processes]
     leaked_comms = [p["comm"] for p in r.leaked_processes]
-    assert "cat" not in escaped_comms
-    assert "cat" not in leaked_comms
-    # o "chrome" falso (ancestral nao-browser, vivo no fim) segue reportado
+    assert "cat" in escaped_comms
+    assert "cat" in leaked_comms
     assert "chrome" in escaped_comms
     assert "chrome" in leaked_comms
     assert not r.success
@@ -166,8 +156,7 @@ def test_executor_helper_de_browser_nao_e_flagado(tmp_path):
 
 def test_executor_helper_sem_ancestral_browser_e_flagado(tmp_path):
     """Mesmo cenario com pai de comm nao-browser (sleep): o helper `cat`
-    DEVE ser reportado — o filtro de browser nao pode enfraquecer a
-    deteccao de vazamentos reais."""
+    tambem DEVE ser reportado."""
     r = _run_with_fake_browser(tmp_path, "sleep")
     assert r.exit_code == 0
     assert "cat" in [p["comm"] for p in r.escaped_processes]

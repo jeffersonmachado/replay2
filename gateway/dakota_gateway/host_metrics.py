@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Coleta de métricas de recursos do host (CPU, memória, load, disco).
 
-Stdlib apenas. Linux lê /proc; AIX usa `vmstat`/`lsattr`/`lsps` (best-effort:
-campos indisponíveis ficam None). O HostMetricsSampler roda em thread dentro
-do control plane e grava amostras na tabela `host_metrics`, alimentando o
-painel /observability/resources e a comparação de estresse entre ambientes.
+Stdlib apenas. Linux lê /proc; AIX usa `vmstat`/`lsattr`/`lsps`/`iostat`
+(best-effort: campos indisponíveis ficam None). O HostMetricsSampler roda em
+thread dentro do control plane e grava amostras na tabela `host_metrics`,
+alimentando o painel /observability/resources e a comparação de estresse
+entre ambientes.
 """
 from __future__ import annotations
 
@@ -34,6 +35,10 @@ FIELDS = (
     "swap_pct",
     "disk_read_kbs",
     "disk_write_kbs",
+    "iops",
+    "disk_latency_ms",
+    "disk_busy_pct",
+    "cpu_iowait_pct",
 )
 
 INSERT_SQL = (
@@ -119,6 +124,44 @@ def parse_proc_diskstats(text: str) -> tuple[int, int]:
     return sectors_read, sectors_written
 
 
+def parse_proc_diskstats_full(text: str) -> dict[str, tuple[int, int, int, int, int, int, int]]:
+    """Contadores por disco-base do /proc/diskstats (para deltas entre amostras).
+
+    Retorna ``{nome: (rd_ios, rd_sectors, rd_ticks_ms, wr_ios, wr_sectors,
+    wr_ticks_ms, time_in_io_ms)}`` — os campos necessários para IOPS,
+    latência média (ticks ÷ ios) e % busy (time_in_io ÷ elapsed) por delta.
+    Partições e loop/ram ficam de fora (mesmo filtro de ``_DISK_RE``).
+    """
+    discos: dict[str, tuple[int, int, int, int, int, int, int]] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        # layout: major minor name rd_ios rd_merges rd_sectors rd_ticks
+        #         wr_ios wr_merges wr_sectors wr_ticks in_flight time_in_io ...
+        if len(parts) < 13 or not _DISK_RE.match(parts[2]):
+            continue
+        try:
+            discos[parts[2]] = (
+                int(parts[3]), int(parts[5]), int(parts[6]),
+                int(parts[7]), int(parts[9]), int(parts[10]),
+                int(parts[12]),
+            )
+        except ValueError:
+            continue
+    return discos
+
+
+def parse_proc_stat_iowait(text: str) -> tuple[int, int]:
+    """Extrai (jiffies_iowait, jiffies_total) da linha 'cpu' do /proc/stat."""
+    for line in text.splitlines():
+        if not line.startswith("cpu "):
+            continue
+        parts = [int(x) for x in line.split()[1:] if x.isdigit()]
+        if len(parts) < 5:
+            break
+        return parts[4], sum(parts)
+    return 0, 0
+
+
 def parse_vmstat_aix(text: str) -> dict:
     """Extrai cpu%% (us+sy) e páginas livres (fre) da última linha de dados do vmstat AIX.
 
@@ -194,15 +237,187 @@ def parse_uptime_loadavg(text: str) -> tuple[float, float, float] | None:
         return None
 
 
+# Linha de disco do iostat clássico: name tm_act Kbps tps Kb_read Kb_wrtn.
+# Só hdisk* — cd0 (óptico) e vdisk não entram na soma de IO do sistema.
+_IOSTAT_DISK_RE = re.compile(
+    r"^(hdisk\S*)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\d+)\s*$"
+)
+
+# Bloco de disco do `iostat -D`: "hdisk0          xfer:  %tm_act ..."
+_IOSTAT_D_DISK_RE = re.compile(r"^(hdisk\S*)\s+xfer:")
+
+
+def _float_ou_none(token: str) -> float | None:
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
+# Sufixos numéricos do iostat AIX: K/M/G de magnitude; "S" = segundos em
+# campos de tempo cujo default é ms (caso real MIG24: maxtime "1.1S" sob
+# flush pesado). Aplicado a ops (K/M/G) e avgserv (todos) — o AIX não emite
+# "S" em contadores de taxa, então a interpretação é segura nos dois usos.
+_SUFFIX_IOSTAT = {"K": 1e3, "M": 1e6, "G": 1e9, "S": 1e3}
+
+
+def _num_iostat_aix(token: str) -> float | None:
+    """Número do iostat AIX tolerante a sufixo (K/M/G/S), ou None."""
+    t = token.strip().upper()
+    if not t:
+        return None
+    mult = 1.0
+    if len(t) > 1 and t[-1] in _SUFFIX_IOSTAT:
+        mult = _SUFFIX_IOSTAT[t[-1]]
+        t = t[:-1]
+    try:
+        return float(t) * mult
+    except ValueError:
+        return None
+
+
+def parse_iostat_aix(text: str, interval_s: float = 1.0) -> dict:
+    """Extrai IO de disco do ÚLTIMO relatório de intervalo do `iostat 1 2` (AIX).
+
+    O primeiro relatório do iostat é sempre o acumulado desde o boot; o
+    último é o do intervalo medido. Retorna (quando disponíveis):
+
+    - ``disk_read_kbs``/``disk_write_kbs``: Kb_read/Kb_wrtn do intervalo,
+      somados sobre os hdisk*, divididos pelo intervalo;
+    - ``iops``: soma de tps dos hdisk*;
+    - ``disk_busy_pct``: maior % tm_act entre os hdisk* (disco mais ocupado);
+    - ``cpu_iowait_pct``: % iowait do avg-cpu do mesmo relatório.
+
+    Saída vazia ou inesperada devolve {} (campos ficam None na amostra —
+    nunca zero fingindo medição).
+    """
+    lines = text.splitlines()
+
+    # % iowait da última linha de dados do avg-cpu (após cabeçalho "tty:")
+    iowait: float | None = None
+    for i, line in enumerate(lines):
+        if line.startswith("tty:"):
+            for j in range(i + 1, min(i + 3, len(lines))):
+                parts = lines[j].split()
+                if len(parts) == 6 and all(_float_ou_none(p) is not None for p in parts):
+                    iowait = float(parts[5])
+                    break
+
+    # último cabeçalho "Disks:" (relatório do intervalo, não o desde-boot)
+    disks_idx = -1
+    for i, line in enumerate(lines):
+        if line.startswith("Disks:"):
+            disks_idx = i
+
+    result: dict = {}
+    if iowait is not None:
+        result["cpu_iowait_pct"] = iowait
+    if disks_idx < 0:
+        return result
+
+    read_kb = 0
+    write_kb = 0
+    tps_sum = 0.0
+    busy_max = 0.0
+    encontrou = False
+    for line in lines[disks_idx + 1:]:
+        if not line.strip():
+            break
+        m = _IOSTAT_DISK_RE.match(line)
+        if not m:
+            continue
+        encontrou = True
+        busy_max = max(busy_max, float(m.group(2)))
+        tps_sum += float(m.group(4))
+        read_kb += int(m.group(5))
+        write_kb += int(m.group(6))
+    if not encontrou:
+        return result
+
+    interval = interval_s if interval_s > 0 else 1.0
+    result["disk_read_kbs"] = round(read_kb / interval, 1)
+    result["disk_write_kbs"] = round(write_kb / interval, 1)
+    result["iops"] = round(tps_sum, 1)
+    result["disk_busy_pct"] = round(busy_max, 1)
+    return result
+
+
+def parse_iostat_d_aix(text: str) -> float | None:
+    """Latência média ponderada de disco (ms) do `iostat -D 1 2` (AIX).
+
+    Unidade validada empiricamente no MIG24 (AIX 7300-02): leitura raw de
+    5000 ops em /dev/rhdisk0 mediu 0,144 ms/op e o avgserv do mesmo
+    intervalo reportou 0,1 — o avgserv é em MILISSEGUNDOS (se fosse décimos
+    de ms divergiria ~14x).
+
+    Blocos posteriores sobrescrevem os anteriores (o 1º relatório é o
+    acumulado desde o boot). A latência é a média ponderada pelas operações:
+    (Σ rps*avgserv_read + Σ wps*avgserv_write) ÷ (Σ rps + Σ wps).
+    Sem operações no intervalo, retorna None (sem IO = sem latência medida,
+    nunca 0.0 fingido).
+    """
+    # disk -> {"read": (rps, avgserv), "write": (wps, avgserv)}
+    disks: dict[str, dict[str, tuple[float, float]]] = {}
+    current: str | None = None
+    pending: str | None = None  # "read" | "write" (aguardando linha de dados)
+    for line in text.splitlines():
+        m = _IOSTAT_D_DISK_RE.match(line)
+        if m:
+            current = m.group(1)
+            pending = None
+            continue
+        if current is None:
+            continue
+        if "avgserv" in line and "read:" in line:
+            pending = "read"
+            continue
+        if "avgserv" in line and "write:" in line:
+            pending = "write"
+            continue
+        if pending:
+            parts = line.split()
+            # só as 2 primeiras colunas importam (ops, avgserv); as demais
+            # (minserv/maxserv) podem vir com sufixo sob carga extrema
+            if len(parts) >= 2:
+                ops = _num_iostat_aix(parts[0])
+                avgserv = _num_iostat_aix(parts[1])
+                if ops is not None and avgserv is not None:
+                    disks.setdefault(current, {})[pending] = (ops, avgserv)
+            pending = None
+
+    ops_total = 0.0
+    soma_ponderada = 0.0
+    for dados in disks.values():
+        for ops, avgserv in dados.values():
+            ops_total += ops
+            soma_ponderada += ops * avgserv
+    if ops_total <= 0:
+        return None
+    return round(soma_ponderada / ops_total, 2)
+
+
 # ── Coletores por plataforma ─────────────────────────────────────────────────
 
 class LinuxCollector:
-    """Coleta via /proc. CPU e disco dependem de delta entre amostras."""
+    """Coleta via /proc. CPU, iowait e disco dependem de delta entre amostras.
 
-    def __init__(self, proc_root: str = "/proc"):
+    Disco (paridade com o coletor AIX): além das taxas KB/s, deriva de
+    /proc/diskstats o IOPS (Δios ÷ Δt), a latência média ponderada
+    (Δ(rd_ticks+wr_ticks) ÷ Δios) e o % busy do disco mais ocupado
+    (Δtime_in_io ÷ Δt — mesmo significado do % tm_act do iostat AIX).
+    cpu_iowait_pct vem do Δ dos jiffies de iowait do /proc/stat.
+    """
+
+    def __init__(self, proc_root: str = "/proc", clock=None):
         self._proc = proc_root
+        # clock injetável: testes NÃO devem patchar time.monotonic global —
+        # outras threads do processo pytest consomem o side_effect e o
+        # valor do delta vaza (flake observado na suíte completa)
+        self._clock = clock or time.monotonic
         self._prev_cpu: tuple[int, int] | None = None
+        self._prev_iowait: tuple[int, int] | None = None
         self._prev_disk: tuple[int, int, float] | None = None
+        self._prev_disk_full: tuple[dict, float] | None = None
 
     def _read(self, name: str) -> str:
         try:
@@ -214,7 +429,8 @@ class LinuxCollector:
     def sample(self, ts_ms: int) -> dict:
         sample = _base_sample(ts_ms)
 
-        busy, total = parse_proc_stat_cpu(self._read("stat"))
+        stat = self._read("stat")
+        busy, total = parse_proc_stat_cpu(stat)
         if self._prev_cpu and total > self._prev_cpu[1]:
             d_busy = busy - self._prev_cpu[0]
             d_total = total - self._prev_cpu[1]
@@ -222,11 +438,19 @@ class LinuxCollector:
         if total:
             self._prev_cpu = (busy, total)
 
+        iowait, total_io = parse_proc_stat_iowait(stat)
+        if self._prev_iowait and total_io > self._prev_iowait[1]:
+            d_iowait = iowait - self._prev_iowait[0]
+            d_total_io = total_io - self._prev_iowait[1]
+            sample["cpu_iowait_pct"] = round(d_iowait * 100 / d_total_io, 1)
+        if total_io:
+            self._prev_iowait = (iowait, total_io)
+
         mem = parse_proc_meminfo(self._read("meminfo"))
         sample.update({k: v for k, v in mem.items() if v is not None})
 
         sectors_read, sectors_written = parse_proc_diskstats(self._read("diskstats"))
-        now_s = time.monotonic()
+        now_s = self._clock()
         if self._prev_disk:
             p_read, p_written, p_ts = self._prev_disk
             elapsed = now_s - p_ts
@@ -235,11 +459,43 @@ class LinuxCollector:
                 sample["disk_read_kbs"] = round((sectors_read - p_read) * 512 / 1024 / elapsed, 1)
                 sample["disk_write_kbs"] = round((sectors_written - p_written) * 512 / 1024 / elapsed, 1)
         self._prev_disk = (sectors_read, sectors_written, now_s)
+
+        discos = parse_proc_diskstats_full(self._read("diskstats"))
+        if self._prev_disk_full:
+            p_discos, p_ts = self._prev_disk_full
+            elapsed = now_s - p_ts
+            if elapsed > 0:
+                d_ios = 0
+                d_ticks = 0
+                busy_max = 0.0
+                for nome, atual in discos.items():
+                    anterior = p_discos.get(nome)
+                    if anterior is None:
+                        continue
+                    ios = (atual[0] - anterior[0]) + (atual[3] - anterior[3])
+                    if ios < 0:
+                        continue  # contador reiniciado (ex.: hotplug)
+                    d_ios += ios
+                    d_ticks += (atual[2] - anterior[2]) + (atual[5] - anterior[5])
+                    busy = (atual[6] - anterior[6]) / (elapsed * 1000) * 100
+                    busy_max = max(busy_max, min(busy, 100.0))
+                if d_ios > 0:
+                    sample["iops"] = round(d_ios / elapsed, 1)
+                    sample["disk_latency_ms"] = round(d_ticks / d_ios, 2)
+                sample["disk_busy_pct"] = round(busy_max, 1)
+        self._prev_disk_full = (discos, now_s)
         return sample
 
 
 class AixCollector:
-    """Coleta via vmstat/lsattr/lsps (best-effort; sem coleta de disco)."""
+    """Coleta via vmstat/lsattr/lsps/iostat (best-effort).
+
+    Disco: `iostat 1 2` (taxas do intervalo: KB/s lidos/escritos, IOPS,
+    % tm_act do disco mais ocupado e % iowait da CPU) e `iostat -D 1 2`
+    (latência média ponderada, avgserv em ms — unidade validada no MIG24).
+    Custo: ~2 s adicionais por amostra (vmstat já consome ~1 s); qualquer
+    comando ausente deixa os campos None, nunca zero fingindo medição.
+    """
 
     def __init__(self):
         self._mem_total_kb: int | None = None
@@ -273,6 +529,15 @@ class AixCollector:
         swap_pct = parse_lsps_swap_pct(self._run(["lsps", "-s"]))
         if swap_pct is not None:
             sample["swap_pct"] = swap_pct
+        # Disco: taxas do intervalo (iostat clássico) + latência (iostat -D)
+        io = parse_iostat_aix(self._run(["iostat", "1", "2"]))
+        for campo in ("disk_read_kbs", "disk_write_kbs", "iops",
+                      "disk_busy_pct", "cpu_iowait_pct"):
+            if io.get(campo) is not None:
+                sample[campo] = io[campo]
+        lat = parse_iostat_d_aix(self._run(["iostat", "-D", "1", "2"]))
+        if lat is not None:
+            sample["disk_latency_ms"] = lat
         # AIX não tem os.getloadavg — fallback para `uptime`
         if sample["load1"] is None:
             loads = parse_uptime_loadavg(self._run(["uptime"]))

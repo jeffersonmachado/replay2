@@ -686,6 +686,7 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
 
         write_json(handler, 200, {
             "status": "completed",
+            "simulation": result.simulation,
             "total_sessions": result.total_sessions,
             "completed": result.completed,
             "failed": result.failed,
@@ -830,6 +831,21 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
         )
         orch = BenchmarkOrchestrator()
         report = orch.run_and_report(config)
+        # Endpoint legado (simulação determinística por seed): a resposta
+        # SEMPRE carrega o selo simulation=true em destaque e NUNCA inclui
+        # recomendação de migração — números sintéticos não sustentam decisão.
+        # O caminho oficial é o benchmark real (POST /api/benchmarks, §21).
+        report["simulation"] = True
+        report.pop("recommendation", None)
+        for comp in report.get("comparisons") or []:
+            if isinstance(comp, dict):
+                comp.pop("recommendations", None)
+                comp.pop("recommendation", None)
+        report["simulation_notice"] = (
+            "SIMULACAO deterministica por seed: os numeros NAO sao medicao "
+            "real e NAO sustentam decisao de migracao. Use o benchmark real "
+            "(POST /api/benchmarks)."
+        )
         write_json(handler, 200, report)
         return True
 

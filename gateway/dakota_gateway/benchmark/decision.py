@@ -40,13 +40,21 @@ def decide(*, functional_ok: bool, functional_diffs: list[dict],
            degradation: DegradationReport,
            normalization_status: str,
            collectors_detail: str = "",
-           functional_evidence_ok: bool = True) -> Decision:
+           functional_evidence_ok: bool = True,
+           functional_basis: str = "shared",
+           stop_reason: dict | None = None) -> Decision:
     """Aplica as portas de decisão (§16/§20) e emite o veredito do experimento.
 
     ``collectors_detail`` (opcional) detalha QUAIS ambientes ficaram sem
     coletor obrigatório; ``functional_evidence_ok=False`` indica que o alvo
     executou amostras sem NENHUMA comparação de assinatura de tela — a
     equivalência funcional não pode ser declarada comprovada.
+    ``functional_basis="per_env"`` indica equivalência por baseline PRÓPRIO
+    do ambiente (datasets divergentes): paridade de dados NÃO comprovada —
+    veredito máximo WARN (§20: "dados diferentes" não gera PASS).
+    ``stop_reason`` presente indica escada interrompida por stop_condition
+    (saturação/limite encontrado): achado de capacidade — veredito máximo
+    WARN, nunca PASS (a validação completa planejada não ocorreu).
     """
     razoes: list[str] = []
 
@@ -93,6 +101,19 @@ def decide(*, functional_ok: bool, functional_diffs: list[dict],
             f"degradação a partir de concorrência "
             f"{degradation.degradation_point} (limite seguro: "
             f"{degradation.safe_operational_limit})"
+        )
+    if functional_basis == "per_env":
+        avisos.append(
+            "equivalência funcional por baseline próprio do ambiente: os "
+            "datasets divergem entre os ambientes — paridade de dados NÃO "
+            "comprovada (§20: dados diferentes não geram PASS)"
+        )
+    if stop_reason:
+        avisos.append(
+            f"escada interrompida por stop_condition:"
+            f"{stop_reason.get('condition', '?')} em concorrência "
+            f"{stop_reason.get('concurrency', '?')} (limite de capacidade "
+            "encontrado antes do plano completo)"
         )
 
     if avisos:

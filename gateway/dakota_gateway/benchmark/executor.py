@@ -279,6 +279,16 @@ class BenchmarkExecutor:
                     amostras, fatal = self._run_phase(
                         adapter, phase, seconds, iteration, concurrency)
                     por_fase[phase] = amostras
+                    # janitor de órfãos entre fases: sessões mortas no meio
+                    # da jornada deixam a árvore remota viva comendo CPU e
+                    # distorcendo as fases seguintes (duck typing; falha do
+                    # janitor nunca derruba a fase)
+                    reap = getattr(adapter, "reap_orphans", None)
+                    if callable(reap):
+                        try:
+                            reap()
+                        except Exception:
+                            pass
                     if fatal:
                         status = "FAILED"
                         error_reason = fatal
@@ -322,6 +332,23 @@ class BenchmarkExecutor:
                 host_status=getattr(adapter, "host_metrics_status", None))
             results.append(result)
         return results
+
+    def _persist_run_status(self, result: EnvironmentRunResult) -> None:
+        """Atualiza o status no execution-result.json da run (pós-reclassificação)."""
+        run_id = (f"{result.environment_id}-iter{result.iteration}"
+                  f"-conc{result.concurrency}")
+        resumo_path = (self.experiment_dir / "runs" / run_id
+                       / "execution-result.json")
+        if not resumo_path.is_file():
+            return
+        try:
+            dados = json.loads(resumo_path.read_text(encoding="utf-8"))
+            dados["status"] = result.status
+            resumo_path.write_text(
+                json.dumps(dados, indent=2, ensure_ascii=False),
+                encoding="utf-8")
+        except (OSError, ValueError):
+            pass
 
     def _write_run_artifacts(self, run_id: str, result: EnvironmentRunResult,
                              host_metrics: list[dict],
@@ -415,9 +442,19 @@ class BenchmarkExecutor:
         # WARMUP → MEASUREMENT → COOLDOWN por nível × iteração (§11 pareado)
         all_runs: list[EnvironmentRunResult] = []
         envs = list(self.contract.environments)
+        niveis_transporte_consecutivos = 0
+        transport_abort = False
+        admission_ceiling: int | None = None
         for iteration in range(1, self.contract.iterations + 1):
             env_order = envs if iteration % 2 == 1 else list(reversed(envs))
             for concurrency in self.contract.concurrency_levels:
+                # Teto de admissão: níveis >= ceiling são pulados (o ambiente
+                # já demonstrou não admitir essa concorrência) — mas as
+                # repetições dos níveis INFERIORES nas iterações seguintes
+                # continuam (estatística pareada preservada).
+                if (admission_ceiling is not None
+                        and concurrency >= admission_ceiling):
+                    continue
                 self.order_history.append({
                     "iteration": iteration,
                     "concurrency": concurrency,
@@ -425,6 +462,23 @@ class BenchmarkExecutor:
                 })
                 results = self.run_level(concurrency, iteration, env_order)
                 all_runs.extend(results)
+                # Colapso de TRANSPORTE (VPN/rede local do orquestrador —
+                # caso real cap13 v5: "Network is unreachable" nos dois
+                # hosts por horas): TODAS as runs do nível falharam no
+                # start por erro de transporte. 2 níveis consecutivos assim
+                # = ambiente inacessível: aborta cedo como INCONCLUSIVE em
+                # vez de moer níveis condenados (nunca PASS, §5.2/§20).
+                if results and all(
+                        r.status == "FAILED"
+                        and getattr(self.adapters.get(r.environment_id),
+                                    "last_start_error_transport", False)
+                        for r in results):
+                    niveis_transporte_consecutivos += 1
+                else:
+                    niveis_transporte_consecutivos = 0
+                if niveis_transporte_consecutivos >= 2:
+                    transport_abort = True
+                    break
                 host_metrics = self._collect_level_host_metrics(results)
                 stop = self._stop_condition_hit(results, host_metrics)
                 if stop is not None:
@@ -434,7 +488,47 @@ class BenchmarkExecutor:
                         **stop,
                     }
                     break
-            if self.stop_reason is not None:
+                # LIMITE DE ADMISSÃO de sessões (§17 — saturação de admissão):
+                # TODAS as runs do nível falharam no start_session (nenhuma
+                # sessão admitida), SEM erro de transporte, e um nível
+                # anterior COMPLETED. O ambiente demonstradamente não admite
+                # N sessões concorrentes (menu não renderiza, licença do
+                # runtime) — é o teto de admissão, achado de capacidade: as
+                # runs do nível viram ABORTED e o nível (e superiores) é
+                # pulado nas iterações seguintes. Avaliado DEPOIS das stop
+                # conditions de host: saturação medida (CPU etc.) é sinal
+                # mais específico e prevalece. Não confundir com transporte
+                # (rede local caída → fail-fast acima) nem com nível
+                # inicial quebrado (sem baseline → FAILED honesto).
+                anteriores_ok = any(
+                    r.status == "COMPLETED"
+                    for r in all_runs[:-len(results)] or [])
+                if (results and anteriores_ok and all(
+                        r.status == "FAILED"
+                        and r.error_reason.startswith("start_session_failed")
+                        and not getattr(
+                            self.adapters.get(r.environment_id),
+                            "last_start_error_transport", False)
+                        for r in results)):
+                    if admission_ceiling is None:
+                        admission_ceiling = concurrency
+                    else:
+                        admission_ceiling = min(admission_ceiling, concurrency)
+                    if self.stop_reason is None:
+                        self.stop_reason = {
+                            "iteration": iteration,
+                            "concurrency": concurrency,
+                            "condition": "session_admission_limit",
+                            "value": concurrency,
+                            "limit": concurrency,
+                        }
+                    continue
+            # Parada dura: transporte ou stop_condition de saturação/erro
+            # (admission NÃO é parada dura — só teto para níveis superiores)
+            if transport_abort or (
+                    self.stop_reason is not None
+                    and self.stop_reason.get("condition")
+                    != "session_admission_limit"):
                 break
 
         # VALIDATION + CLEANUP
@@ -444,8 +538,28 @@ class BenchmarkExecutor:
             except Exception:
                 pass
 
-        falhas = [r for r in all_runs if r.status != "COMPLETED"]
-        if falhas:
+        # Stop_condition (§17): as falhas do NÍVEL PARADO (ex.: sessões que
+        # não abrem sob saturação, "User limit exceeded" de licença) são o
+        # achado de capacidade — reclassificadas como ABORTED, não derrubam
+        # o experimento. Falhas em OUTROS níveis continuam fatais.
+        # A reclassificação é PERSISTIDA no execution-result.json da run:
+        # o rebuild (compare/report) lê o status do disco — memória e
+        # evidência não podem divergir (bug real v7: disco FAILED ×
+        # veredito WARN em memória).
+        if self.stop_reason is not None:
+            nivel = (self.stop_reason.get("iteration"),
+                     self.stop_reason.get("concurrency"))
+            for r in all_runs:
+                if (r.status == "FAILED"
+                        and (r.iteration, r.concurrency) == nivel):
+                    r.status = "ABORTED"
+                    self._persist_run_status(r)
+
+        falhas = [r for r in all_runs if r.status == "FAILED"]
+        if transport_abort:
+            status = "FAILED"
+            reason = "environment_unreachable_mid_run"
+        elif falhas:
             status = "FAILED"
             reason = falhas[0].error_reason or "run_failed"
         elif self.stop_reason is not None:
@@ -463,6 +577,7 @@ class BenchmarkExecutor:
             runs=all_runs,
             verdict="INCONCLUSIVE",
             reason=reason,
+            stop_reason=self.stop_reason,
         )
         self._write_experiment_result(resultado, preflight)
         return resultado

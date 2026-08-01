@@ -53,10 +53,16 @@ def _janela_segundos(result: ExperimentResult, env_id: str) -> float:
 
 
 def _contagens(result: ExperimentResult, env_id: str) -> dict:
-    """Contagens funcionais do ambiente (sucesso/erro/timeout/divergência)."""
+    """Contagens funcionais do ambiente (sucesso/erro/timeout/divergência).
+
+    Apenas runs COMPLETED alimentam a porta 1: runs ABORTED (nível parado
+    por stop_condition — saturação, limite de licença) são achado de
+    CAPACIDADE, não regressão funcional; a evidência fica nos artefatos da
+    run (§24).
+    """
     total = sucesso = timeouts = divergencias = erros = 0
     for run in result.runs:
-        if run.environment_id != env_id:
+        if run.environment_id != env_id or run.status != "COMPLETED":
             continue
         for s in run.samples:
             total += 1
@@ -131,9 +137,11 @@ def build_comparison(result: ExperimentResult,
 
     # PORTA 1 — divergências funcionais do alvo (erro/timeout adicionais),
     # com as assinaturas esperada/observadas como evidência auditável.
+    # Apenas runs COMPLETED: divergência sob saturação (run ABORTED por
+    # stop_condition) não é regressão funcional — é achado de capacidade.
     functional_diffs: list[dict] = []
     for run in result.runs:
-        if run.environment_id != target:
+        if run.environment_id != target or run.status != "COMPLETED":
             continue
         for s in run.samples:
             if s.functional_divergence:
@@ -155,6 +163,19 @@ def build_comparison(result: ExperimentResult,
             for s in run.samples
             if getattr(s, "screen_sig_checked", False)
         )
+
+    # Base da equivalência funcional: "per_env" se QUALQUER amostra usou
+    # baseline próprio do ambiente (datasets divergentes — ex.: .est
+    # endian-nativo). A decisão nunca deixa per_env virar PASS (§20:
+    # "dados diferentes" não comprova paridade).
+    functional_basis = "shared"
+    for run in result.runs:
+        for s in run.samples:
+            if getattr(s, "screen_check_basis", "") == "env":
+                functional_basis = "per_env"
+                break
+        if functional_basis == "per_env":
+            break
 
     escadas = {env_id: _level_stats(result, env_id) for env_id in env_ids}
     degradacao_por_env = {}
@@ -178,6 +199,7 @@ def build_comparison(result: ExperimentResult,
         "counts": {"baseline": cont_base, "target": cont_alvo},
         "functional_diffs": functional_diffs,
         "functional_evidence": functional_evidence,
+        "functional_basis": functional_basis,
         "ladder_by_env": escadas,
         "degradation_by_env": {
             env_id: asdict(rep) for env_id, rep in degradacao_por_env.items()
@@ -261,10 +283,14 @@ def build_decision(result: ExperimentResult, comparison: dict,
     for env_id, dados in comparison.get("stats_by_env", {}).items():
         stats_by_env[env_id] = Stats(**dados)
 
-    # amostras mínimas completas: toda run COMPLETED com >=1 amostra de medição
+    # amostras mínimas completas: toda run não-ABORTED COMPLETED com >=1
+    # amostra de medição. Runs ABORTED (nível parado por stop_condition)
+    # não invalidam a completude dos níveis executados — a parada da escada
+    # é sinalizada à decisão via stop_reason (WARN, nunca PASS).
     runs = [r for r in result.runs]
-    samples_complete = bool(runs) and all(
-        r.status == "COMPLETED" and len(r.samples) >= 1 for r in runs
+    runs_validas = [r for r in runs if r.status != "ABORTED"]
+    samples_complete = bool(runs_validas) and all(
+        r.status == "COMPLETED" and len(r.samples) >= 1 for r in runs_validas
     ) and result.status == "COMPLETED"
 
     # coletores obrigatórios: >=1 amostra de host VÁLIDA por AMBIENTE (um
@@ -317,4 +343,6 @@ def build_decision(result: ExperimentResult, comparison: dict,
         normalization_status=normalization_status,
         collectors_detail=collectors_detail,
         functional_evidence_ok=functional_evidence_ok,
+        functional_basis=comparison.get("functional_basis", "shared"),
+        stop_reason=getattr(result, "stop_reason", None),
     )

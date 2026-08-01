@@ -87,6 +87,24 @@ class EnvironmentModel:
     # replay da jornada. Vazio = mesmo usuário do endpoint e "python3 -".
     metrics_ssh_user: str = ""
     metrics_remote_cmd: str = ""
+    # Preamble de entrada (§9): passos determinísticos que levam a sessão
+    # recém-aberta ao estado inicial da jornada (ex.: menu de login → shell →
+    # launcher do ERP). Por ambiente, porque a entrada difere entre AIX e
+    # Linux. Cada passo: {"send": "0\r"?, "wait_text": "..."?, "timeout_s": N?}.
+    # O preamble NUNCA gera amostras; se um âncora não aparece, a sessão
+    # falha com razão clara (bloqueio honesto, jamais PASS).
+    entry_preamble: tuple = ()
+    # Janela de estabilidade (ms) do drain de tela: o ERP sobre VPN desenha
+    # em rajadas com pausas internas (observado: pausa de ~187ms no meio da
+    # resposta a uma tecla). 0 = default do adaptador (150ms).
+    stable_ms: int = 0
+    # Comando remoto do janitor de órfãos (§8: conhecimento de plataforma
+    # fica na config do ambiente, não no código). Matar o ssh local NÃO mata
+    # a árvore remota (ksh/login sobrevive com PPID=1 e o runtime do ERP
+    # continua no grupo — caso real AIX 01/08/2026: load 23 por órfãos).
+    # O comando roda via ssh one-shot ao fim de cada fase; sessões VIVAS
+    # têm PPID=sshd e não podem ser tocadas por ele. Vazio = sem janitor.
+    orphan_reap_cmd: str = ""
 
     def to_dict(self) -> dict:
         """Serializa o ambiente (sem nunca conter segredo em texto claro)."""
@@ -106,6 +124,9 @@ class EnvironmentModel:
             "replay2_db_path": self.replay2_db_path,
             "metrics_ssh_user": self.metrics_ssh_user,
             "metrics_remote_cmd": self.metrics_remote_cmd,
+            "entry_preamble": [dict(p) for p in self.entry_preamble],
+            "stable_ms": self.stable_ms,
+            "orphan_reap_cmd": self.orphan_reap_cmd,
         }
 
     @staticmethod
@@ -117,4 +138,7 @@ class EnvironmentModel:
             environment_id="", platform="", architecture="", host="",
         ).to_dict()) - {"cpu"}
         filtrado = {k: v for k, v in dados.items() if k in conhecidos}
+        if "entry_preamble" in filtrado:
+            filtrado["entry_preamble"] = tuple(
+                dict(p) for p in (filtrado["entry_preamble"] or ()))
         return EnvironmentModel(cpu=cpu, **filtrado)

@@ -27,8 +27,10 @@ Segredos nunca em texto claro: a credencial vem de ``env.user_secret_ref``
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import re
 import select
 import subprocess
 import time
@@ -49,6 +51,97 @@ _TAIL_MAX_BYTES = 65536
 #: inclusive janela com 0 linhas, confirmada pela linha sentinela do script.
 _HOST_METRICS_MAX_ATTEMPTS = 3
 _HOST_METRICS_BACKOFF_S = (1.0, 2.0)
+
+
+class PreambleError(RuntimeError):
+    """Âncora do preamble de entrada não apareceu dentro do timeout.
+
+    A sessão não alcançou o estado inicial da jornada (ex.: menu de login
+    não respondeu, launcher do ERP falhou). É bloqueio honesto: a fase
+    aborta via ``start_session_failed`` e o ambiente NUNCA produz amostras
+    a partir de um estado errado.
+    """
+
+
+_ESCAPES_PREAMBLE = {
+    "r": b"\r", "n": b"\n", "t": b"\t", "e": b"\x1b", "\\": b"\\",
+}
+
+#: Padrões de erro de TRANSPORTE na saída da sessão (colapso de rede local,
+#: ex.: VPN do orquestrador caiu — caso real cap13 v5: "Connection timed
+#: out" seguido de "Network is unreachable" nos DOIS hosts por horas).
+#: Distinto de saturação/limite de licença, que chegam como CONTEÚDO de tela.
+_PADROES_ERRO_TRANSPORTE = (
+    b"ssh: connect",
+    b"Network is unreachable",
+    b"Connection timed out",
+    b"Connection refused",
+    b"Connection reset",
+    b"Could not resolve hostname",
+)
+
+#: Máscaras de campos voláteis aplicadas DOS DOIS LADOS da comparação de
+#: texto de tela (checkpoint quiet point): data de emissão, contador de
+#: memória livre do rodapé do ERP, números sequenciais (pedido etc.) e
+#: horários mudam a cada execução sem significar divergência funcional.
+#: A identidade da plataforma no rodapé do ERP ("IBM AIX (COMMON)" ×
+#: "Linux X86") é a diferença ESPERADA entre os ambientes — é exatamente o
+#: que o benchmark existe para comparar; rótulos, dados e estado da tela
+#: continuam integralmente comparados. Diferença estrutural NUNCA é
+#: mascarada.
+_MASCARAS_VOLATEIS = (
+    (re.compile(r"\d{2}/\d{2}/\d{2,4}"), "##DATA##"),
+    (re.compile(r"[\d.,]+\s*Kb\b"), "##KB##"),
+    (re.compile(r"\b[A-Z]\d{5,}\b"), "##ID##"),
+    (re.compile(r"\b\d{2}:\d{2}(?::\d{2})?\b"), "##HORA##"),
+    (re.compile(r"(?:ibm aix \(common\)|linux x86) *", re.IGNORECASE),
+     "##PLATAFORMA##"),
+)
+
+
+def _mask_volatil(texto: str) -> str:
+    """Substitui campos voláteis por tokens fixos (comparação de tela)."""
+    for padrao, token in _MASCARAS_VOLATEIS:
+        texto = padrao.sub(token, texto)
+    return texto
+
+
+def _normalizar_texto_tela(texto: str) -> str:
+    """Normaliza texto de tela para comparação: rstrip por linha, remove
+    linhas vazias do fim, aplica as máscaras voláteis e iguala caixa
+    (indicadores de status do ERP variam "Ok"/"ok" entre captura e replay
+    sem significar divergência funcional)."""
+    linhas = [l.rstrip() for l in
+              texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    while linhas and not linhas[-1]:
+        linhas.pop()
+    return _mask_volatil("\n".join(linhas)).lower()
+
+
+def _render_terminal_text(engine) -> str:
+    """Renderiza as células da engine canônica como texto (linhas × cols)."""
+    return "\n".join("".join(cell.ch for cell in row) for row in engine.cells)
+
+
+def _decode_preamble_send(texto: str) -> bytes:
+    """Decodifica escapes simples do ``send`` do preamble (``\\r`` → CR etc.).
+
+    Suportados: ``\\r \\n \\t \\e \\\\``. Qualquer outro escape é enviado
+    literalmente (sem surpresas silenciosas).
+    """
+    out = bytearray()
+    i = 0
+    while i < len(texto):
+        ch = texto[i]
+        if ch == "\\" and i + 1 < len(texto):
+            nxt = texto[i + 1]
+            if nxt in _ESCAPES_PREAMBLE:
+                out += _ESCAPES_PREAMBLE[nxt]
+                i += 2
+                continue
+        out += ch.encode("utf-8")
+        i += 1
+    return bytes(out)
 
 
 @runtime_checkable
@@ -115,7 +208,7 @@ class SSHReplayAdapter:
 
     def __init__(self, env: EnvironmentModel, contract: ExperimentContract,
                  *, ssh_runner=None, popen_factory=None,
-                 ssh_user: str = "", stable_ms: int = 150,
+                 ssh_user: str = "", stable_ms: int | None = None,
                  step_timeout_s: float = 30.0,
                  remote_python_cmd: str = "python3 -") -> None:
         self.env = env
@@ -123,7 +216,9 @@ class SSHReplayAdapter:
         self._ssh_runner = ssh_runner or _default_ssh_runner
         self._popen_factory = popen_factory or subprocess.Popen
         self._ssh_user = ssh_user
-        self.stable_ms = stable_ms
+        # stable_ms explícito (testes) vence; senão o do ambiente; senão 150.
+        self.stable_ms = (int(stable_ms) if stable_ms is not None
+                          else int(getattr(env, "stable_ms", 0) or 150))
         self.step_timeout_s = step_timeout_s
         self.remote_python_cmd = remote_python_cmd
         self._sessions: dict[str, dict] = {}
@@ -138,6 +233,11 @@ class SSHReplayAdapter:
         # Forense: tail da saída de cada usuário virtual (últimos 64KB) para
         # o run logs/ — evidência do que a sessão recebeu perto da morte.
         self._tails_by_vu: dict[str, bytearray] = {}
+        # Classe do último erro de start_session: True quando a saída da
+        # sessão é vazia ou só traz erro de transporte (rede local caída) —
+        # o executor usa para abortar cedo como environment_unreachable
+        # em vez de moer níveis condenados por horas (caso real v5).
+        self.last_start_error_transport = False
 
     # -- contexto de iteração/concorrência (chamado pelo executor, duck typing)
 
@@ -222,7 +322,13 @@ class SSHReplayAdapter:
         return {"ok": True, "dataset_ref": dict(dataset_ref)}
 
     def start_session(self, virtual_user_id: str) -> str:
-        """Abre uma sessão SSH com PTY dedicada ao usuário virtual."""
+        """Abre uma sessão SSH com PTY dedicada ao usuário virtual.
+
+        Se o ambiente define ``entry_preamble``, executa os passos de entrada
+        (menu de login → shell → launcher do ERP) ANTES de devolver o handle:
+        a jornada sempre começa do estado inicial correto. O preamble não
+        gera amostras; âncora ausente aborta a sessão com ``PreambleError``.
+        """
         self._session_seq += 1
         handle = f"{virtual_user_id}#{self._session_seq}"
         argv = self._ssh_base_argv(tty=True)
@@ -232,13 +338,92 @@ class SSHReplayAdapter:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        self._sessions[handle] = {
+        session = {
             "proc": proc,
             "virtual_user_id": virtual_user_id,
             "terminal": None,
             "tail": bytearray(),
         }
+        self._sessions[handle] = session
+        self.last_start_error_transport = False
+        try:
+            self._run_preamble(session)
+        except Exception:
+            # sessão não alcançou o estado inicial: encerra e propaga —
+            # o executor registra start_session_failed (bloqueio honesto)
+            tail = bytes(session.get("tail") or b"")
+            self.last_start_error_transport = (
+                not tail.strip()
+                or any(p in tail for p in _PADROES_ERRO_TRANSPORTE))
+            try:
+                self.stop_session(handle)
+            except Exception:
+                pass
+            raise
         return handle
+
+    # -- preamble de entrada (§9) -------------------------------------------
+
+    def _run_preamble(self, session: dict) -> None:
+        """Executa os passos de ``env.entry_preamble`` sobre a sessão nova.
+
+        Cada passo pode ter ``send`` (bytes com escapes simples) e/ou
+        ``wait_text`` (âncora aguardada na saída, com ``timeout_s``).
+        A saída acumula no tail forense da sessão, mas NUNCA vira amostra.
+        """
+        proc = session["proc"]
+        for idx, passo in enumerate(self.env.entry_preamble or ()):
+            send = passo.get("send")
+            if send:
+                proc.stdin.write(_decode_preamble_send(str(send)))
+                proc.stdin.flush()
+            anchor = passo.get("wait_text")
+            if anchor:
+                timeout_s = float(passo.get("timeout_s", 15.0))
+                if not self._wait_for_anchor(
+                        proc, session["tail"],
+                        str(anchor).encode("utf-8"), timeout_s):
+                    raise PreambleError(
+                        f"passo {idx}: anchor {anchor!r} não apareceu "
+                        f"em {timeout_s:.0f}s (ambiente "
+                        f"{self.env.environment_id} não alcançou o estado "
+                        f"inicial da jornada)")
+        # Dreno final: o âncora pode aparecer NO MEIO do desenho da tela
+        # inicial (caso real cap13: "DAKOTA S/A" sai antes do restante do
+        # menu). Sem este dreno o restante do desenho vaza para a observação
+        # do primeiro passo do corpo e diverge a sig da tela.
+        if self.env.entry_preamble:
+            self._drain_until_stable(proc, session["tail"])
+
+    def _wait_for_anchor(self, proc, tail: bytearray, needle: bytes,
+                         timeout_s: float) -> bool:
+        """Aguarda ``needle`` aparecer na saída da sessão (echo incluso).
+
+        Lê com ``select`` até o deadline; acumula no tail forense. Devolve
+        True assim que o âncora aparece; False em timeout ou EOF remoto.
+        """
+        fd = proc.stdout.fileno()
+        buf = bytearray()
+        deadline = time.monotonic() + timeout_s
+        while True:
+            restante = deadline - time.monotonic()
+            if restante <= 0:
+                return False
+            prontos, _, _ = select.select([fd], [], [], min(0.2, restante))
+            if not prontos:
+                continue
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                return False
+            if not chunk:
+                return False  # EOF: remoto encerrou antes do âncora
+            buf += chunk
+            tail.extend(chunk)
+            if len(tail) > _TAIL_MAX_BYTES:
+                del tail[:len(tail) - _TAIL_MAX_BYTES]
+            if needle in buf:
+                return True
 
     def stop_session(self, session_handle: str) -> None:
         """Encerra a sessão (fecha stdin, termina e aguarda o processo)."""
@@ -276,6 +461,29 @@ class SSHReplayAdapter:
             tails[vu] = bytes(tail)
         return tails
 
+    def reap_orphans(self) -> dict:
+        """Janitor de processos órfãos do ambiente (chamado entre fases).
+
+        Matar o ssh local de uma sessão NÃO mata a árvore remota: o shell
+        de login sobrevive (PPID=1) e o runtime do ERP continua consumindo
+        CPU, distorcendo as fases seguintes. Executa ``env.orphan_reap_cmd``
+        via ssh one-shot; o comando só pode tocar shells ÓRFÃOS (PPID=1) —
+        sessões vivas têm PPID=sshd e ficam intocadas. Falha de transporte
+        nunca derruba o benchmark: é reportada no resultado.
+        """
+        cmd = (self.env.orphan_reap_cmd or "").strip()
+        if not cmd:
+            return {"executed": False, "reason": "not_configured"}
+        try:
+            res = self._ssh_runner(self._ssh_base_argv() + [cmd], None, 60.0)
+            ok = getattr(res, "returncode", 1) == 0
+            saida = str(getattr(res, "stderr", "") or "")[:300]
+            return {"executed": ok,
+                    "reason": "" if ok else f"rc={getattr(res, 'returncode', '?')}",
+                    "detail": saida}
+        except Exception as exc:
+            return {"executed": False, "reason": "error", "detail": str(exc)[:300]}
+
     def cleanup(self) -> None:
         """Encerra todas as sessões ainda abertas."""
         for handle in list(self._sessions):
@@ -294,7 +502,19 @@ class SSHReplayAdapter:
         if phase not in _PHASES_VALIDAS:
             raise ValueError(f"fase inválida: {phase!r}")
         session = self._sessions[session_handle]
+        # Geometria/term da captura: a engine de assinatura deve ser a MESMA
+        # da captura (a text_sig incorpora rows/cols/term no payload hashado).
+        # Troca de jornada = estado de tela novo → engine reconstruída.
+        cap_term = journey.get("capture_terminal")
+        if cap_term != session.get("capture_terminal"):
+            session["capture_terminal"] = cap_term
+            session["terminal"] = None
         proc = session["proc"]
+        # Garante a engine da sessão desde o início da jornada: na criação
+        # ela é retro-alimentada com TODO o stream já recebido (preamble,
+        # banners) e passa a espelhar a tela REAL — os checkpoints de texto
+        # comparam estado de tela completo, nunca um recorte fresco.
+        self._ensure_terminal(session)
         journey_id = str(journey.get("journey_id", "journey"))
         steps = list(journey.get("steps", []))
         produzidas: list[OperationSample] = []
@@ -305,6 +525,67 @@ class SSHReplayAdapter:
             if think_ms:
                 # pacing determinístico ANTES do envio (fora da latência)
                 time.sleep(float(think_ms) / 1000.0)
+
+            divergence = False
+            observado_str = ""
+            esperado_str = ""
+            checked = False
+            check_kind = ""
+            checkpoint_lag_imediato = False
+
+            # Checkpoint de TEXTO (quiet point, ground truth da captura): a
+            # tela esperada é o estado em que o input i foi pressionado na
+            # captura — ou seja, o estado APÓS a resposta i-1. Compara ANTES
+            # de enviar o input, no estado estável pós-dreno anterior.
+            # ``expected_screen_text_by_env`` (baseline PRÓPRIO do ambiente,
+            # gerado de uma passada real quando os datasets divergem entre
+            # ambientes — ex.: formato .est endian-nativo inviabiliza cópia
+            # binária AIX→Linux) tem precedência sobre o texto compartilhado
+            # da captura; a base usada fica marcada na amostra
+            # (``screen_check_basis``) para a decisão NUNCA tratar
+            # equivalência por baseline próprio como prova de paridade de
+            # dados (veredito máximo: WARN).
+            texto_esperado = step.get("expected_screen_text")
+            check_basis = "shared"
+            por_env = step.get("expected_screen_text_by_env")
+            if isinstance(por_env, dict):
+                texto_env = por_env.get(self.env.environment_id)
+                if texto_env:
+                    texto_esperado = texto_env
+                    check_basis = "env"
+            if texto_esperado:
+                engine = self._ensure_terminal(session)
+                if engine is not None:
+                    checked = True
+                    check_kind = "text"
+                    obs_norm = _normalizar_texto_tela(
+                        _render_terminal_text(engine))
+                    exp_norm = _normalizar_texto_tela(str(texto_esperado))
+                    observado_str = "sha256:" + hashlib.sha256(
+                        obs_norm.encode("utf-8")).hexdigest()
+                    esperado_str = "sha256:" + hashlib.sha256(
+                        exp_norm.encode("utf-8")).hexdigest()
+                    if obs_norm != exp_norm:
+                        # janela de lag: a tela observada casa com uma tela
+                        # VIZINHA da captura (mesma tela, outro momento)?
+                        # Casa real cap13: replay uns passos à frente/atrás
+                        # na cascata de ESC — atraso de apresentação
+                        # comprovado, não divergência funcional. Com baseline
+                        # próprio, a janela do ambiente (mesmos step ids)
+                        # tem precedência pelo mesmo motivo.
+                        janela = step.get("lag_window_texts") or ()
+                        if check_basis == "env":
+                            janela_env = step.get("lag_window_texts_by_env")
+                            if isinstance(janela_env, dict):
+                                janela = (janela_env.get(
+                                    self.env.environment_id) or janela)
+                        for vizinho in janela:
+                            if _normalizar_texto_tela(
+                                    str(vizinho)) == obs_norm:
+                                checkpoint_lag_imediato = True
+                                break
+                        else:
+                            divergence = True
 
             timeout = False
             eof = False
@@ -326,18 +607,28 @@ class SSHReplayAdapter:
             if eof and error_code is None:
                 error_code = "session_closed"
 
-            divergence = False
-            observado_str = ""
-            checked = False
-            esperado = step.get("expected_screen_sig") or step.get("screen_sig")
-            if esperado and saida and not timeout and error_code is None:
+            # Checkpoint de SIG (legado: jornadas sem screen_raw) — apenas
+            # quando NÃO houve checkpoint de texto neste passo. O
+            # _compute_text_sig já alimenta a engine com a saída.
+            esperado_sig = ""
+            if check_kind != "text":
+                esperado_sig = str(
+                    step.get("expected_screen_sig") or step.get("screen_sig")
+                    or "")
+            if esperado_sig and saida and not timeout and error_code is None:
                 observado = self._compute_text_sig(session, saida)
                 if observado is not None:
                     # evidência auditável de que a comparação ACONTECEU
                     checked = True
+                    check_kind = "sig"
                     observado_str = observado
-                    if observado != esperado:
+                    esperado_str = esperado_sig
+                    if observado != esperado_sig:
                         divergence = True
+            elif saida:
+                # sem checkpoint de sig: ainda assim alimenta a engine para
+                # manter o espelho da tela real (checkpoints seguintes)
+                self._feed_terminal(session, saida)
 
             success = not timeout and error_code is None
             amostra = OperationSample(
@@ -357,8 +648,11 @@ class SSHReplayAdapter:
                 functional_divergence=divergence,
                 error_code=error_code,
                 screen_sig_checked=checked,
-                expected_screen_sig=str(esperado or ""),
+                expected_screen_sig=esperado_str,
                 observed_screen_sig=observado_str,
+                screen_check_kind=check_kind,
+                screen_check_basis=check_basis if checked else "",
+                checkpoint_lag=checkpoint_lag_imediato,
             )
             self._samples.append(amostra)
             produzidas.append(amostra)
@@ -380,7 +674,64 @@ class SSHReplayAdapter:
                         "ts_ms": int(time.time() * 1000),
                     })
                 break
+        self._rebaixar_skew_segmentacao(produzidas)
+        self._rebaixar_lag_checkpoint(produzidas)
         return produzidas
+
+    @staticmethod
+    def _rebaixar_lag_checkpoint(amostras: list[OperationSample]) -> None:
+        """Rebaixa lags transitórios de checkpoint de texto (§16).
+
+        O ERP faz atualizações longas com silêncio maior que o stable_ms do
+        drain (ex.: "aguarde. atualizando dados..." buscando dados ISAM):
+        o checkpoint i é comparado no meio da atualização (uma tela atrás
+        ou, na captura, à frente por type-ahead) e diverge — mas o PRÓXIMO
+        CHECKPOINT reconverge, provando que o caminho é o mesmo.
+
+        Regra: divergência de TEXTO no passo i só é rebaixada para
+        ``checkpoint_lag`` quando o próximo passo VERIFICADO (checkpoint,
+        não qualquer passo — passo sem checkpoint não prova nada) casou.
+        Divergência no último checkpoint, ou seguida de outra divergência,
+        permanece divergência funcional (porta 1).
+        """
+        for idx, atual in enumerate(amostras):
+            if not atual.functional_divergence:
+                continue
+            if atual.screen_check_kind != "text":
+                continue
+            for proximo in amostras[idx + 1:]:
+                if not proximo.screen_sig_checked:
+                    continue  # passo sem checkpoint não prova reconvergência
+                if not proximo.functional_divergence:
+                    atual.functional_divergence = False
+                    atual.checkpoint_lag = True
+                break
+
+    @staticmethod
+    def _rebaixar_skew_segmentacao(amostras: list[OperationSample]) -> None:
+        """Rebaixa divergências causadas por skew de segmentação (type-ahead).
+
+        Capturas com digitação à frente (operador digita antes da tela
+        terminar de desenhar) cortam a resposta entre dois segmentos: a sig
+        esperada do passo i fica sem a cauda da resposta, enquanto o replay
+        (que aguarda a tela estabilizar) a vê inteira no passo i. O passo i
+        diverge, mas o passo i+1 CONVERGE — as duas engines acumularam o
+        byte stream completo até ali (checagem mais forte que o prefixo).
+
+        Regra: a divergência do passo i só é rebaixada para
+        ``segmentation_skew`` quando é de SIG (reconstrução suscetível ao
+        corte) E o passo i+1 foi VERIFICADO e casou. Divergência de TEXTO
+        (checkpoint quiet point, ground truth) é REAL e NUNCA é rebaixada;
+        divergência persistente e o último passo da jornada também não.
+        """
+        for idx in range(len(amostras) - 1):
+            atual, proximo = amostras[idx], amostras[idx + 1]
+            if (atual.functional_divergence
+                    and atual.screen_check_kind == "sig"
+                    and proximo.screen_sig_checked
+                    and not proximo.functional_divergence):
+                atual.functional_divergence = False
+                atual.segmentation_skew = True
 
     @staticmethod
     def _step_bytes(step: dict) -> bytes:
@@ -436,23 +787,69 @@ class SSHReplayAdapter:
                     del tail[:len(tail) - _TAIL_MAX_BYTES]
         return b"".join(chunks), timed_out, eof
 
+    def _ensure_terminal(self, session: dict):
+        """Engine canônica da sessão — cria se ausente e retro-alimenta.
+
+        Na criação, a engine recebe TODO o stream já acumulado no tail da
+        sessão (banner, preamble, drenos anteriores): ela passa a espelhar
+        a tela REAL no ponto em que a jornada começa. Sem isso, checkpoints
+        de texto comparariam uma tela vazia/parcial (falso divergente).
+        Devolve ``None`` quando a engine canônica não está disponível.
+        """
+        engine = session.get("terminal")
+        if engine is not None:
+            return engine
+        try:
+            from dakota_terminal.engine import TerminalEngine
+        except Exception:
+            return None
+        cap = session.get("capture_terminal") or {}
+        if cap.get("rows") and cap.get("cols"):
+            rows, cols = int(cap["rows"]), int(cap["cols"])
+            term = str(cap.get("term") or "xterm")
+        else:
+            rows, cols = self._terminal_geometry()
+            term = "xterm"
+        try:
+            engine = TerminalEngine(rows=rows, cols=cols, term=term)
+        except Exception:
+            return None
+        session["terminal"] = engine
+        tail = bytes(session.get("tail") or b"")
+        if tail:
+            try:
+                engine.feed_bytes(tail, direction="out")
+            except Exception:
+                pass
+        return engine
+
+    def _feed_terminal(self, session: dict, saida: bytes) -> None:
+        """Alimenta a engine da sessão com saída nova (espelho da tela)."""
+        if not saida:
+            return
+        engine = self._ensure_terminal(session)
+        if engine is not None:
+            try:
+                engine.feed_bytes(saida, direction="out")
+            except Exception:
+                pass
+
     def _compute_text_sig(self, session: dict, saida: bytes) -> str | None:
         """Assinatura de texto da tela via engine canônica (dakota_terminal).
 
-        Retorna ``None`` quando a engine não está disponível — nesse caso a
-        validação de tela simplesmente não é aplicada (jamais fingida).
+        Alimenta a engine com ``saida`` e devolve a ``text_sig`` do estado
+        resultante. Retorna ``None`` quando a engine não está disponível —
+        nesse caso a validação de tela simplesmente não é aplicada (jamais
+        fingida).
         """
         try:
-            from dakota_terminal.engine import TerminalEngine
             from dakota_terminal.signatures import text_sig
         except Exception:
             return None
+        engine = self._ensure_terminal(session)
+        if engine is None:
+            return None
         try:
-            engine = session.get("terminal")
-            if engine is None:
-                rows, cols = self._terminal_geometry()
-                engine = TerminalEngine(rows=rows, cols=cols)
-                session["terminal"] = engine
             engine.feed_bytes(saida, direction="out")
             return text_sig(engine.snapshot())
         except Exception:

@@ -47,6 +47,9 @@ def _montar_report_dict(result: ExperimentResult, comparison: dict,
             "ok": not comparison.get("functional_diffs"),
             "diffs": comparison.get("functional_diffs", []),
             "counts": comparison.get("counts", {}),
+            # "shared" = mesma captura/dado nos 2 ambientes; "per_env" =
+            # baseline próprio (datasets divergentes — paridade NÃO provada)
+            "basis": comparison.get("functional_basis", "shared"),
         },
         "performance_comparison": {
             "baseline_env": comparison.get("baseline_env", ""),
@@ -82,6 +85,7 @@ def _montar_report_dict(result: ExperimentResult, comparison: dict,
             "contract_sha256": result.contract_sha256,
             "status": result.status,
             "reason": result.reason,
+            "stop_reason": result.stop_reason,
             "runs": _resumo_runs(result),
         },
     }
@@ -105,11 +109,23 @@ def _render_markdown(report: dict) -> str:
     ]
     if report["experiment"].get("reason"):
         linhas.append(f"**Motivo:** {report['experiment']['reason']}")
+    if report["experiment"].get("stop_reason"):
+        sr = report["experiment"]["stop_reason"]
+        linhas.append(
+            f"**Parada da escada:** stop_condition:{sr.get('condition')} "
+            f"em concorrência {sr.get('concurrency')} "
+            f"(valor {_fmt(sr.get('value'))}, limite {_fmt(sr.get('limit'))})")
     linhas.append("")
 
     linhas.append("## Validação funcional")
     fv = report["functional_validation"]
     linhas.append(f"- Equivalência funcional: {'OK' if fv['ok'] else 'DIVERGENTE'}")
+    linhas.append(
+        f"- Base da equivalência: {fv.get('basis', 'shared')} "
+        + ("(mesma captura/dado nos dois ambientes)"
+           if fv.get("basis", "shared") == "shared"
+           else "(baseline próprio por ambiente — paridade de dados NÃO "
+                "comprovada)"))
     for diff in fv["diffs"][:20]:
         linhas.append(
             f"- Divergência: journey={diff.get('journey_id')} "

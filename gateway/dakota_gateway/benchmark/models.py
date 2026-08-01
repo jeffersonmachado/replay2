@@ -36,6 +36,30 @@ class OperationSample:
     screen_sig_checked: bool = False
     expected_screen_sig: str = ""
     observed_screen_sig: str = ""
+    # Skew de segmentação por type-ahead (captura gravou o input seguinte
+    # antes da resposta anterior terminar de desenhar): o passo divergiu do
+    # segmento cortado da captura, mas o passo SEGUINTE convergiu — as duas
+    # engines acumularam o mesmo byte stream completo. A evidência fica
+    # marcada aqui; divergência que persiste NUNCA é rebaixada.
+    segmentation_skew: bool = False
+    # Origem da verificação de tela: "text" (checkpoint quiet point com
+    # screen_raw — verdade de terreno; divergência de texto é REAL e nunca
+    # é rebaixada por skew) ou "sig" (assinatura reconstruída do byte
+    # stream — suscetível a skew de segmentação). Vazio = sem verificação.
+    screen_check_kind: str = ""
+    # Base da verificação de texto: "shared" (tela da captura compartilhada
+    # pelos ambientes — prova de paridade com o mesmo dado) ou "env"
+    # (baseline PRÓPRIO do ambiente, gerado de passada real quando os
+    # datasets divergem — a decisão NUNCA deixa equivalência por baseline
+    # próprio virar PASS: dados diferentes é INCONCLUSIVE/WARN, §20).
+    screen_check_basis: str = ""
+    # Lag transitório de checkpoint (pausas longas de atualização do ERP,
+    # ex.: "aguarde. atualizando dados..." com silêncio > stable_ms): o
+    # checkpoint de TEXTO divergiu, mas o PRÓXIMO CHECKPOINT reconvergiu —
+    # evidência de atraso de apresentação, não de divergência funcional.
+    # A marca fica registrada; divergência sem reconvergência NUNCA é
+    # rebaixada.
+    checkpoint_lag: bool = False
 
     def to_jsonl(self) -> str:
         """Serializa como uma linha JSON (application-samples.jsonl)."""
@@ -71,3 +95,8 @@ class ExperimentResult:
     runs: list[EnvironmentRunResult] = field(default_factory=list)
     verdict: str = "INCONCLUSIVE"
     reason: str = ""
+    # Parada da escada por stop_condition (§17: saturação/limite encontrado
+    # é achado de CAPACIDADE, não falha do experimento): dict com
+    # iteration/concurrency/condition/value/limit. A decisão limita o
+    # veredito a WARN quando presente (a validação completa não ocorreu).
+    stop_reason: dict | None = None

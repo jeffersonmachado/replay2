@@ -741,49 +741,250 @@ def _bench_load_env_models(paths: list[str]) -> dict:
     return modelos
 
 
-def _bench_load_journeys(caminho: str) -> list[dict]:
+def _bench_load_journeys(caminho: str, from_seq: int | None = None,
+                         to_seq: int | None = None,
+                         quiet_ms: int = 300) -> list[dict]:
     """Carrega jornadas de JSON (lista) ou JSONL de captura auditável (v2).
 
     JSONL: eventos ``deterministic_input`` viram passos com ``key_b64`` (bytes
-    exatos da captura) em uma única jornada. Cada passo recebe também a
-    ``expected_screen_sig``: pela semântica canônica (``replay_compare``), a
-    assinatura do evento E é o estado de tela em que o input E foi enviado;
-    como o adaptador drena a saída APÓS o envio do input i, o estado
-    resultante é aquele em que o input i+1 foi enviado — logo a sig esperada
-    do passo i é a do evento SEGUINTE (o último passo fica sem sig).
+    exatos da captura) em uma única jornada.
+
+    Verificação de tela — dois modelos, escolhidos por jornada:
+
+    - **Texto (ground truth)**: quando os eventos trazem ``screen_raw_b64``
+      (tela real no momento do input, gravada pelo gateway), os passos em
+      QUIET POINT (gap >= ``quiet_ms`` desde o último byte de saída — tela
+      completa e estável quando o usuário digitou) recebem
+      ``expected_screen_text``. O adaptador compara o texto da tela ANTES de
+      enviar o input, com máscaras voláteis. Passos em type-ahead não são
+      verificáveis na própria captura e ficam sem checkpoint (honesto).
+      Nesse modelo NENHUM ``expected_screen_sig`` é emitido: a sig
+      reconstruída do byte stream quebra com desenho incremental + type-ahead
+      (falsos positivos em massa — caso real cap13).
+    - **Sig (legado)**: sem ``screen_raw_b64`` (fixtures, jornadas
+      sintéticas), cada passo recebe a ``expected_screen_sig`` computada do
+      byte stream, como antes.
+
+    ``from_seq``/``to_seq`` curam a jornada por faixa de ``seq_global``:
+    a cabeça ruidosa da captura (identificação do cliente de terminal,
+    navegação de menu/shell antes do ERP) fica de fora do corpo medido —
+    a entrada passa a ser responsabilidade do ``entry_preamble`` do
+    ambiente, que é determinístico e por plataforma.
     """
     from pathlib import Path
     path = Path(caminho)
     if path.suffix == ".jsonl":
-        eventos = []
+        todos: list[dict] = []
         with open(path, encoding="utf-8") as fh:
             for linha in fh:
                 linha = linha.strip()
-                if not linha:
-                    continue
-                evento = json.loads(linha)
-                if evento.get("type") != "deterministic_input":
-                    continue
-                eventos.append(evento)
+                if linha:
+                    todos.append(json.loads(linha))
+        capture_terminal: dict = {}
+        for evento in todos:
+            # Geometria/term da captura: a text_sig da tela incorpora
+            # rows/cols/term no payload hashado — sem eles a sig observada
+            # no replay nunca casa com a esperada da captura.
+            if evento.get("rows") and evento.get("cols"):
+                capture_terminal = {
+                    "rows": int(evento["rows"]),
+                    "cols": int(evento["cols"]),
+                    "term": str(evento.get("term") or "xterm"),
+                }
+                break
+        eventos = []
+        for evento in todos:
+            if evento.get("type") != "deterministic_input":
+                continue
+            seq = evento.get("seq_global")
+            if from_seq is not None and (seq is None or seq < from_seq):
+                continue
+            if to_seq is not None and (seq is None or seq > to_seq):
+                continue
+            eventos.append(evento)
+        # Modelo de verificação: texto (ground truth) se algum evento do
+        # corpo tem screen_raw; senão sig reconstruída (legado).
+        import base64 as _b64
+        usa_texto = any(e.get("screen_raw_b64") for e in eventos)
+        textos: dict[int, str] = {}
+        if usa_texto:
+            ultimo_out_ts: int | None = None
+            seqs_corpo_txt = {e.get("seq_global") for e in eventos}
+            for evento in todos:
+                tipo = evento.get("type")
+                if tipo == "bytes" and evento.get("dir") == "out":
+                    ts = evento.get("ts_ms")
+                    if ts is not None:
+                        ultimo_out_ts = max(ultimo_out_ts or 0, int(ts))
+                elif (tipo == "deterministic_input"
+                        and evento.get("seq_global") in seqs_corpo_txt):
+                    ts_in = evento.get("ts_ms")
+                    gap = (int(ts_in) - ultimo_out_ts
+                           if ts_in is not None and ultimo_out_ts is not None
+                           else 0)
+                    if gap >= quiet_ms and evento.get("screen_raw_b64"):
+                        try:
+                            textos[id(evento)] = _b64.b64decode(
+                                evento["screen_raw_b64"]).decode(
+                                    "utf-8", errors="replace")
+                        except Exception:
+                            pass
+        esperadas: dict[int, str] = {}
+        if not usa_texto and capture_terminal:
+            # Sigs esperadas COMPUTADAS do byte stream, replicando o pipeline
+            # do replay: engine fresca no primeiro passo do corpo, alimentada
+            # só com os bytes de saída dali em diante. O campo text_sig do
+            # evento (outro pipeline, possivelmente defasado) é só fallback.
+            # A sig amostrada no input i (antes da resposta) é a esperada do
+            # passo i-1.
+            try:
+                from dakota_terminal.engine import TerminalEngine
+                from dakota_terminal.signatures import text_sig
+                engine = TerminalEngine(
+                    rows=capture_terminal["rows"],
+                    cols=capture_terminal["cols"],
+                    term=capture_terminal["term"])
+                seqs_corpo = {e.get("seq_global") for e in eventos}
+                corpo_iniciado = False
+                anterior: dict | None = None
+                for evento in todos:
+                    tipo = evento.get("type")
+                    if (tipo == "bytes" and evento.get("dir") == "out"
+                            and evento.get("data_b64")):
+                        if corpo_iniciado:
+                            engine.feed_bytes(
+                                _b64.b64decode(evento["data_b64"]),
+                                direction="out")
+                    elif (tipo == "deterministic_input"
+                            and evento.get("seq_global") in seqs_corpo):
+                        if corpo_iniciado and anterior is not None:
+                            esperadas[id(anterior)] = text_sig(engine.snapshot())
+                        corpo_iniciado = True
+                        anterior = evento
+            except Exception:
+                esperadas = {}
         steps = []
         for idx, evento in enumerate(eventos):
             step = {
                 "step_id": f"ev-{evento.get('seq_global')}",
                 "key_b64": evento.get("key_b64"),
             }
-            if idx + 1 < len(eventos):
-                proximo = eventos[idx + 1]
-                esperada = (proximo.get("expected_text_sig")
-                            or proximo.get("text_sig") or "")
+            if usa_texto:
+                texto = textos.get(id(evento))
+                if texto:
+                    step["expected_screen_text"] = texto
+                    # Janela de lag (±8 eventos, exclui o próprio): telas
+                    # vizinhas da captura — quiet ou não. Se o checkpoint
+                    # diverge mas a tela observada casa com uma vizinha, é
+                    # atraso/adianto de apresentação comprovado (mesma tela,
+                    # outro momento), não divergência funcional. A janela é
+                    # curta de propósito: telas idênticas distantes (menus
+                    # repetidos) não podem mascarar divergência real.
+                    janela = []
+                    janela_ids = []
+                    vizinhos = (eventos[max(0, idx - 8):idx]
+                                + eventos[idx + 1:idx + 9])
+                    for vizinho in vizinhos:
+                        raw = vizinho.get("screen_raw_b64")
+                        if not raw:
+                            continue
+                        try:
+                            janela.append(_b64.b64decode(raw).decode(
+                                "utf-8", errors="replace"))
+                            janela_ids.append(
+                                f"ev-{vizinho.get('seq_global')}")
+                        except Exception:
+                            pass
+                    if janela:
+                        step["lag_window_texts"] = janela
+                        # ids dos vizinhos (mesma ordem): permitem traduzir a
+                        # janela para o baseline próprio do ambiente no merge
+                        # (--journey-env-baseline).
+                        step["lag_window_step_ids"] = janela_ids
+            elif idx + 1 < len(eventos):
+                esperada = esperadas.get(id(evento), "")
+                if not esperada:
+                    proximo = eventos[idx + 1]
+                    esperada = (proximo.get("expected_text_sig")
+                                or proximo.get("text_sig") or "")
                 if esperada:
                     step["expected_screen_sig"] = esperada
             steps.append(step)
-        return [{"journey_id": path.stem, "steps": steps}]
+        jornada = {"journey_id": path.stem, "steps": steps}
+        if capture_terminal:
+            jornada["capture_terminal"] = capture_terminal
+        return [jornada]
     with open(path, encoding="utf-8") as fh:
         dados = json.load(fh)
     if isinstance(dados, dict):
         dados = dados.get("journeys", [])
     return list(dados)
+
+
+def _bench_apply_env_baselines(journeys: list[dict],
+                               pares: list[str]) -> list[dict]:
+    """Aplica baselines próprios por ambiente (--journey-env-baseline ENV:PATH).
+
+    Cada PATH é um JSON ``{step_id: texto_de_tela}`` gerado de uma passada
+    REAL no ambiente (quando os datasets divergem entre ambientes e o
+    formato dos dados é endian-nativo, a paridade compartilhada é
+    impossível — §20 "dados diferentes"). Preenche
+    ``expected_screen_text_by_env``/``lag_window_texts_by_env`` nos passos
+    com checkpoint. O baseline DEVE cobrir TODOS os checkpoints da jornada
+    — cobertura parcial mascararia divergências (erro de uso, rc 2).
+
+    Retorna os manifestos ``[{environment_id, path, sha256, screens}]`` para
+    o artefato ``env-baselines.json`` do experimento (cadeia de evidência).
+    """
+    import hashlib
+    from pathlib import Path
+    manifestos: list[dict] = []
+    for par in pares or []:
+        if ":" not in par:
+            raise ValueError(
+                f"--journey-env-baseline inválido (esperado ENV:PATH): {par!r}")
+        env_id, caminho = par.split(":", 1)
+        if not env_id or not caminho:
+            raise ValueError(
+                f"--journey-env-baseline inválido (esperado ENV:PATH): {par!r}")
+        arq = Path(caminho)
+        if not arq.is_file():
+            raise ValueError(f"baseline não encontrado: {caminho}")
+        bruto = arq.read_bytes()
+        baseline = json.loads(bruto.decode("utf-8"))
+        if not isinstance(baseline, dict) or not baseline:
+            raise ValueError(f"baseline vazio ou inválido: {caminho}")
+        aplicados = 0
+        faltantes: list[str] = []
+        for journey in journeys:
+            for step in journey.get("steps", []):
+                if not step.get("expected_screen_text"):
+                    continue
+                texto = baseline.get(step.get("step_id", ""))
+                if not texto:
+                    faltantes.append(str(step.get("step_id", "?")))
+                    continue
+                step.setdefault("expected_screen_text_by_env", {})[
+                    env_id] = texto
+                ids = step.get("lag_window_step_ids") or []
+                janela_env = [baseline[sid] for sid in ids
+                              if baseline.get(sid)]
+                if janela_env:
+                    step.setdefault("lag_window_texts_by_env", {})[
+                        env_id] = janela_env
+                aplicados += 1
+        if faltantes:
+            raise ValueError(
+                f"baseline {caminho} não cobre todos os checkpoints da "
+                f"jornada (faltam {len(faltantes)}: "
+                f"{', '.join(faltantes[:5])}...) — regere o baseline")
+        manifestos.append({
+            "environment_id": env_id,
+            "path": str(arq),
+            "sha256": hashlib.sha256(bruto).hexdigest(),
+            "screens": aplicados,
+        })
+    return manifestos
 
 
 def _bench_rebuild_result(experiment_dir, contract):
@@ -798,6 +999,7 @@ def _bench_rebuild_result(experiment_dir, contract):
         resultado.status = dados.get("status", "COMPLETED")
         resultado.verdict = dados.get("verdict", "INCONCLUSIVE")
         resultado.reason = dados.get("reason", "")
+        resultado.stop_reason = dados.get("stop_reason")
     runs_dir = experiment_dir / "runs"
     if not runs_dir.is_dir():
         return resultado
@@ -943,7 +1145,23 @@ def _handle_benchmark(ns) -> int:
             print(f"Erro de paridade: {exc}", file=sys.stderr)
             return 2
 
-        journeys = _bench_load_journeys(ns.journeys) if ns.journeys else []
+        journeys = _bench_load_journeys(
+            ns.journeys,
+            from_seq=getattr(ns, "journey_from_seq", None),
+            to_seq=getattr(ns, "journey_to_seq", None),
+        ) if ns.journeys else []
+        pares_baseline = getattr(ns, "journey_env_baseline", []) or []
+        if pares_baseline:
+            try:
+                manifestos_bl = _bench_apply_env_baselines(
+                    journeys, pares_baseline)
+            except ValueError as exc:
+                print(f"Erro no baseline por ambiente: {exc}",
+                      file=sys.stderr)
+                return 2
+            (experiment_dir / "env-baselines.json").write_text(
+                json.dumps(manifestos_bl, indent=2, ensure_ascii=False),
+                encoding="utf-8")
         adapters = {
             env_id: SSHReplayAdapter(env_models[env_id], contract)
             for env_id in contract.environments
@@ -1513,6 +1731,14 @@ def main(argv: list[str] | None = None) -> int:
         if nome == "run":
             p.add_argument("--journeys", default="",
                            help="Jornadas: JSON (lista) ou JSONL de captura auditável")
+            p.add_argument("--journey-from-seq", type=int, default=None,
+                           help="Curadoria: primeiro seq_global do corpo (JSONL)")
+            p.add_argument("--journey-to-seq", type=int, default=None,
+                           help="Curadoria: último seq_global do corpo (JSONL)")
+            p.add_argument("--journey-env-baseline", action="append",
+                           default=[], metavar="ENV:PATH",
+                           help="Baseline próprio do ambiente (JSON "
+                                "{step_id: texto} de passada real); repetível")
 
     for name in ["pause", "resume", "cancel", "status", "retry"]:
         p2 = ap_runs_sub.add_parser(name)

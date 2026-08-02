@@ -12,8 +12,9 @@ Contrato coberto:
   2. eventos/timeline/playback/final_snapshot/canonical_signatures da janela
      são idênticos entre frio e morno;
   3. checkpoints dentro da janela são idênticos;
-  4. deterministic_input antes do ponto de retomada impede o resume
-     (fallback para processamento completo — paridade preservada);
+  4. deterministic_input é materializado apenas dentro da janela (contrato
+     de paginação) e não impede a retomada; session_end ou session_start
+     não inicial antes do ponto de retomada impõem fallback;
   5. alteração no arquivo de captura invalida o cache.
 
 Run:
@@ -151,20 +152,29 @@ def test_segunda_janela_mais_profunda_estende_cache(cache_patches, tmp_path):
     assert mais_profundo["window"]["state_cache"]["resumed_from"] == 100
 
 
-def test_deterministic_input_antes_do_resume_impede_retomada(cache_patches, tmp_path):
+def test_deterministic_input_antes_do_resume_nao_bloqueia_retomada(cache_patches, tmp_path):
+    """deterministic_input fora da janela não é materializado (contrato de
+    paginação: eventos pertencem à sua janela) e não impede a retomada."""
     log_dir = tmp_path / "cap"
     log_dir.mkdir()
-    sid = _gerar_sessao(str(log_dir), 120, deterministicos=(10,))
+    sid = _gerar_sessao(str(log_dir), 120, deterministicos=(10, 50))
     cache_dir = str(tmp_path / "cache")
 
     cache_patches.prepare_session_replay_data(str(log_dir), sid, offset=45, limit=20, state_cache_dir=cache_dir)
     morno = cache_patches.prepare_session_replay_data(str(log_dir), sid, offset=45, limit=20, state_cache_dir=cache_dir)
-    assert morno["window"]["state_cache"]["hit"] is False
-    assert morno["window"]["state_cache"]["reason"] == "non_bytes_events_before_resume"
+    assert morno["window"]["state_cache"]["hit"] is True
+    assert morno["window"]["state_cache"]["resumed_from"] == 40
 
     referencia = cache_patches.prepare_session_replay_data(
         str(log_dir), sid, offset=45, limit=20, state_cache_dir=str(tmp_path / "cache-vazio"))
     assert _sumario(morno) == _sumario(referencia)
+
+    # apenas o deterministic_input da janela (índice 50) é materializado;
+    # o do índice 10 (fora da janela) não aparece em nenhuma das execuções
+    assert len(morno["deterministic_events"]) == 1
+    assert len(referencia["deterministic_events"]) == 1
+    assert morno["deterministic_events"][0]["seq_global"] == \
+        referencia["deterministic_events"][0]["seq_global"]
 
 
 def test_alteracao_na_captura_invalida_cache(cache_patches, tmp_path):

@@ -456,11 +456,12 @@ def prepare_session_replay_data(
     # Sem cache, uma janela com offset grande reprocessa o stream desde o
     # evento 0 (rolagem profunda quadrática). Em sessões enormes, retoma do
     # estado persistido mais próximo <= win_start. Guarda de paridade: só
-    # é permitido retomar quando os eventos não-bytes anteriores ao ponto
-    # de retomada se resumem ao session_start inicial (deterministic_input
-    # e session_end exigem o estado evoluindo evento a evento); nesse caso
-    # o checkpoint do session_start inicial é reproduzido com a tela em
-    # branco, exatamente como na execução sem cache. Exceção documentada de
+    # é permitido retomar quando os eventos anteriores ao ponto de retomada
+    # não exigem reprodução: o session_start inicial é reproduzido com a
+    # tela em branco (igual à execução sem cache), deterministic_input só é
+    # materializado dentro da janela e demais tipos são ignorados pelo
+    # loop; session_end ou session_start não inicial antes do ponto impõem
+    # fallback para o processamento completo. Exceção documentada de
     # paridade: checkpoints anteriores ao ponto de retomada não são
     # regerados (window.state_cache.hit=true sinaliza isso).
     cache_dir_resolved = state_cache_dir or str(log_path.parent / "replay_state_cache")
@@ -487,9 +488,12 @@ def prepare_session_replay_data(
                     count += 1
                 elif ev_type == "session_start" and count == 0:
                     pre_resume_session_starts.append(ev)
-                else:
+                elif ev_type in ("session_start", "session_end"):
                     violation = True
                     break
+                # demais tipos (deterministic_input, checkpoint, ...) não
+                # exigem reprodução: deterministic_input só é materializado
+                # dentro da janela e os demais são ignorados pelo loop
             if violation:
                 cache_info["reason"] = "non_bytes_events_before_resume"
             else:
@@ -538,9 +542,10 @@ def prepare_session_replay_data(
         ev_type = str(ev.get("type") or "").strip()
 
         # Retomada (X6): eventos anteriores ao ponto de retomada já estão
-        # refletidos no estado restaurado — só o session_start inicial é
-        # permitido entre eles (guarda acima) e já foi reproduzido.
-        if skip_remaining > 0 and ev_type in ("bytes", "session_start"):
+        # refletidos no estado restaurado — o session_start inicial já foi
+        # reproduzido e deterministic_input pré-janela não é materializado
+        # (contrato de paginação), então ambos são pulados aqui.
+        if skip_remaining > 0 and ev_type in ("bytes", "session_start", "deterministic_input"):
             if ev_type == "bytes":
                 skip_remaining -= 1
             continue
@@ -788,11 +793,19 @@ def prepare_session_replay_data(
                 timeline_item["integrity_warning"] = integrity_warning
             timeline.append(timeline_item)
         elif ev_type == "deterministic_input":
+            # X6: deterministic_input só é materializado dentro da janela —
+            # contrato de paginação (cada janela carrega os seus eventos).
+            # Capturas deterministicas podem ter dezenas de milhares desses
+            # eventos (captura 20 do MIG24: 25k); calcular snapshot fresco
+            # para cada um fora da janela era o custo dominante do modo
+            # parcial nessas capturas.
+            det_in_window = win_end is None or (win_start <= bytes_event_index < win_end)
+            if not det_in_window:
+                continue
             seq_global = int(ev.get("seq_global") or 0)
             ts_ms = int(ev.get("ts_ms") or 0)
-            # X6: com a janela, current_snapshot pode estar defasado
-            # (snapshots fora da janela são pulados); recalcula fresco —
-            # deterministic_input é raro por definição (tela estável+input).
+            # Com a janela, current_snapshot pode estar defasado
+            # (snapshots fora da janela são pulados); recalcula fresco.
             current_snapshot = snapshot_from_engine(engine)
             deterministic_item = {
                 "event_id": f"det-{seq_global}",

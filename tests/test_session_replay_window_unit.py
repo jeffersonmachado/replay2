@@ -134,19 +134,25 @@ def test_window_offset_beyond_end_returns_empty():
         assert windowed["window"]["truncated"] is False
 
 
-def test_default_guard_truncates_huge_session():
+def test_default_guard_truncates_huge_session(monkeypatch):
     """Sem janela explícita, sessão acima do limite NUNCA materializa tudo."""
+    import control.services.session_replay_service as svc
+
+    # Constantes reduzidas: a lógica de guarda é a mesma, sem gerar 20k eventos.
+    monkeypatch.setattr(svc, "MAX_FULL_REPLAY_EVENTS", 60)
+    monkeypatch.setattr(svc, "DEFAULT_REPLAY_WINDOW_LIMIT", 25)
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        sid = _gerar_sessao_grande(tmpdir, MAX_FULL_REPLAY_EVENTS + 10)
+        sid = _gerar_sessao_grande(tmpdir, 70)
         data = prepare_session_replay_data(tmpdir, sid)
 
         assert data.get("error") is None
-        assert len(data["events"]) == DEFAULT_REPLAY_WINDOW_LIMIT
+        assert len(data["events"]) == 25
         window = data["window"]
         assert window["truncated"] is True
-        assert window["total_events"] == MAX_FULL_REPLAY_EVENTS + 10
+        assert window["total_events"] == 70
         # Metadados de playback refletem o total, não a fatia
-        assert data["playback"]["event_count"] == MAX_FULL_REPLAY_EVENTS + 10
+        assert data["playback"]["event_count"] == 70
 
 
 def test_small_session_without_window_unchanged():
@@ -201,10 +207,15 @@ def test_checkpoints_respeitam_teto_com_redesenho_constante(monkeypatch):
         assert data["checkpoints_capped"] is True
 
 
-def test_modo_parcial_interrompe_stream_no_fim_da_janela():
+def test_modo_parcial_interrompe_stream_no_fim_da_janela(monkeypatch):
     """Sessão enorme em modo padrão: processa só até o fim da janela."""
+    import control.services.session_replay_service as svc
+
+    monkeypatch.setattr(svc, "MAX_FULL_REPLAY_EVENTS", 60)
+    monkeypatch.setattr(svc, "DEFAULT_REPLAY_WINDOW_LIMIT", 25)
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        sid = _gerar_sessao_grande(tmpdir, MAX_FULL_REPLAY_EVENTS + 10)
+        sid = _gerar_sessao_grande(tmpdir, 70)
         data = prepare_session_replay_data(tmpdir, sid)
 
         assert data["window"]["truncated"] is True

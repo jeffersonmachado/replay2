@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import codecs
 import json
+import os
 import re
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from dakota_terminal import (
     compare_signatures,
 )
 
+from control.services import replay_state_cache
+
 # Janela de replay (dívida X6): sessões enormes (ex.: 116k eventos)
 # derrubavam o control plane — o endpoint materializava eventos/timeline/
 # playback completos e chamava snapshot_from_engine (1920 células) por
@@ -39,6 +42,13 @@ MAX_FULL_REPLAY_EVENTS = 20000
 # inteira com clear-screen a cada página — sem teto, quase todo evento OUT
 # gera checkpoint com snapshot completo (foi o que inflou o RSS para 4 GB).
 MAX_REPLAY_CHECKPOINTS = 2000
+# Cache de estado em disco (X6): sem ele, uma janela profunda reprocessa o
+# stream desde o evento 0 e a rolagem profunda fica quadrática. Em sessões
+# enormes, o estado completo da TerminalEngine é persistido a cada
+# STATE_CACHE_INTERVAL eventos "bytes" (pontos limpos) e uma janela com
+# offset grande retoma do estado mais próximo. REPLAY_STATE_CACHE=0 desliga.
+STATE_CACHE_INTERVAL = 1000
+STATE_CACHE_ENABLED = os.environ.get("REPLAY_STATE_CACHE", "1") != "0"
 
 
 def build_reference_payload(
@@ -258,6 +268,7 @@ def prepare_session_replay_data(
     *,
     offset: int | None = None,
     limit: int | None = None,
+    state_cache_dir: str | None = None,
 ) -> dict:
     """
     Prepara dados de replay de uma sessao.
@@ -441,8 +452,98 @@ def prepare_session_replay_data(
     _attach_render_snapshot(initial_checkpoint, initial_snapshot)
     checkpoints.append(initial_checkpoint)
 
+    # ── Cache de estado em disco (X6): retomada em janela profunda ──────
+    # Sem cache, uma janela com offset grande reprocessa o stream desde o
+    # evento 0 (rolagem profunda quadrática). Em sessões enormes, retoma do
+    # estado persistido mais próximo <= win_start. Guarda de paridade: só
+    # é permitido retomar quando os eventos não-bytes anteriores ao ponto
+    # de retomada se resumem ao session_start inicial (deterministic_input
+    # e session_end exigem o estado evoluindo evento a evento); nesse caso
+    # o checkpoint do session_start inicial é reproduzido com a tela em
+    # branco, exatamente como na execução sem cache. Exceção documentada de
+    # paridade: checkpoints anteriores ao ponto de retomada não são
+    # regerados (window.state_cache.hit=true sinaliza isso).
+    cache_dir_resolved = state_cache_dir or str(log_path.parent / "replay_state_cache")
+    cache_enabled = bool(STATE_CACHE_ENABLED) and total_bytes_events > MAX_FULL_REPLAY_EVENTS
+    cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
+    capture_sig = replay_state_cache.capture_signature(log_path) if cache_enabled else ""
+    resume_from = 0
+    pre_resume_session_starts: list[dict] = []
+    if cache_enabled and win_start > 0:
+        hit = replay_state_cache.load_nearest_state(
+            cache_dir_resolved, capture_sig, clean_sid, win_start,
+            rows=geometry["rows"], cols=geometry["cols"],
+            term=geometry.get("term", "xterm"), encoding=detected_encoding,
+        )
+        if hit is not None:
+            candidate_idx, envelope = hit
+            violation = False
+            count = 0
+            for ev in events:
+                if count >= candidate_idx:
+                    break
+                ev_type = str(ev.get("type") or "").strip()
+                if ev_type == "bytes":
+                    count += 1
+                elif ev_type == "session_start" and count == 0:
+                    pre_resume_session_starts.append(ev)
+                else:
+                    violation = True
+                    break
+            if violation:
+                cache_info["reason"] = "non_bytes_events_before_resume"
+            else:
+                try:
+                    engine.load_state(envelope["engine"])
+                    counters = envelope.get("counters") or {}
+                    resume_from = candidate_idx
+                    restored_snapshot = snapshot_from_engine(engine)
+                    current_snapshot = restored_snapshot
+                    last_out_snapshot = restored_snapshot
+                    last_snapshot = restored_snapshot
+                    out_event_count = int(counters.get("out_event_count") or 0)
+                    last_out_seq_global = int(counters.get("last_out_seq_global") or 0)
+                    last_rows = int(counters.get("last_rows") or engine.rows)
+                    last_cols = int(counters.get("last_cols") or engine.cols)
+                    last_checkpoint_time_ms = int(counters.get("last_checkpoint_time_ms") or 0)
+                    bytes_event_index = resume_from
+                    cache_info["hit"] = True
+                    cache_info["resumed_from"] = resume_from
+                    # Reproduz o checkpoint do session_start inicial (tela
+                    # em branco nesse ponto, igual à execução sem cache).
+                    for ss_ev in pre_resume_session_starts:
+                        checkpoint = {
+                            "session_id": clean_sid,
+                            "seq_global": int(ss_ev.get("seq_global") or 0),
+                            "timestamp_ms": int(ss_ev.get("ts_ms") or 0),
+                            "text_sig": initial_snapshot.get("text_sig", ""),
+                            "visual_sig": initial_snapshot.get("visual_sig", ""),
+                            "semantic_sig": initial_snapshot.get("semantic_sig", ""),
+                            "rows": geometry["rows"],
+                            "cols": geometry["cols"],
+                            "term": geometry.get("term", "xterm"),
+                            "encoding": detected_encoding,
+                            "engine_version": engine.engine_version,
+                            "reason": "session_start",
+                        }
+                        _attach_render_snapshot(checkpoint, initial_snapshot)
+                        checkpoints.append(checkpoint)
+                except (ValueError, KeyError, TypeError):
+                    cache_info["reason"] = "state_load_failed"
+                    resume_from = 0
+
+    skip_remaining = resume_from
+
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
+
+        # Retomada (X6): eventos anteriores ao ponto de retomada já estão
+        # refletidos no estado restaurado — só o session_start inicial é
+        # permitido entre eles (guarda acima) e já foi reproduzido.
+        if skip_remaining > 0 and ev_type in ("bytes", "session_start"):
+            if ev_type == "bytes":
+                skip_remaining -= 1
+            continue
 
         # Modo parcial (X6): a janela acabou — interrompe o processamento
         # do stream. Estado final, checkpoints e canonical_signatures
@@ -594,6 +695,38 @@ def prepare_session_replay_data(
                 current_snapshot = last_snapshot
 
             bytes_event_index += 1
+
+            # Persiste o estado completo da engine em pontos limpos a cada
+            # STATE_CACHE_INTERVAL eventos (X6) — base da retomada de
+            # janelas profundas em sessões enormes.
+            if (
+                cache_enabled
+                and bytes_event_index % STATE_CACHE_INTERVAL == 0
+                and bytes_event_index != resume_from
+                and engine.is_state_clean()
+            ):
+                envelope = {
+                    "state_version": 1,
+                    "capture_sig": capture_sig,
+                    "session_id": clean_sid,
+                    "bytes_index": bytes_event_index,
+                    "rows": engine.rows,
+                    "cols": engine.cols,
+                    "term": engine.term,
+                    "encoding": engine.encoding,
+                    "engine": engine.state_dict(),
+                    "counters": {
+                        "out_event_count": out_event_count,
+                        "last_out_seq_global": last_out_seq_global,
+                        "last_rows": last_rows,
+                        "last_cols": last_cols,
+                        "last_checkpoint_time_ms": last_checkpoint_time_ms,
+                    },
+                }
+                if replay_state_cache.store_state(
+                    cache_dir_resolved, capture_sig, clean_sid, bytes_event_index, envelope,
+                ):
+                    cache_info["stored"] += 1
 
             if not in_window:
                 # Fora da janela: engine já foi alimentada acima; não
@@ -816,6 +949,10 @@ def prepare_session_replay_data(
             # final_snapshot, checkpoints e canonical_signatures refletem
             # esse ponto, não o fim da sessão.
             "partial_state": win_end is not None and bytes_event_index < total_bytes_events,
+            # Cache de estado em disco (X6): hit=True indica retomada a
+            # partir de estado persistido — checkpoints anteriores ao ponto
+            # de retomada não são regerados.
+            "state_cache": cache_info,
         },
         # True quando o teto MAX_REPLAY_CHECKPOINTS interrompeu novos
         # checkpoints (sessões com redesenho constante de tela).

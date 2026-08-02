@@ -189,7 +189,10 @@ terminal — isso é garantido pelo teste
   `benchmark_routes` (benchmark real §21), `ui_routes`,
   `admin_routes`);
 - `services/` — regras e payloads reutilizáveis (reports, cenários, captura,
-  sessão/replay, observabilidade, analytics, ambiente);
+  sessão/replay, observabilidade, analytics, ambiente). Inclui
+  `replay_state_cache.py` — cache em disco de estados da TerminalEngine
+  (janela profunda de replay em sessões enormes, dívida X6; kill-switch
+  `REPLAY_STATE_CACHE=0`);
 - Módulos de suporte na raiz de `control/`: `auth_support.py`,
   `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
   `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,

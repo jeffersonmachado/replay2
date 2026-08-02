@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 from .attributes import Attributes
 from .decoder import TerminalDecoder, normalize_encoding
 from .geometry import validate_geometry
@@ -10,6 +12,7 @@ from .snapshot import snapshot_from_engine
 
 class TerminalEngine:
     engine_version = "1.0"
+    state_version = 1
 
     def __init__(self, *, rows: int = 25, cols: int = 80, term: str = "xterm", encoding: str = "utf-8", session_id: str = ""):
         geom = validate_geometry(rows, cols)
@@ -355,3 +358,122 @@ class TerminalEngine:
 
     def snapshot(self) -> dict:
         return snapshot_from_engine(self)
+
+    # ── Estado serializável (dívida X6 — cache de replay em disco) ──────
+    def is_state_clean(self) -> bool:
+        """True quando a engine está num ponto de corte seguro para
+        serialização: scanner em estado normal, sem escape parcial e sem
+        texto pendente no buffer (feed_bytes sempre descarrega o buffer ao
+        fim do chunk, então pontos entre eventos são limpos por definição).
+        """
+        return (
+            self._escape_state == "normal"
+            and not self.partial_escape
+            and not self._text_buffer
+        )
+
+    def _decoder_state(self) -> dict:
+        getstate = getattr(self.decoder._decoder, "getstate", None)
+        if not callable(getstate):
+            return {"available": False, "buffer_b64": "", "flag": 0}
+        try:
+            state = getstate()
+        except Exception:
+            return {"available": False, "buffer_b64": "", "flag": 0}
+        if isinstance(state, tuple):
+            buffer, flag = state[0], state[1] if len(state) > 1 else 0
+        else:
+            buffer, flag = b"", 0
+        return {
+            "available": True,
+            "buffer_b64": base64.b64encode(bytes(buffer or b"")).decode("ascii"),
+            "flag": int(flag or 0),
+        }
+
+    def state_dict(self) -> dict:
+        """Congela o estado completo da engine para retomada posterior.
+
+        Deve ser chamado num ponto limpo (is_state_clean()); o estado
+        serializa mesmo assim, mas o cache oficial só persiste pontos limpos.
+        """
+        return {
+            "state_version": self.state_version,
+            "rows": self.rows,
+            "cols": self.cols,
+            "term": self.term,
+            "encoding": self.encoding,
+            "cells": [[cell.to_dict() for cell in row] for row in self.cells],
+            "cursor_row": self.cursor_row,
+            "cursor_col": self.cursor_col,
+            "cursor_visible": self.cursor_visible,
+            "saved_row": self.saved_row,
+            "saved_col": self.saved_col,
+            "attrs": self.attrs.to_dict(),
+            "g0_charset": self.g0_charset,
+            "g1_charset": self.g1_charset,
+            "shift_out": self.shift_out,
+            "scroll_top": self.scroll_top,
+            "scroll_bottom": self.scroll_bottom,
+            "autowrap": self.autowrap,
+            "wrap_pending": self.wrap_pending,
+            "partial_escape": self.partial_escape,
+            "tab_stops": sorted(self.tab_stops),
+            "escape_state": self._escape_state,
+            "csi_params": self._csi_params,
+            "osc_params": self._osc_params,
+            "bytes_seen": self.bytes_seen,
+            "seq_global": self.seq_global,
+            "decode_seq_global": self._decode_seq_global,
+            "decode_direction": self._decode_direction,
+            "decoder": self._decoder_state(),
+            "decoder_warnings": list(self.decoder.warnings),
+        }
+
+    def load_state(self, state: dict) -> None:
+        """Restaura o estado congelado por state_dict().
+
+        Levanta ValueError em versão de estado desconhecida — chamadores de
+        cache devem tratar como miss e reprocessar do início.
+        """
+        if int(state.get("state_version") or 0) != self.state_version:
+            raise ValueError(f"state_version desconhecida: {state.get('state_version')}")
+        self.rows = int(state["rows"])
+        self.cols = int(state["cols"])
+        self.term = str(state["term"])
+        self.encoding = normalize_encoding(state["encoding"])
+        session_id = self.decoder.session_id
+        self.decoder = TerminalDecoder(self.encoding, session_id=session_id)
+        dec = state.get("decoder") or {}
+        if dec.get("available") and dec.get("buffer_b64"):
+            pending = base64.b64decode(dec["buffer_b64"])
+            setstate = getattr(self.decoder._decoder, "setstate", None)
+            if callable(setstate):
+                try:
+                    setstate((pending, int(dec.get("flag") or 0)))
+                except Exception:
+                    pass
+        self.decoder.warnings = [dict(w) for w in (state.get("decoder_warnings") or [])]
+        self.cells = [[Cell(**cd) for cd in row] for row in state["cells"]]
+        self.cursor_row = int(state["cursor_row"])
+        self.cursor_col = int(state["cursor_col"])
+        self.cursor_visible = bool(state["cursor_visible"])
+        self.saved_row = int(state["saved_row"])
+        self.saved_col = int(state["saved_col"])
+        self.attrs = Attributes(**state["attrs"])
+        self.g0_charset = str(state["g0_charset"])
+        self.g1_charset = str(state["g1_charset"])
+        self.shift_out = bool(state["shift_out"])
+        self.scroll_top = int(state["scroll_top"])
+        self.scroll_bottom = int(state["scroll_bottom"])
+        self.autowrap = bool(state["autowrap"])
+        self.wrap_pending = bool(state["wrap_pending"])
+        self.partial_escape = str(state["partial_escape"])
+        self.tab_stops = set(int(t) for t in state["tab_stops"])
+        self._escape_state = str(state["escape_state"])
+        self._csi_params = str(state["csi_params"])
+        self._osc_params = str(state["osc_params"])
+        self._text_buffer = bytearray()
+        self.bytes_seen = int(state["bytes_seen"])
+        self.seq_global = int(state["seq_global"])
+        self._decode_seq_global = int(state["decode_seq_global"])
+        self._decode_direction = str(state["decode_direction"])

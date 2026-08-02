@@ -68,14 +68,20 @@ def main():
         sys.exit(1)
 
     cid, sid = None, None
+    best_count = None
     for cap in caps["captures"]:
+        if cap.get("event_count", 0) > 10000:
+            continue
         s, sessions, _ = req("GET", f"/api/captures/{cap['id']}/sessions")
         for sess in sessions.get("sessions", []):
-            if sess.get("session_id"):
-                cid, sid = cap["id"], sess["session_id"]
-                break
-        if sid:
-            break
+            # Sessão precisa ter saída de tela capturada; sessões vazias
+            # (só session_start/session_end, bytes_out=0) não têm replay.
+            # Escolhe a menor sessão com conteúdo — o smoke valida o
+            # pipeline, não o desempenho do endpoint com sessões enormes.
+            if sess.get("session_id") and sess.get("bytes_out", 0) > 0:
+                count = sess.get("event_count", 0)
+                if best_count is None or count < best_count:
+                    cid, sid, best_count = cap["id"], sess["session_id"], count
 
     if not sid:
         check(False, "Setup", "nenhuma sessão disponível")

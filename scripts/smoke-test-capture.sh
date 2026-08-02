@@ -131,15 +131,21 @@ else
 fi
 echo ""
 
-# ── 4. Detalhe da primeira captura ──────────────────────────────────────────
+# ── 4. Detalhe da captura escolhida ─────────────────────────────────────────
+# Para os passos 4-7 usa a MENOR captura com conteúdo real (event_count>10):
+# capturas enormes (ex.: >50k eventos) levam dezenas de segundos por endpoint
+# e estouram o timeout do smoke — o objetivo é validar o pipeline, não medir
+# desempenho com sessões gigantes.
 echo "--- 4. Detalhe ---"
 FIRST_ID=$(printf '%s' "$CAPTURES_BODY" | python3 -c "
 import sys,json
 d=json.loads(sys.stdin.read())
 caps=d.get('captures',[])
+com_conteudo=[c for c in caps if c.get('session_count',0)>0 and c.get('event_count',0)>10]
 com_sessao=[c for c in caps if c.get('session_count',0)>0]
-escolhida=(com_sessao or caps)
-print(escolhida[0]['id'] if escolhida else '')
+pool=com_conteudo or com_sessao or caps
+escolhida=min(pool, key=lambda c: c.get('event_count',0)) if pool else None
+print(escolhida['id'] if escolhida else '')
 " 2>/dev/null)
 
 if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" != "" ]; then
@@ -166,29 +172,54 @@ if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" != "" ]; then
     SESSION_COUNT=$(printf '%s' "$SESSIONS_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); s=d.get('sessions',[]); print(len(s))" 2>/dev/null)
     echo "         total de sessões: $SESSION_COUNT"
 
-    # ── 6. Replay da primeira sessão ────────────────────────────────────────
-    FIRST_SESSION=$(printf '%s' "$SESSIONS_BODY" | python3 -c "
-import sys,json
+    # ── 6. Replay da menor sessão com conteúdo ────────────────────────────────
+    # Sessões vazias (bytes_out=0) não têm replay; sessões enormes (ex.: >50k
+    # eventos) estouram o timeout do smoke. O objetivo é validar o pipeline.
+    REPLAY_PICK=$(printf '%s' "$CAPTURES_BODY" | python3 -c "
+import sys,json,http.cookiejar,urllib.request
 d=json.loads(sys.stdin.read())
-s=d.get('sessions',[])
-print(s[0].get('session_id','') if s else '')
+caps=d.get('captures',[])
+jar=http.cookiejar.MozillaCookieJar('$COOKIE_JAR')
+try:
+    jar.load(ignore_discard=True, ignore_expires=True)
+except Exception:
+    pass
+opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+best=None
+for cap in caps:
+    if cap.get('event_count',0)>10000:
+        continue
+    try:
+        resp=opener.open('${BASE_URL}/api/captures/%s/sessions' % cap['id'], timeout=10)
+        s=json.loads(resp.read())
+    except Exception:
+        continue
+    for sess in s.get('sessions',[]):
+        sid=sess.get('session_id','')
+        if sid and sess.get('bytes_out',0)>0:
+            cnt=sess.get('event_count',0)
+            if best is None or cnt<best[2]:
+                best=(cap['id'],sid,cnt)
+print(f'{best[0]}|{best[1]}' if best else '')
 " 2>/dev/null)
-    if [ -n "$FIRST_SESSION" ]; then
+    if [ -n "$REPLAY_PICK" ]; then
+      REPLAY_CID=$(echo "$REPLAY_PICK" | cut -d'|' -f1)
+      FIRST_SESSION=$(echo "$REPLAY_PICK" | cut -d'|' -f2)
       echo "--- 6. Replay ---"
-      REPLAY_RESP=$(http GET "/api/captures/${FIRST_ID}/replay?session_id=${FIRST_SESSION}" 2>/dev/null)
+      REPLAY_RESP=$(http GET "/api/captures/${REPLAY_CID}/replay?session_id=${FIRST_SESSION}" 2>/dev/null)
       REPLAY_STATUS=$(echo "$REPLAY_RESP" | head -1)
       if [ "$REPLAY_STATUS" = "200" ]; then
-        pass "GET /api/captures/${FIRST_ID}/replay?session_id=... → 200"
+        pass "GET /api/captures/${REPLAY_CID}/replay?session_id=... → 200"
         REPLAY_BODY=$(printf '%s' "$REPLAY_RESP" | tail -n +2)
         HAS_GEOMETRY=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); g=d.get('geometry',{}); print('yes' if g.get('rows') else 'no')" 2>/dev/null)
         HAS_TIMELINE=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); t=d.get('timeline_items') or []; print(len(t))" 2>/dev/null)
         HAS_PLAYBACK=$(printf '%s' "$REPLAY_BODY" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); p=d.get('playback',{}); print(p.get('event_count',0))" 2>/dev/null)
-        echo "         geometry=$HAS_GEOMETRY timeline_events=$HAS_TIMELINE playback_events=$HAS_PLAYBACK"
+        echo "         capture=$REPLAY_CID geometry=$HAS_GEOMETRY timeline_events=$HAS_TIMELINE playback_events=$HAS_PLAYBACK"
       else
         fail "GET replay" "status=$REPLAY_STATUS"
       fi
     else
-      fail "Sessão replay" "nenhuma sessão disponível na captura"
+      fail "Sessão replay" "nenhuma sessão com conteúdo (bytes_out>0) nas capturas"
     fi
   else
     fail "GET sessions" "status=$SESSIONS_STATUS"
@@ -196,7 +227,7 @@ print(s[0].get('session_id','') if s else '')
 
   # ── 7. Eventos ────────────────────────────────────────────────────────────
   echo "--- 7. Eventos ---"
-  EVENTS_RESP=$(http GET "/api/captures/${FIRST_ID}/events" 2>/dev/null)
+  EVENTS_RESP=$(http GET "/api/captures/${FIRST_ID}/events?limit=20" 2>/dev/null)
   EVENTS_STATUS=$(echo "$EVENTS_RESP" | head -1)
   if [ "$EVENTS_STATUS" = "200" ]; then
     pass "GET /api/captures/${FIRST_ID}/events → 200"

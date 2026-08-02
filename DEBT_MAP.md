@@ -75,13 +75,14 @@
 | X3 | Sem versionamento de API ✅ | **CORRIGIDO** | Prefixo `/v1` suportado em todos os handlers via `_normalize_path()`. `/v1/api/...` e `/api/...` funcionam identicamente. |
 | X4 | ConnectionPool subutilizado ✅ | **CORRIGIDO** | `connect()` direto só usado no `main()` para bootstrap inicial (antes do pool existir). Runtime usa `db_pool` via `Handler._db()`. |
 | X5 | Synthetic ↔ Replay não integrado | **MÉDIA** | `replay_adapter.py` existe mas não exposto na API REST. Fluxo ponta-a-ponta requer intervenção manual. |
+| X6 | Endpoints de captura sem paginação/limite interno para sessões grandes | **ALTA** | Observado em 2026-08-01 (MIG24, captura 20 com 116.267 eventos / 8,5 MB): `GET /api/captures/{id}/replay` reprocessa a sessão inteira na TerminalEngine por request — >10 min e RSS do `server.py` saltou de 1,8 GB para 4 GB em 15 s, exigindo restart do control plane; `GET .../sessions` e `GET .../events` levam ~28 s por request (rescan dos JSONL a cada chamada). O cliente desistir não mata a thread servidora. Caminhos: paginação/janela no replay (o lazy loading da UI não cobre o endpoint), cache/índice dos scans de sessões/eventos, e cancelamento de request abandonada. Os smokes (`smoke-test-capture.*`, `smoke-test-replay.*`) contornam selecionando a menor sessão com conteúdo — não tratar como correção do problema. |
 
 ---
 
 ## 3. Ordem de Ataque Recomendada
 
 **Itens resolvidos:** R1–R5, S1, G1, G4, G5, X1, X3, X4 (12 itens).
-**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
+**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X6 (endpoints de captura sem paginação para sessões grandes, **ALTA** — 2026-08-01), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
 
 ---
 

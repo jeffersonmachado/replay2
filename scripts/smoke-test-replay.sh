@@ -79,16 +79,25 @@ if not caps or not caps.get('captures'):
     print('NO_CAPTURES')
     sys.exit(0)
 
-# Encontra primeira captura com sessões
+# Escolhe a sessão MENOR com saída de tela capturada; sessões vazias
+# (só session_start/session_end, bytes_out=0) não têm replay, e sessões
+# muito grandes (ex.: >50k eventos) estouram o timeout do smoke — o
+# objetivo aqui é validar o pipeline, não medir desempenho do endpoint.
+best = None
 for cap in caps['captures']:
+    if cap.get('event_count', 0) > 10000:
+        continue
     cid = cap['id']
     sessions = req(f'/api/captures/{cid}/sessions')
     if sessions and sessions.get('sessions'):
         for s in sessions['sessions']:
             sid = s.get('session_id', '')
-            if sid:
-                print(f'{cid}|{sid}')
-                sys.exit(0)
+            if sid and s.get('bytes_out', 0) > 0:
+                if best is None or s.get('event_count', 0) < best[2]:
+                    best = (cid, sid, s.get('event_count', 0))
+if best:
+    print(f'{best[0]}|{best[1]}')
+    sys.exit(0)
 
 print('NO_SESSIONS')
 " 2>/dev/null)

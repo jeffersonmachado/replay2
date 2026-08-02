@@ -313,16 +313,21 @@ def run_with_timeout(
     )
 
     known_pids: dict[str, dict] = {}
-    scan_interval = 5.0
+    scan_interval = 5.0   # varredura pesada (_find_by_run_id) a cada 5 s
+    poll_interval = 0.1   # saída do processo detectada em ~0,1 s, não 5 s
     deadline = start + timeout
+    next_scan = start  # primeira varredura imediata, como antes
 
     while proc.poll() is None:
         remaining = deadline - time.time()
         if remaining <= 0:
             break
-        for cp in _find_by_run_id(process_run_id):
-            known_pids[cp["identity"]] = cp
-        time.sleep(min(scan_interval, max(0.1, remaining)))
+        now = time.time()
+        if now >= next_scan:
+            for cp in _find_by_run_id(process_run_id):
+                known_pids[cp["identity"]] = cp
+            next_scan = now + scan_interval
+        time.sleep(min(poll_interval, max(0.01, remaining)))
 
     exit_code = proc.poll()
     result.exit_code = exit_code

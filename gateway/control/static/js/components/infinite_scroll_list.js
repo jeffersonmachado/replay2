@@ -26,6 +26,13 @@ export class LazyListController {
     this.cursor = 0;
   }
 
+  appendItems(items) {
+    // Estende a lista preservando o cursor (paginação incremental — X6).
+    const novos = Array.isArray(items) ? items : [];
+    this.items.push(...novos);
+    return novos.length;
+  }
+
   get totalCount() {
     return this.items.length;
   }
@@ -56,7 +63,9 @@ export function attachInfiniteScroll({
   batchSize = DEFAULT_BATCH_SIZE,
   renderItem,
   loadMoreLabel = "Carregar mais eventos",
+  loadingMoreLabel = "Carregando mais eventos do servidor…",
   rootMargin = "400px",
+  onExhausted = null,
 } = {}) {
   if (!container || typeof renderItem !== "function") {
     throw new Error("attachInfiniteScroll: container e renderItem são obrigatórios");
@@ -65,6 +74,10 @@ export function attachInfiniteScroll({
   const useObserver = typeof IntersectionObserver === "function";
   let sentinel = null;
   let observer = null;
+  // Paginação server-side (X6): quando os itens locais acabam, onExhausted
+  // pode buscar mais (appendItems no controller) e retornar true.
+  let exhaustedFired = false;
+  let exhaustedDone = false;
 
   function disconnectObserver() {
     if (observer) {
@@ -99,6 +112,30 @@ export function attachInfiniteScroll({
 
   function updateSentinel() {
     if (!controller.hasMore()) {
+      if (typeof onExhausted === "function" && !exhaustedDone) {
+        if (!exhaustedFired) {
+          exhaustedFired = true;
+          ensureSentinel();
+          sentinel.textContent = loadingMoreLabel;
+          Promise.resolve()
+            .then(() => onExhausted())
+            .then((more) => {
+              exhaustedFired = false;
+              if (more) {
+                renderNext();
+              } else {
+                exhaustedDone = true;
+                removeSentinel();
+              }
+            })
+            .catch(() => {
+              exhaustedFired = false;
+              exhaustedDone = true;
+              removeSentinel();
+            });
+        }
+        return;
+      }
       removeSentinel();
       return;
     }
@@ -131,6 +168,8 @@ export function attachInfiniteScroll({
     setItems(items) {
       removeSentinel();
       container.innerHTML = "";
+      exhaustedFired = false;
+      exhaustedDone = false;
       controller.setItems(items);
       if (controller.totalCount > 0) renderNext();
     },

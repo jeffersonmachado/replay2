@@ -331,6 +331,11 @@ input[type="range"] {
   let sessionEncoding = 'utf-8';
   // Lista lazy da timeline (scroll infinito em lotes)
   let eventsLazyList = null;
+  // Paginação server-side do replay (X6): merge de janelas offset/limit
+  let _mergeReplayWindow;
+  let _nextWindowOffset;
+  let windowFetchInFlight = false;
+  let renderedDecoratedCount = 0;
 
   function initRenderer(mod) {
     renderSnapshotToHtml = mod.renderSnapshotToHtml;
@@ -350,6 +355,7 @@ input[type="range"] {
     import('/assets/js/components/capture_replay_timeline.js').then(mod => { _buildTimelineItems = mod.buildTimelineItems; }),
     import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
     import('/assets/js/components/replay_snapshot_state.js').then(mod => { _createReplayState = mod.createReplayState; }),
+    import('/assets/js/components/replay_window_loader.js').then(mod => { _mergeReplayWindow = mod.mergeReplayWindow; _nextWindowOffset = mod.nextWindowOffset; }),
   ]);
 
   // Carregar dados de replay
@@ -525,9 +531,9 @@ input[type="range"] {
     return resolveEventRefs(replayData?.playback, replayData?.events || []);
   }
 
-  function renderEventsList(filter = 'all') {
-    eventsFilterMode = filter;
-    persistTimelinePrefs();
+  // Pipeline de decoração da lista de eventos (extraído para reuso na
+  // paginação server-side — X6).
+  function currentDecoratedEvents(filter = eventsFilterMode) {
     const allEvents = timelineEvents();
     // Constrói timeline items a partir de TODOS os eventos (IN são fronteiras de grupo)
     let events = eventsViewMode === 'detailed'
@@ -542,9 +548,46 @@ input[type="range"] {
         return false;
       });
     }
+    return decorateDeterministicRepeats(events);
+  }
+
+  // Busca a próxima janela de eventos no servidor e estende a lista lazy
+  // sem perder a posição do scroll (X6). Retorna true se novos itens vieram.
+  async function loadNextReplayWindow() {
+    const offset = typeof _nextWindowOffset === 'function' ? _nextWindowOffset(replayData?.window) : null;
+    if (offset == null || windowFetchInFlight) return false;
+    windowFetchInFlight = true;
+    try {
+      const limit = Number(replayData.window.limit || 1000);
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.error) return false;
+      _mergeReplayWindow(replayData, payload);
+      const decorated = currentDecoratedEvents();
+      const added = decorated.slice(renderedDecoratedCount);
+      renderedDecoratedCount = decorated.length;
+      if (eventsLazyList && added.length > 0) {
+        eventsLazyList.controller.appendItems(added);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('Falha ao carregar próxima janela de eventos:', err);
+      return false;
+    } finally {
+      windowFetchInFlight = false;
+    }
+  }
+
+  function renderEventsList(filter = 'all') {
+    eventsFilterMode = filter;
+    persistTimelinePrefs();
     const container = document.getElementById('events-list');
 
-    if (events.length === 0) {
+    const decoratedEvents = currentDecoratedEvents(filter);
+    renderedDecoratedCount = decoratedEvents.length;
+
+    if (decoratedEvents.length === 0) {
       const hasSession = Boolean(replayData?.session_start);
       container.innerHTML = hasSession
         ? '<div class="text-amber-200 text-sm p-3 rounded bg-amber-900/20 border border-amber-700/40">Nenhum evento para o filtro selecionado.</div>'
@@ -552,7 +595,6 @@ input[type="range"] {
       return;
     }
 
-    const decoratedEvents = decorateDeterministicRepeats(events);
     // Scroll infinito: renderiza em lotes conforme a rolagem da página
     if (typeof _attachInfiniteScroll === 'function' && typeof _renderSingleEventCard === 'function') {
       if (!eventsLazyList) {
@@ -561,6 +603,7 @@ input[type="range"] {
           batchSize: 50,
           renderItem: (ev) => _renderSingleEventCard(ev),
           loadMoreLabel: 'Carregar mais eventos',
+          onExhausted: loadNextReplayWindow,
         });
       }
       eventsLazyList.setItems(decoratedEvents);

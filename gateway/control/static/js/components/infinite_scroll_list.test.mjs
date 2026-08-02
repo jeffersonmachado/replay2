@@ -52,6 +52,22 @@ test('entrada não-array é tratada como lista vazia', () => {
   assert.deepEqual(ctl.nextBatch(), []);
 });
 
+test('appendItems estende a lista preservando o cursor (paginação X6)', () => {
+  const ctl = new LazyListController({ batchSize: 5 });
+  ctl.setItems([1, 2, 3]);
+  assert.deepEqual(ctl.nextBatch(), [1, 2, 3]);
+  assert.ok(!ctl.hasMore());
+
+  const added = ctl.appendItems([4, 5, 6, 7]);
+  assert.equal(added, 4);
+  assert.equal(ctl.totalCount, 7);
+  assert.equal(ctl.renderedCount, 3, 'cursor não pode reiniciar no append');
+  assert.deepEqual(ctl.nextBatch(), [4, 5, 6, 7]);
+
+  assert.equal(ctl.appendItems(null), 0);
+  assert.equal(ctl.totalCount, 7);
+});
+
 test('batchSize inválido cai para o default; fracionário é truncado', () => {
   assert.equal(new LazyListController({ batchSize: 0 }).batchSize, DEFAULT_BATCH_SIZE);
   assert.equal(new LazyListController({ batchSize: NaN }).batchSize, DEFAULT_BATCH_SIZE);
@@ -130,4 +146,56 @@ test('attachInfiniteScroll.setItems limpa o container antes de renderizar', () =
 test('attachInfiniteScroll exige container e renderItem', () => {
   assert.throws(() => attachInfiniteScroll({}), /obrigatórios/);
   assert.throws(() => attachInfiniteScroll({ container: {}, renderItem: null }), /obrigatórios/);
+});
+
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('onExhausted busca mais itens no servidor e retoma a renderização (X6)', async () => {
+  const container = fakeElement();
+  globalThis.document = { createElement: () => fakeElement() };
+  try {
+    const chamadas = [];
+    const lazy = attachInfiniteScroll({
+      container,
+      batchSize: 2,
+      renderItem: (n) => `<div>${n}</div>`,
+      onExhausted: async () => {
+        chamadas.push(lazy.controller.totalCount);
+        if (lazy.controller.totalCount >= 4) return false; // servidor não tem mais
+        lazy.controller.appendItems([3, 4]);
+        return true;
+      },
+    });
+    lazy.setItems([1, 2]);
+
+    // As duas exaustões encadeiam em microtasks: a 1ª anexa [3,4] e
+    // renderiza; a 2ª (servidor sem mais itens) remove o sentinela.
+    await flushMicrotasks();
+    await flushMicrotasks();
+    assert.deepEqual(chamadas, [2, 4]);
+    assert.equal((container.children[0].adjacentHtml.match(/<div>/g) || []).length, 4);
+    assert.ok(container.children[0].removed, 'sentinela removida quando o servidor não tem mais itens');
+  } finally {
+    delete globalThis.document;
+  }
+});
+
+test('falha no onExhausted remove o sentinela sem quebrar a lista', async () => {
+  const container = fakeElement();
+  globalThis.document = { createElement: () => fakeElement() };
+  try {
+    const lazy = attachInfiniteScroll({
+      container,
+      batchSize: 2,
+      renderItem: (n) => `<div>${n}</div>`,
+      onExhausted: async () => { throw new Error('rede indisponível'); },
+    });
+    lazy.setItems([1, 2]);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    assert.ok(container.children[0].removed, 'sentinela removida após erro na carga');
+    assert.equal((container.children[0].adjacentHtml.match(/<div>/g) || []).length, 2);
+  } finally {
+    delete globalThis.document;
+  }
 });

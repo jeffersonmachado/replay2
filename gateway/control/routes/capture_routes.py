@@ -176,7 +176,15 @@ def handle_capture_get_route(
             write_json(handler, 400, {"error": "session_id obrigatório"})
             return True
         log_dir = capture.get("log_dir") or ""
-        replay_data = _prepare_session_replay_data(log_dir, session_id)
+        # Janela de replay (X6): offset/limit restringem a fatia de eventos
+        # materializada; sem eles, sessões enormes retornam truncadas.
+        replay_kwargs: dict = {}
+        offset_raw = str((qs.get("offset") or [""])[0] or "").strip()
+        limit_raw = str((qs.get("limit") or [""])[0] or "").strip()
+        if offset_raw or limit_raw:
+            replay_kwargs["offset"] = parse_int(offset_raw or "0", 0, min_value=0)
+            replay_kwargs["limit"] = parse_int(limit_raw or "1000", 1000, min_value=1, max_value=5000)
+        replay_data = _prepare_session_replay_data(log_dir, session_id, **replay_kwargs)
         status = _replay_status_code(replay_data)
         write_json(handler, status, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
         return True

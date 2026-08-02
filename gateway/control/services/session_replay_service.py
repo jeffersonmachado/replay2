@@ -28,6 +28,18 @@ from dakota_terminal import (
     compare_signatures,
 )
 
+# Janela de replay (dívida X6): sessões enormes (ex.: 116k eventos)
+# derrubavam o control plane — o endpoint materializava eventos/timeline/
+# playback completos e chamava snapshot_from_engine (1920 células) por
+# evento OUT. Sem janela explícita, sessões acima de MAX_FULL_REPLAY_EVENTS
+# retornam apenas a fatia inicial, marcada como truncada.
+DEFAULT_REPLAY_WINDOW_LIMIT = 1000
+MAX_FULL_REPLAY_EVENTS = 20000
+# Teto de checkpoints por replay (X6): capturas legadas redesenham a tela
+# inteira com clear-screen a cada página — sem teto, quase todo evento OUT
+# gera checkpoint com snapshot completo (foi o que inflou o RSS para 4 GB).
+MAX_REPLAY_CHECKPOINTS = 2000
+
 
 def build_reference_payload(
     *,
@@ -243,11 +255,21 @@ def _decode_event_bytes(data_b64: str, declared_n: int | None) -> tuple[bytes, d
 def prepare_session_replay_data(
     log_dir: str,
     session_id: str,
+    *,
+    offset: int | None = None,
+    limit: int | None = None,
 ) -> dict:
     """
     Prepara dados de replay de uma sessao.
     Retorna eventos bytes (in/out) estruturados para visualizacao
     e replay da interacao capturada.
+
+    offset/limit (dívida X6): restringem a fatia de eventos "bytes"
+    materializada em events/timeline/playback. Sem janela explícita,
+    sessões com mais de MAX_FULL_REPLAY_EVENTS eventos retornam só os
+    primeiros DEFAULT_REPLAY_WINDOW_LIMIT, com window.truncated=True.
+    O estado do terminal (snapshots/sigs) é sempre calculado sobre o
+    prefixo completo, então a fatia é consistente com o modo completo.
     """
     clean_dir = str(log_dir or "").strip()
     clean_sid = str(session_id or "").strip()
@@ -324,6 +346,54 @@ def prepare_session_replay_data(
     geometry = _detect_geometry(events, session_start)
     detected_encoding = _detect_encoding(events, session_start)
 
+    # ── Janela de materialização (X6) ───────────────────────────────────
+    total_bytes_events = sum(1 for ev in events if str(ev.get("type") or "").strip() == "bytes")
+    explicit_window = offset is not None or limit is not None
+    if explicit_window:
+        win_start = max(0, int(offset or 0))
+        win_limit = max(1, int(limit or DEFAULT_REPLAY_WINDOW_LIMIT))
+        win_end = win_start + win_limit
+    elif total_bytes_events > MAX_FULL_REPLAY_EVENTS:
+        # Sessão enorme sem janela explícita: nunca materializa tudo.
+        win_start = 0
+        win_limit = DEFAULT_REPLAY_WINDOW_LIMIT
+        win_end = win_limit
+    else:
+        win_start = 0
+        win_limit = total_bytes_events
+        win_end = None  # modo completo (sessão pequena)
+
+    # Índice (no espaço de eventos "bytes") do último OUT antes da janela:
+    # é a base de diff do primeiro evento OUT materializado.
+    window_base_out_index = -1
+    if win_end is not None and win_start > 0:
+        _idx = 0
+        for _ev in events:
+            if str(_ev.get("type") or "").strip() != "bytes":
+                continue
+            if _idx >= win_start:
+                break
+            if str(_ev.get("dir") or "").strip() == "out":
+                window_base_out_index = _idx
+            _idx += 1
+
+    # Totais de bytes reais (decodificados) da sessão inteira — calculados
+    # upfront porque em modo parcial o loop para no fim da janela (X6).
+    total_bytes_in_actual = 0
+    total_bytes_out_actual = 0
+    for _ev in events:
+        if str(_ev.get("type") or "").strip() != "bytes":
+            continue
+        _raw, _warn = _decode_event_bytes(
+            str(_ev.get("data_b64") or "").strip(),
+            int(_ev["n"]) if _ev.get("n") is not None else None,
+        )
+        _dir = str(_ev.get("dir") or "").strip()
+        if _dir == "in":
+            total_bytes_in_actual += len(_raw)
+        elif _dir == "out":
+            total_bytes_out_actual += len(_raw)
+
     # ── TerminalEngine Python: fonte oficial ────────────────────────────
     engine = TerminalEngine(
         rows=geometry["rows"],
@@ -346,6 +416,9 @@ def prepare_session_replay_data(
     last_snapshot = initial_snapshot
     last_out_seq_global = 0  # seq_global do ultimo evento OUT
     out_event_count = 0
+    bytes_event_index = 0  # índice no espaço de eventos "bytes" (base da janela)
+    last_rows = geometry["rows"]
+    last_cols = geometry["cols"]
     last_checkpoint_time_ms = 0
     CHECKPOINT_EVENT_INTERVAL = 250   # snapshot completo a cada N eventos OUT
     CHECKPOINT_TIME_INTERVAL_MS = 3000  # ou a cada 3 segundos
@@ -370,6 +443,12 @@ def prepare_session_replay_data(
 
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
+
+        # Modo parcial (X6): a janela acabou — interrompe o processamento
+        # do stream. Estado final, checkpoints e canonical_signatures
+        # refletem o fim da janela, não o fim da sessão (window.partial_state).
+        if win_end is not None and bytes_event_index >= win_end:
+            break
 
         if ev_type == "session_start":
             session_start = ev
@@ -420,21 +499,22 @@ def prepare_session_replay_data(
             data_raw, integrity_warning = _decode_event_bytes(data_b64, declared_n)
             actual_n = len(data_raw)
 
+            in_window = win_end is None or (win_start <= bytes_event_index < win_end)
             generate_checkpoint = False
+            diff = None
 
             # Alimenta TerminalEngine com bytes OUT
             if direction == "out" and data_raw:
                 engine.feed_bytes(data_raw, seq_global=seq_global, direction=direction, session_id=clean_sid)
                 out_event_count += 1
-                current_snapshot = snapshot_from_engine(engine)
 
                 # Detecta RIS e clear-screen para gerar checkpoint
                 has_ris = b'\x1bc' in data_raw
                 has_clear = b'\x1b[2J' in data_raw
 
                 # Detecta resize que ocorreu (engine ja processou internamente)
-                has_resize = (current_snapshot["rows"] != last_snapshot["rows"] or
-                              current_snapshot["cols"] != last_snapshot["cols"])
+                has_resize = (engine.rows != last_rows or engine.cols != last_cols)
+                last_rows, last_cols = engine.rows, engine.cols
 
                 # Gera checkpoint conforme politica
                 time_since_checkpoint = ts_ms - last_checkpoint_time_ms
@@ -446,6 +526,31 @@ def prepare_session_replay_data(
                     or has_resize
                     or has_clear
                 )
+                # X6: teto de checkpoints — sessões com redesenho constante
+                # (clear-screen por página) gerariam um checkpoint com
+                # snapshot completo por evento OUT.
+                if generate_checkpoint and len(checkpoints) >= MAX_REPLAY_CHECKPOINTS:
+                    generate_checkpoint = False
+
+                # X6: snapshot_from_engine serializa rows*cols celulas e 3
+                # assinaturas — só é calculado quando o evento está na
+                # janela, gera checkpoint ou é a base de diff imediatamente
+                # anterior à janela. Fora desses casos o estado da tela já
+                # está correto na engine e o snapshot é dispensável.
+                want_snapshot = (
+                    in_window
+                    or generate_checkpoint
+                    or bytes_event_index == window_base_out_index
+                )
+                prev_out_snapshot = last_out_snapshot
+                prev_out_seq_global = last_out_seq_global
+                if want_snapshot:
+                    current_snapshot = snapshot_from_engine(engine)
+                    last_out_snapshot = current_snapshot
+                    last_out_seq_global = seq_global
+                    last_snapshot = current_snapshot
+                else:
+                    current_snapshot = last_out_snapshot
 
                 if generate_checkpoint:
                     last_checkpoint_time_ms = ts_ms
@@ -474,22 +579,26 @@ def prepare_session_replay_data(
                     _attach_render_snapshot(checkpoint, current_snapshot)
                     checkpoints.append(checkpoint)
 
-                # Gera diff entre ultimo snapshot OUT e atual (com identidade sequencial)
-                diff = create_diff(
-                    last_out_snapshot, current_snapshot,
-                    base_seq=last_out_seq_global,
-                    seq=seq_global,
-                    ts_ms=ts_ms,
-                )
-                last_out_snapshot = current_snapshot
-                last_out_seq_global = seq_global
-                last_snapshot = current_snapshot
+                # Gera diff apenas para eventos materializados (janela)
+                if in_window:
+                    diff = create_diff(
+                        prev_out_snapshot, current_snapshot,
+                        base_seq=prev_out_seq_global,
+                        seq=seq_global,
+                        ts_ms=ts_ms,
+                    )
             else:
                 if data_raw:
                     # IN: nao altera tela, mas registra
                     pass
                 current_snapshot = last_snapshot
-                diff = None
+
+            bytes_event_index += 1
+
+            if not in_window:
+                # Fora da janela: engine já foi alimentada acima; não
+                # materializa event_item/timeline_item (dívida X6).
+                continue
 
             # Decodifica para legado
             if integrity_warning and integrity_warning.get("integrity_error") == "invalid_base64":
@@ -548,6 +657,10 @@ def prepare_session_replay_data(
         elif ev_type == "deterministic_input":
             seq_global = int(ev.get("seq_global") or 0)
             ts_ms = int(ev.get("ts_ms") or 0)
+            # X6: com a janela, current_snapshot pode estar defasado
+            # (snapshots fora da janela são pulados); recalcula fresco —
+            # deterministic_input é raro por definição (tela estável+input).
+            current_snapshot = snapshot_from_engine(engine)
             deterministic_item = {
                 "event_id": f"det-{seq_global}",
                 "seq_global": seq_global, "ts_ms": ts_ms,
@@ -629,9 +742,11 @@ def prepare_session_replay_data(
         final_snapshot=_render_snapshot_payload(final_snapshot),
     )
     playback_meta = {
-        "total_bytes_in": sum(e["n_bytes"] for e in event_items if e["direction"] == "in"),
-        "total_bytes_out": sum(e["n_bytes"] for e in event_items if e["direction"] == "out"),
-        "event_count": len(event_items),
+        # Totais de bytes decodificados reais da sessão inteira —
+        # event_items contém apenas a janela materializada (X6).
+        "total_bytes_in": total_bytes_in_actual,
+        "total_bytes_out": total_bytes_out_actual,
+        "event_count": total_bytes_events,
         "deterministic_event_count": len(deterministic_events),
         "available_input_modes": ["raw", "deterministic"],
         "comparison_modes": ["visual", "text", "semantic", "hybrid"],
@@ -689,6 +804,22 @@ def prepare_session_replay_data(
         "timeline": timeline_view,
         "timeline_items": sorted_timeline,
         "playback": playback_view,
+        # Janela materializada (X6): truncated=True indica que há mais
+        # eventos além do fim da fatia retornada.
+        "window": {
+            "offset": win_start,
+            "limit": win_limit,
+            "total_events": total_bytes_events,
+            "truncated": win_end is not None and win_end < total_bytes_events,
+            "explicit": explicit_window,
+            # True quando o stream foi processado só até o fim da janela:
+            # final_snapshot, checkpoints e canonical_signatures refletem
+            # esse ponto, não o fim da sessão.
+            "partial_state": win_end is not None and bytes_event_index < total_bytes_events,
+        },
+        # True quando o teto MAX_REPLAY_CHECKPOINTS interrompeu novos
+        # checkpoints (sessões com redesenho constante de tela).
+        "checkpoints_capped": len(checkpoints) >= MAX_REPLAY_CHECKPOINTS,
         # Assinaturas canônicas persistidas para o gateway
         "canonical_signatures": {
             "text_sig": final_snapshot.get("text_sig", ""),

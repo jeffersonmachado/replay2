@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import re
+import threading
+import time
 from pathlib import Path
 
 
@@ -10,6 +13,16 @@ DIRECT_SSH_POLICIES = {"gateway_only", "admin_only", "unrestricted", "disabled"}
 CAPTURE_START_MODES = {"login_required", "session_start_required"}
 CAPTURE_COMPLIANCE_MODES = {"strict", "warn", "off"}
 COMPLIANCE_STATUSES = {"compliant", "warning", "non_compliant", "rejected", "not_applicable"}
+
+# Cache do scan de sessões de captura (dívida X6): o rescan completo dos
+# JSONL de auditoria levava ~28 s por request numa captura de 116k eventos.
+# A entrada é invalidada quando a assinatura dos arquivos (nome+size+mtime)
+# muda ou quando expira o TTL — capturas ativas continuam corretas.
+_CAPTURE_SESSIONS_CACHE_TTL_S = 5.0
+_CAPTURE_SESSIONS_CACHE_MAX = 64
+_capture_sessions_cache: dict[str, tuple[float, tuple, dict]] = {}
+_capture_sessions_cache_lock = threading.Lock()
+_capture_sessions_cache_stats = {"hits": 0, "misses": 0}
 
 _LOGIN_HINTS = (
     "login",
@@ -126,7 +139,60 @@ def _iter_audit_events(log_dir: str):
                     yield item
 
 
+def _capture_files_signature(clean_dir: str) -> tuple:
+    """Assinatura dos audit-*.jsonl (nome+size+mtime) para invalidar o cache."""
+    sig = []
+    try:
+        files = sorted(Path(clean_dir).glob("audit-*.jsonl"))
+    except OSError:
+        return ()
+    for file_path in files:
+        try:
+            st = file_path.stat()
+        except OSError:
+            continue
+        sig.append((file_path.name, st.st_size, st.st_mtime_ns))
+    return tuple(sig)
+
+
+def capture_sessions_cache_info() -> dict:
+    """Introspecção do cache de sessões (hits/misses/entradas) — usada em testes."""
+    with _capture_sessions_cache_lock:
+        return {
+            "hits": _capture_sessions_cache_stats["hits"],
+            "misses": _capture_sessions_cache_stats["misses"],
+            "entries": len(_capture_sessions_cache),
+        }
+
+
 def summarize_capture_sessions(log_dir: str, *, target_policy: dict | None = None) -> dict:
+    clean_dir = str(log_dir or "").strip()
+    signature = _capture_files_signature(clean_dir) if clean_dir else ()
+    policy_key = json.dumps(target_policy or {}, sort_keys=True, default=str)
+    cache_key = f"{clean_dir}|{policy_key}"
+    now = time.monotonic()
+
+    with _capture_sessions_cache_lock:
+        entry = _capture_sessions_cache.get(cache_key)
+        if entry is not None:
+            stored_at, stored_sig, stored_result = entry
+            if stored_sig == signature and (now - stored_at) <= _CAPTURE_SESSIONS_CACHE_TTL_S:
+                _capture_sessions_cache_stats["hits"] += 1
+                # deepcopy: callers mutam os itens (ex.: flag "matched") e
+                # não podem contaminar a entrada cacheada.
+                return copy.deepcopy(stored_result)
+        _capture_sessions_cache_stats["misses"] += 1
+
+    result = _summarize_capture_sessions_uncached(log_dir, target_policy=target_policy)
+
+    with _capture_sessions_cache_lock:
+        if len(_capture_sessions_cache) >= _CAPTURE_SESSIONS_CACHE_MAX:
+            _capture_sessions_cache.clear()
+        _capture_sessions_cache[cache_key] = (now, signature, copy.deepcopy(result))
+    return result
+
+
+def _summarize_capture_sessions_uncached(log_dir: str, *, target_policy: dict | None = None) -> dict:
     clean_policy = normalize_target_policy(target_policy)
     sessions: dict[str, dict] = {}
 

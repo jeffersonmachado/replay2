@@ -54,7 +54,7 @@
 |---|------|-----------|-----------|
 | G1 | Componente Go não integrado ✅ | **RESOLVIDO** | `gateway/internal/audit/` foi **removido** no commit `dd87592` (v0.3.0). O runtime Python é a única implementação de auditoria. |
 | G2 | `replay_control.py` — Runner monolítico ✅ | **RESOLVIDA (2026-08-03)** | Controla execução de replay, fila, status, retry. **Decomposto em pacote sem mudança de lógica:** `gateway/dakota_gateway/replay_control/` com `window.py` (helpers de janela/hash/params), `deterministic.py` (comparação determinística), `executors.py` (executores strict-global/parallel-sessions/concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + `Runner`) e `__init__.py` (fachada que reexporta toda a superfície importável do módulo antigo). Suíte completa verde (~954 passed). |
-| G3 | `source_analyzer/` com 9 extractors | **MÉDIA** | Extractors independentes mas sem interface comum. Criar `BaseExtractor` ABC. |
+| G3 | `source_analyzer/` com 9 extractors ✅ | **RESOLVIDA (2026-08-03)** | Criado `base_extractor.py` com `BaseExtractor` (ABC: `name` + estático `extract(content, source_file="")`) e o registro `entity_extractors()` na ordem oficial (SQL → ISAM → DBF → Recital). Os 5 extractors com `extract` herdam da ABC; `parser.py::_parse_file` consome o registro em vez de invocar nominalmente. 11 testes novos em `tests/test_base_extractor_unit.py` (contrato + regressão funcional). |
 | G4 | `synthetic/` com 29+ módulos ✅ | **CORRIGIDO** | `test_synthetic_gap_coverage.py` com 22 testes: 12 para `screen_differ`, 10 para `error_detector`. |
 | G5 | `replay_run_state.py` + `replay_failures.py` ✅ | **CORRIGIDO** | Extraídos do `replay_control.py`. |
 
@@ -86,7 +86,7 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R5, S1, G1, G2, G4, G5, T2, X1, X3, X4, X5, X6 (16 itens).
+**Itens resolvidos:** R1–R5, S1, G1, G2, G3, G4, G5, T2, X1, X3, X4, X5, X6 (17 itens).
 **Pendentes:** R6, S2–S4, T1, X2 (severidade baixa/média).
 
 ---

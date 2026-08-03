@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .entity_catalog import EntityDefinition, FieldDefinition, OperationDefinition
+from .base_extractor import BaseExtractor
 
 # DBF especifico: comandos como USE, dbUseArea, CREATE TABLE, etc.
 # Estes sao similares ao ISAM mas podem ter sintaxe especifica de driver DBF.
@@ -19,8 +20,9 @@ _RE_DBCOMMIT = re.compile(r"dbCommit\s*\(\s*\)", re.IGNORECASE)
 _RE_DBGO = re.compile(r"dbGo(?:To|Bottom|Top)\s*\(\s*\)", re.IGNORECASE)
 
 
-class DBFExtractor:
+class DBFExtractor(BaseExtractor):
     """Extrai entidades de comandos DBF especificos (driver nativo)."""
+    name = "dbf"
 
     @staticmethod
     def extract(content: str, source_file: str = "") -> list[EntityDefinition]:

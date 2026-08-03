@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from .entity_catalog import ScreenDefinition, FieldDefinition
+from .base_extractor import BaseExtractor
 
 # ── Regex patterns ──
 
@@ -121,7 +122,8 @@ def _finalize_screen(current_screen, screen_start, line_no, screens, pending_tit
     return current_screen, screen_start, pending_title, ""
 
 
-class ScreenExtractor:
+class ScreenExtractor(BaseExtractor):
+    name = "screens"
 
     @staticmethod
     def extract(content: str, source_file: str = "") -> list[ScreenDefinition]:

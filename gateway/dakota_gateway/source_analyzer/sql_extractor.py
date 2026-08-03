@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from .entity_catalog import EntityDefinition, FieldDefinition, OperationDefinition
+from .base_extractor import BaseExtractor
 
 # Padroes SQL
 _RE_CREATE_TABLE = re.compile(
@@ -98,8 +99,9 @@ def _extract_where_fields(where_str: str) -> list[str]:
     return fields
 
 
-class SQLExtractor:
+class SQLExtractor(BaseExtractor):
     """Extrai entidades e operacoes de comandos SQL."""
+    name = "sql"
 
     @staticmethod
     def extract(content: str, source_file: str = "") -> list[EntityDefinition]:

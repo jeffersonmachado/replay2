@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Set
 
 from .entity_catalog import EntityDefinition, OperationDefinition
+from .base_extractor import BaseExtractor
 from .audit import AuditTrail, AuditEvidence, log_audit
 
 _MODULO_NAMES: Dict[str, str] = {
@@ -68,7 +69,8 @@ def _is_likely_entity(alias: str) -> bool:
     return True
 
 
-class RecitalExtractor:
+class RecitalExtractor(BaseExtractor):
+    name = "recital"
 
     @staticmethod
     def extract(content: str, source_file: str = "") -> list[EntityDefinition]:

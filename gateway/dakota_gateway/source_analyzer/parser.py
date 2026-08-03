@@ -8,9 +8,7 @@ from .entity_catalog import EntityDefinition, FieldDefinition, OperationDefiniti
 
 
 from .sql_extractor import SQLExtractor
-from .isam_extractor import ISAMExtractor
-from .dbf_extractor import DBFExtractor
-from .recital_extractor import RecitalExtractor
+from .base_extractor import entity_extractors
 from .validation_extractor import ValidationExtractor
 from .screen_extractor import ScreenExtractor
 from .crud_detector import CRUDDetector, CRUDCoverage
@@ -226,16 +224,11 @@ class SourceParser:
                 self._merge_entity(ent)
             return
 
-        sql_entities = SQLExtractor.extract(content, str(file_path))
-        isam_entities = ISAMExtractor.extract(content, str(file_path))
-        dbf_entities = DBFExtractor.extract(content, str(file_path))
-        recital_entities = RecitalExtractor.extract(content, str(file_path))
-
         screens = ScreenExtractor.extract(content, str(file_path))
         self._screens.extend(screens)
 
-        for ent_list in (sql_entities, isam_entities, dbf_entities, recital_entities):
-            for ent in ent_list:
+        for extractor in entity_extractors():
+            for ent in extractor.extract(content, str(file_path)):
                 merged = self._merge_entity(ent)
                 ValidationExtractor.enrich(merged, content, str(file_path))
 

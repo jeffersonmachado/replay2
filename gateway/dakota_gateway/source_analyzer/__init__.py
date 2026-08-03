@@ -5,6 +5,7 @@ from importlib import import_module
 
 _EXPORTS = {
     "SourceParser": ".parser",
+    "BaseExtractor": ".base_extractor",
     "SQLExtractor": ".sql_extractor",
     "ISAMExtractor": ".isam_extractor",
     "DBFExtractor": ".dbf_extractor",

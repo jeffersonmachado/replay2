@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .entity_catalog import EntityDefinition, FieldDefinition, OperationDefinition
+from .base_extractor import BaseExtractor
 
 # ISAM / DBF / xBase classico:
 # USE <arquivo> [ALIAS <alias>] [SHARED] [EXCLUSIVE] [INDEX <idx>] [ORDER <tag>]
@@ -55,8 +56,9 @@ def _extract_locate_fields(locate_str: str) -> list[str]:
     return fields
 
 
-class ISAMExtractor:
+class ISAMExtractor(BaseExtractor):
     """Extrai entidades de comandos ISAM/xBase: USE, SELECT, APPEND BLANK, REPLACE, SEEK, LOCATE, INDEX."""
+    name = "isam"
 
     @staticmethod
     def extract(content: str, source_file: str = "") -> list[EntityDefinition]:

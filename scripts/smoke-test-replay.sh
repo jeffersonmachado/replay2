@@ -74,16 +74,30 @@ except Exception:
     print('NO_CAPTURES')
     sys.exit(0)
 
-caps = req('/api/captures')
+caps = req('/api/captures?limit=500')
 if not caps or not caps.get('captures'):
     print('NO_CAPTURES')
     sys.exit(0)
+
+# /api/captures pagina (default 20, máx 500/página): percorre todas as
+# páginas — capturas com conteúdo podem estar fora da primeira página.
+total = caps.get('total', 0)
+while len(caps['captures']) < total:
+    page = req('/api/captures?limit=500&offset=%d' % len(caps['captures']))
+    if not page or not page.get('captures'):
+        break
+    caps['captures'].extend(page['captures'])
 
 # Escolhe a sessão MENOR com saída de tela capturada; sessões vazias
 # (só session_start/session_end, bytes_out=0) não têm replay, e sessões
 # muito grandes (ex.: >50k eventos) estouram o timeout do smoke — o
 # objetivo aqui é validar o pipeline, não medir desempenho do endpoint.
-best = None
+# Sessões legadas (anteriores ao schema com metadata de terminal no
+# session_start) são depriorizadas: candidatas são sondadas com
+# replay?limit=1 e a menor com metadata completa (rows/cols/term/encoding)
+# vence; sem nenhuma compliance, cai na menor legada e o check de
+# session_start reprova com evidência.
+cands = []
 for cap in caps['captures']:
     if cap.get('event_count', 0) > 10000:
         continue
@@ -93,8 +107,17 @@ for cap in caps['captures']:
         for s in sessions['sessions']:
             sid = s.get('session_id', '')
             if sid and s.get('bytes_out', 0) > 0:
-                if best is None or s.get('event_count', 0) < best[2]:
-                    best = (cid, sid, s.get('event_count', 0))
+                cands.append((cid, sid, s.get('event_count', 0)))
+cands.sort(key=lambda c: c[2])
+best = None
+for cid, sid, cnt in cands:
+    probe = req('/api/captures/%s/replay?session_id=%s&limit=1' % (cid, sid))
+    ss = (probe or {}).get('session_start') or {}
+    if all(ss.get(k) for k in ('rows', 'cols', 'term', 'encoding')):
+        best = (cid, sid, cnt)
+        break
+if best is None and cands:
+    best = cands[0]
 if best:
     print(f'{best[0]}|{best[1]}')
     sys.exit(0)

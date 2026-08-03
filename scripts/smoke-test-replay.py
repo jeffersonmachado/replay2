@@ -64,13 +64,21 @@ def main():
 
     # Find a session with data
     print("--- Buscando sessão com dados de replay ---")
-    s, caps, _ = req("GET", "/api/captures")
+    # /api/captures pagina (default 20, máx 500/página): percorre todas as
+    # páginas — sessões com conteúdo podem estar fora da primeira página.
+    s, caps, _ = req("GET", "/api/captures?limit=500")
     if not caps.get("captures"):
         check(False, "Setup", "nenhuma captura disponível")
         sys.exit(1)
+    total_caps = caps.get("total", 0)
+    while len(caps["captures"]) < total_caps:
+        s, page, _ = req("GET", f"/api/captures?limit=500&offset={len(caps['captures'])}")
+        if s != 200 or not page.get("captures"):
+            break
+        caps["captures"].extend(page["captures"])
 
     cid, sid = None, None
-    best_count = None
+    cands = []
     for cap in caps["captures"]:
         if cap.get("event_count", 0) > 10000:
             continue
@@ -81,9 +89,21 @@ def main():
             # Escolhe a menor sessão com conteúdo — o smoke valida o
             # pipeline, não o desempenho do endpoint com sessões enormes.
             if sess.get("session_id") and sess.get("bytes_out", 0) > 0:
-                count = sess.get("event_count", 0)
-                if best_count is None or count < best_count:
-                    cid, sid, best_count = cap["id"], sess["session_id"], count
+                cands.append((cap["id"], sess["session_id"], sess.get("event_count", 0)))
+
+    # Sessões legadas (anteriores ao schema com metadata de terminal no
+    # session_start) são depriorizadas: sonda replay?limit=1 e prefere a
+    # menor com metadata completa; sem nenhuma compliance, cai na menor
+    # legada e o check de session_start reprova com evidência.
+    cands.sort(key=lambda c: c[2])
+    for c_cid, c_sid, c_count in cands:
+        s, probe, _ = req("GET", f"/api/captures/{c_cid}/replay?session_id={c_sid}&limit=1")
+        ss = (probe or {}).get("session_start") or {}
+        if s == 200 and all(ss.get(k) for k in ("rows", "cols", "term", "encoding")):
+            cid, sid = c_cid, c_sid
+            break
+    if not sid and cands:
+        cid, sid, _ = cands[0]
 
     if not sid:
         check(False, "Setup", "nenhuma sessão disponível")

@@ -74,9 +74,19 @@ def main():
 
     # 3. Listagem
     print("--- 3. Listagem ---")
-    s, payload, _ = req("GET", "/api/captures")
+    # /api/captures pagina (default 20, máx 500/página): percorre todas as
+    # páginas — capturas com conteúdo fora da primeira página não podem
+    # ficar invisíveis para os checks de sessão/replay.
+    s, payload, _ = req("GET", "/api/captures?limit=500")
     check(s == 200, "GET /api/captures → 200", f"status={s}")
     total = payload.get("total", 0)
+    captures_all = list(payload.get("captures", []))
+    while len(captures_all) < total:
+        s, page, _ = req("GET", f"/api/captures?limit=500&offset={len(captures_all)}")
+        if s != 200 or not page.get("captures"):
+            break
+        captures_all.extend(page["captures"])
+    payload["captures"] = captures_all
     print(f"         total de capturas: {total}")
     print()
 

@@ -118,9 +118,38 @@ echo ""
 
 # ── 3. Listagem de capturas ─────────────────────────────────────────────────
 echo "--- 3. Listagem ---"
-CAPTURES_RESP=$(http GET /api/captures 2>/dev/null)
+CAPTURES_RESP=$(http GET "/api/captures?limit=500" 2>/dev/null)
 CAPTURES_STATUS=$(echo "$CAPTURES_RESP" | head -1)
 CAPTURES_BODY=$(printf '%s' "$CAPTURES_RESP" | tail -n +2)
+
+if [ "$CAPTURES_STATUS" = "200" ]; then
+  # /api/captures pagina (default 20, máx 500/página): percorre todas as
+  # páginas — capturas com conteúdo podem estar fora da primeira página.
+  CAPTURES_BODY=$(printf '%s' "$CAPTURES_BODY" | python3 -c "
+import sys,json,http.cookiejar,urllib.request
+d=json.loads(sys.stdin.read())
+total=d.get('total',0)
+caps=d.get('captures',[])
+jar=http.cookiejar.MozillaCookieJar('$COOKIE_JAR')
+try:
+    jar.load(ignore_discard=True, ignore_expires=True)
+except Exception:
+    pass
+opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+while len(caps)<total:
+    try:
+        resp=opener.open('${BASE_URL}/api/captures?limit=500&offset=%d' % len(caps), timeout=10)
+        page=json.loads(resp.read())
+    except Exception:
+        break
+    items=page.get('captures',[])
+    if not items:
+        break
+    caps.extend(items)
+d['captures']=caps
+print(json.dumps(d))
+" 2>/dev/null)
+fi
 
 if [ "$CAPTURES_STATUS" = "200" ]; then
   pass "GET /api/captures → 200"

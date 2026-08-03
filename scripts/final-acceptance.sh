@@ -375,6 +375,13 @@ if (cd "$EXTRACT_ROOT" && bash scripts/acceptance/run-phase-08-full.sh); then
 else
   EXTRACTED_GATE_RC=$?
   echo "EXTRACTED TREE GATE FAILED (rc=$EXTRACTED_GATE_RC)"
+  # Preserva os logs da árvore extraída para diagnóstico: o EXTRACT_DIR é
+  # apagado no fim do script e, sem esta cópia, a causa da falha é perdida
+  # (incidente no pipeline 0.8.4 — extracted_gate=False sem rastro).
+  PRESERVE_DIR="artifacts/acceptance-logs/extracted-failed-$RELEASE_RUN_ID"
+  mkdir -p "$PRESERVE_DIR"
+  cp -R "$EXTRACT_ROOT/artifacts/acceptance-logs/." "$PRESERVE_DIR/" 2>/dev/null || true
+  echo "logs da árvore extraída preservados em $PRESERVE_DIR"
 fi
 
 # Check extracted visual + contamination

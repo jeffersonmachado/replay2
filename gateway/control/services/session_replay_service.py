@@ -30,6 +30,7 @@ from dakota_terminal import (
 )
 
 from control.services import replay_state_cache
+from control.services import session_index_cache
 
 # Janela de replay (dívida X6): sessões enormes (ex.: 116k eventos)
 # derrubavam o control plane — o endpoint materializava eventos/timeline/
@@ -49,6 +50,13 @@ MAX_REPLAY_CHECKPOINTS = 2000
 # offset grande retoma do estado mais próximo. REPLAY_STATE_CACHE=0 desliga.
 STATE_CACHE_INTERVAL = 1000
 STATE_CACHE_ENABLED = os.environ.get("REPLAY_STATE_CACHE", "1") != "0"
+# Índice de sessão em disco (X6): sem ele, cada request de replay relê e
+# reparseia todos os audit-*.jsonl (314 MB / 116k linhas na captura 20 do
+# MIG24) para extrair a sessão, totalizar o playback e localizar a janela.
+# O índice persiste o mapa tipado dos eventos (tipo/seq/arquivo/offset +
+# direção/tamanho decodificado dos "bytes"); a janela é materializada por
+# seek e os totais saem de somas de arrays. REPLAY_SESSION_INDEX=0 desliga.
+SESSION_INDEX_ENABLED = os.environ.get("REPLAY_SESSION_INDEX", "1") != "0"
 
 
 def build_reference_payload(
@@ -169,6 +177,22 @@ def _encoding_resolution(session_start: dict | None) -> dict:
     }
 
 
+def _session_start_geometry_ok(session_start: dict | None) -> bool:
+    """True quando os metadados do session_start definem a geometria.
+
+    Espelha a prioridade 1 de _detect_geometry: sem metadados válidos, a
+    detecção varre todos os eventos OUT atrás de resize e o caminho
+    indexado (X6) precisa cair para o parse completo.
+    """
+    if not session_start:
+        return False
+    try:
+        validate_terminal_geometry(session_start.get("rows"), session_start.get("cols"))
+        return True
+    except Exception:
+        return False
+
+
 def _detect_geometry(events: list[dict], session_start: dict | None = None) -> dict:
     """Detecta geometria a partir de metadados (prioridade) ou resize explicito.
 
@@ -269,6 +293,7 @@ def prepare_session_replay_data(
     offset: int | None = None,
     limit: int | None = None,
     state_cache_dir: str | None = None,
+    _allow_index: bool = True,
 ) -> dict:
     """
     Prepara dados de replay de uma sessao.
@@ -311,54 +336,120 @@ def prepare_session_replay_data(
             "timeline": _empty_reference_view(),
             "playback": None,
         }
+    # ── Índice de sessão em disco (X6) ──────────────────────────────────
+    # Sem ele, cada request relê e reparseia todos os audit-*.jsonl para
+    # extrair a sessão, totalizar o playback e localizar a janela (314 MB /
+    # 116k linhas na captura 20 do MIG24 — custo dominante remanescente do
+    # endpoint). Com o índice, a janela é materializada por seek e os
+    # totais saem de somas de arrays.
+    cache_dir_resolved = state_cache_dir or str(log_path.parent / "replay_state_cache")
+    capture_sig = replay_state_cache.capture_signature(log_path)
+    index_info: dict = {"enabled": bool(SESSION_INDEX_ENABLED), "hit": False, "stored": False}
+    index = (
+        session_index_cache.load_index(cache_dir_resolved, capture_sig, clean_sid)
+        if SESSION_INDEX_ENABLED and _allow_index
+        else None
+    )
+    indexed = index is not None
+
     events: list[dict] = []
-
-    for file_path in files:
-        try:
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as exc:
-            return {"error": f"erro ao ler arquivo: {exc}", "events": [], "timeline": _empty_reference_view(), "playback": None}
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("session_id") or "").strip() != clean_sid:
-                continue
-            events.append(item)
-
-    events.sort(key=lambda x: int(x.get("seq_global") or 0))
-
-    # Verifica se a sessao existe nos logs
-    if not events:
-        return {
-            "error": {"code": "session_not_found", "message": f"session_id nao encontrado: {clean_sid}"},
-            "events": [],
-            "timeline": _empty_reference_view(),
-            "playback": None,
-        }
-
-    # Extrai session_start antes da deteccao de geometria
+    builder = None if indexed or not SESSION_INDEX_ENABLED else session_index_cache.IndexBuilder()
     session_start = None
     session_end = None
-    for ev in events:
-        ev_type = str(ev.get("type") or "").strip()
-        if ev_type == "session_start" and session_start is None:
-            session_start = ev
-        elif ev_type == "session_end" and session_end is None:
-            session_end = ev
+    resume_from = 0
+    resume_envelope = None
+    pre_resume_session_starts: list[dict] = []
+    start_pos = 0
+    end_pos = -1
+
+    if indexed:
+        first_s_pos = session_index_cache.find_first_pos(index, "s")
+        session_start = session_index_cache.event_at(log_path, index, first_s_pos) if first_s_pos >= 0 else None
+        first_e_pos = session_index_cache.find_first_pos(index, "e")
+        session_end = session_index_cache.event_at(log_path, index, first_e_pos) if first_e_pos >= 0 else None
+        if _session_start_geometry_ok(session_start):
+            index_info["hit"] = True
+        else:
+            # Sem geometria de metadados, _detect_geometry varre todos os
+            # eventos OUT atrás de resize — exige o parse completo.
+            indexed = False
+            index = None
+            index_info["reason"] = "geometry_requires_full_scan"
+            builder = session_index_cache.IndexBuilder() if SESSION_INDEX_ENABLED else None
+
+    if not indexed:
+        for file_idx, file_path in enumerate(files):
+            try:
+                with open(file_path, "rb") as fh:
+                    file_offset = 0
+                    while True:
+                        raw_line = fh.readline()
+                        if not raw_line:
+                            break
+                        line_offset = file_offset
+                        file_offset += len(raw_line)
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            item = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(item, dict):
+                            continue
+                        if str(item.get("session_id") or "").strip() != clean_sid:
+                            continue
+                        events.append(item)
+                        if builder is not None:
+                            code = session_index_cache.type_code(str(item.get("type") or "").strip())
+                            if code is not None:
+                                direction = ""
+                                decoded_len = 0
+                                if code == "b":
+                                    _raw, _warn = _decode_event_bytes(
+                                        str(item.get("data_b64") or "").strip(),
+                                        int(item["n"]) if item.get("n") is not None else None,
+                                    )
+                                    direction = str(item.get("dir") or "").strip()
+                                    decoded_len = len(_raw)
+                                builder.add(
+                                    code,
+                                    int(item.get("seq_global") or 0),
+                                    file_idx,
+                                    line_offset,
+                                    direction=direction,
+                                    decoded_len=decoded_len,
+                                )
+            except OSError as exc:
+                return {"error": f"erro ao ler arquivo: {exc}", "events": [], "timeline": _empty_reference_view(), "playback": None}
+
+        events.sort(key=lambda x: int(x.get("seq_global") or 0))
+
+        # Verifica se a sessao existe nos logs
+        if not events:
+            return {
+                "error": {"code": "session_not_found", "message": f"session_id nao encontrado: {clean_sid}"},
+                "events": [],
+                "timeline": _empty_reference_view(),
+                "playback": None,
+            }
+
+        # Extrai session_start antes da deteccao de geometria
+        for ev in events:
+            ev_type = str(ev.get("type") or "").strip()
+            if ev_type == "session_start" and session_start is None:
+                session_start = ev
+            elif ev_type == "session_end" and session_end is None:
+                session_end = ev
 
     geometry = _detect_geometry(events, session_start)
     detected_encoding = _detect_encoding(events, session_start)
 
     # ── Janela de materialização (X6) ───────────────────────────────────
-    total_bytes_events = sum(1 for ev in events if str(ev.get("type") or "").strip() == "bytes")
+    if indexed:
+        total_bytes_events = int(index["n_bytes"])
+    else:
+        total_bytes_events = sum(1 for ev in events if str(ev.get("type") or "").strip() == "bytes")
     explicit_window = offset is not None or limit is not None
     if explicit_window:
         win_start = max(0, int(offset or 0))
@@ -378,32 +469,73 @@ def prepare_session_replay_data(
     # é a base de diff do primeiro evento OUT materializado.
     window_base_out_index = -1
     if win_end is not None and win_start > 0:
-        _idx = 0
+        if indexed:
+            _bdir = index["bdir"]
+            for _k in range(min(win_start, len(_bdir)) - 1, -1, -1):
+                if _bdir[_k] == "o":
+                    window_base_out_index = _k
+                    break
+        else:
+            _idx = 0
+            for _ev in events:
+                if str(_ev.get("type") or "").strip() != "bytes":
+                    continue
+                if _idx >= win_start:
+                    break
+                if str(_ev.get("dir") or "").strip() == "out":
+                    window_base_out_index = _idx
+                _idx += 1
+
+    # Totais de bytes reais (decodificados) da sessão inteira — calculados
+    # upfront porque em modo parcial o loop para no fim da janela (X6). Com
+    # o índice (ou o builder do parse corrente), saem de somas de arrays,
+    # sem decodificar base64 de novo.
+    if indexed:
+        total_bytes_in_actual = int(index["total_in"])
+        total_bytes_out_actual = int(index["total_out"])
+    elif builder is not None:
+        total_bytes_in_actual = builder.total_in
+        total_bytes_out_actual = builder.total_out
+    else:
+        total_bytes_in_actual = 0
+        total_bytes_out_actual = 0
         for _ev in events:
             if str(_ev.get("type") or "").strip() != "bytes":
                 continue
-            if _idx >= win_start:
-                break
-            if str(_ev.get("dir") or "").strip() == "out":
-                window_base_out_index = _idx
-            _idx += 1
+            _raw, _warn = _decode_event_bytes(
+                str(_ev.get("data_b64") or "").strip(),
+                int(_ev["n"]) if _ev.get("n") is not None else None,
+            )
+            _dir = str(_ev.get("dir") or "").strip()
+            if _dir == "in":
+                total_bytes_in_actual += len(_raw)
+            elif _dir == "out":
+                total_bytes_out_actual += len(_raw)
 
-    # Totais de bytes reais (decodificados) da sessão inteira — calculados
-    # upfront porque em modo parcial o loop para no fim da janela (X6).
-    total_bytes_in_actual = 0
-    total_bytes_out_actual = 0
-    for _ev in events:
-        if str(_ev.get("type") or "").strip() != "bytes":
-            continue
-        _raw, _warn = _decode_event_bytes(
-            str(_ev.get("data_b64") or "").strip(),
-            int(_ev["n"]) if _ev.get("n") is not None else None,
+    # Persiste o índice de sessão para os próximos requests (X6) — apenas
+    # sessões enormes, mesmo critério do cache de estado.
+    if builder is not None and total_bytes_events > MAX_FULL_REPLAY_EVENTS:
+        _novo_indice = builder.build(
+            capture_sig=capture_sig, session_id=clean_sid,
+            files=[f.name for f in files],
         )
-        _dir = str(_ev.get("dir") or "").strip()
-        if _dir == "in":
-            total_bytes_in_actual += len(_raw)
-        elif _dir == "out":
-            total_bytes_out_actual += len(_raw)
+        if _novo_indice is not None and session_index_cache.store_index(cache_dir_resolved, _novo_indice):
+            index_info["stored"] = True
+
+    # ── Cache de estado em disco (X6): decisão de retomada ──────────────
+    # O lookup é feito aqui (fase A) porque o caminho indexado precisa do
+    # ponto de retomada para delimitar a materialização por seek; a
+    # aplicação do estado na engine acontece na fase B, junto ao parse
+    # completo, para manter um único loop principal nos dois caminhos.
+    cache_enabled = bool(STATE_CACHE_ENABLED) and total_bytes_events > MAX_FULL_REPLAY_EVENTS
+    cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
+    state_hit = None
+    if cache_enabled and win_start > 0:
+        state_hit = replay_state_cache.load_nearest_state(
+            cache_dir_resolved, capture_sig, clean_sid, win_start,
+            rows=geometry["rows"], cols=geometry["cols"],
+            term=geometry.get("term", "xterm"), encoding=detected_encoding,
+        )
 
     # ── TerminalEngine Python: fonte oficial ────────────────────────────
     engine = TerminalEngine(
@@ -413,6 +545,66 @@ def prepare_session_replay_data(
         encoding=detected_encoding,
         session_id=clean_sid,
     )
+
+    if indexed:
+        # Delimita a fatia do stream a materializar: do ponto de retomada
+        # (ou do início) até o último evento processado pelo loop — o evento
+        # "bytes" de ordinal win_end-1, ou o fim do stream quando a janela
+        # cobre (ou ultrapassa) o fim da sessão.
+        n_stream = len(index["types"])
+        if index["n_bytes"] and win_end is not None and win_end <= int(index["n_bytes"]):
+            end_pos = index["bpos"][win_end - 1]
+        else:
+            end_pos = n_stream - 1
+        if state_hit is not None:
+            candidate_idx, candidate_envelope = state_hit
+            # Valida o estado numa engine descartável: a engine real só é
+            # carregada na fase B, DEPOIS do initial_snapshot (tela em
+            # branco) — carregá-la aqui poluiria o checkpoint inicial.
+            try:
+                _probe = TerminalEngine(
+                    rows=geometry["rows"], cols=geometry["cols"],
+                    term=geometry.get("term", "xterm"), encoding=detected_encoding,
+                    session_id=clean_sid,
+                )
+                _probe.load_state(candidate_envelope["engine"])
+                resume_envelope = candidate_envelope
+                resume_from = candidate_idx
+            except (ValueError, KeyError, TypeError):
+                cache_info["reason"] = "state_load_failed"
+                resume_from = 0
+        if resume_from > 0:
+            # A fase de skip do parse completo consome os eventos "bytes" de
+            # ordinal < resume_from e faz bookkeeping dos session_start/end
+            # intercalados; o processamento normal começa logo após o bytes
+            # de ordinal resume_from-1.
+            start_pos = index["bpos"][resume_from - 1] + 1
+            # session_start(s) antes do primeiro evento bytes — reprodução
+            # do checkpoint inicial na aplicação do estado (fase B).
+            first_b_pos = index["bpos"][0]
+            for _pos in range(first_b_pos):
+                if index["types"][_pos] == "s":
+                    _ev = session_index_cache.event_at(log_path, index, _pos)
+                    if _ev is not None:
+                        pre_resume_session_starts.append(_ev)
+            # Bookkeeping dos limites de sessão: último session_start/end
+            # antes do ponto de retomada; sem predecessor, valem os
+            # primeiros do stream (já atribuídos acima).
+            _s_pos = session_index_cache.find_last_pos(index, "s", start_pos)
+            if _s_pos >= 0:
+                session_start = session_index_cache.event_at(log_path, index, _s_pos)
+            _e_pos = session_index_cache.find_last_pos(index, "e", start_pos)
+            if _e_pos >= 0:
+                session_end = session_index_cache.event_at(log_path, index, _e_pos)
+        materialized = session_index_cache.materialize_events(log_path, index, start_pos, end_pos)
+        if materialized is None:
+            # Falha de leitura via índice — cai para o parse completo.
+            return prepare_session_replay_data(
+                log_dir, session_id,
+                offset=offset, limit=limit, state_cache_dir=state_cache_dir,
+                _allow_index=False,
+            )
+        events = materialized
 
     event_items = []
     deterministic_events = []
@@ -452,83 +644,94 @@ def prepare_session_replay_data(
     _attach_render_snapshot(initial_checkpoint, initial_snapshot)
     checkpoints.append(initial_checkpoint)
 
-    # ── Cache de estado em disco (X6): retomada em janela profunda ──────
-    # Sem cache, uma janela com offset grande reprocessa o stream desde o
-    # evento 0 (rolagem profunda quadrática). Em sessões enormes, retoma do
-    # estado persistido mais próximo <= win_start. O estado restaurado já
-    # reflete TODOS os efeitos dos eventos anteriores (inclui engine.finish
-    # de session_end intermediários — capturas com reconexão reutilizam o
-    # session_id e têm centenas de pares session_start/session_end no meio
-    # do stream). Na fase de skip, session_start/session_end atualizam só o
-    # bookkeeping (campos do payload), sem reexecutar efeitos na engine, e
-    # deterministic_input pré-janela não é materializado (contrato de
-    # paginação). O checkpoint do session_start inicial é reproduzido com a
-    # tela em branco, igual à execução sem cache. Exceção documentada de
-    # paridade: checkpoints anteriores ao ponto de retomada (de qualquer
-    # tipo) não são regerados (window.state_cache.hit=true sinaliza isso).
-    cache_dir_resolved = state_cache_dir or str(log_path.parent / "replay_state_cache")
-    cache_enabled = bool(STATE_CACHE_ENABLED) and total_bytes_events > MAX_FULL_REPLAY_EVENTS
-    cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
-    capture_sig = replay_state_cache.capture_signature(log_path) if cache_enabled else ""
-    resume_from = 0
-    pre_resume_session_starts: list[dict] = []
-    if cache_enabled and win_start > 0:
-        hit = replay_state_cache.load_nearest_state(
-            cache_dir_resolved, capture_sig, clean_sid, win_start,
-            rows=geometry["rows"], cols=geometry["cols"],
-            term=geometry.get("term", "xterm"), encoding=detected_encoding,
-        )
-        if hit is not None:
-            candidate_idx, envelope = hit
-            count = 0
-            for ev in events:
-                if count >= candidate_idx:
-                    break
-                ev_type = str(ev.get("type") or "").strip()
-                if ev_type == "bytes":
-                    count += 1
-                elif ev_type == "session_start" and count == 0:
-                    pre_resume_session_starts.append(ev)
-            try:
-                engine.load_state(envelope["engine"])
-                counters = envelope.get("counters") or {}
-                resume_from = candidate_idx
-                restored_snapshot = snapshot_from_engine(engine)
-                current_snapshot = restored_snapshot
-                last_out_snapshot = restored_snapshot
-                last_snapshot = restored_snapshot
-                out_event_count = int(counters.get("out_event_count") or 0)
-                last_out_seq_global = int(counters.get("last_out_seq_global") or 0)
-                last_rows = int(counters.get("last_rows") or engine.rows)
-                last_cols = int(counters.get("last_cols") or engine.cols)
-                last_checkpoint_time_ms = int(counters.get("last_checkpoint_time_ms") or 0)
-                bytes_event_index = resume_from
-                cache_info["hit"] = True
-                cache_info["resumed_from"] = resume_from
-                # Reproduz o checkpoint do session_start inicial (tela
-                # em branco nesse ponto, igual à execução sem cache).
-                for ss_ev in pre_resume_session_starts:
-                    checkpoint = {
-                        "session_id": clean_sid,
-                        "seq_global": int(ss_ev.get("seq_global") or 0),
-                        "timestamp_ms": int(ss_ev.get("ts_ms") or 0),
-                        "text_sig": initial_snapshot.get("text_sig", ""),
-                        "visual_sig": initial_snapshot.get("visual_sig", ""),
-                        "semantic_sig": initial_snapshot.get("semantic_sig", ""),
-                        "rows": geometry["rows"],
-                        "cols": geometry["cols"],
-                        "term": geometry.get("term", "xterm"),
-                        "encoding": detected_encoding,
-                        "engine_version": engine.engine_version,
-                        "reason": "session_start",
-                    }
-                    _attach_render_snapshot(checkpoint, initial_snapshot)
-                    checkpoints.append(checkpoint)
-            except (ValueError, KeyError, TypeError):
-                cache_info["reason"] = "state_load_failed"
-                resume_from = 0
+    # ── Cache de estado em disco (X6): aplicação da retomada ────────────
+    # O lookup foi feito na fase A (junto à delimitação da janela). Aqui o
+    # estado é aplicado à engine e os contadores/checkpoints são
+    # restaurados. Sem cache, uma janela com offset grande reprocessa o
+    # stream desde o evento 0 (rolagem profunda quadrática). O estado
+    # restaurado já reflete TODOS os efeitos dos eventos anteriores
+    # (inclui engine.finish de session_end intermediários — capturas com
+    # reconexão reutilizam o session_id e têm centenas de pares
+    # session_start/session_end no meio do stream). Na fase de skip,
+    # session_start/session_end atualizam só o bookkeeping (campos do
+    # payload), sem reexecutar efeitos na engine, e deterministic_input
+    # pré-janela não é materializado (contrato de paginação). O checkpoint
+    # do session_start inicial é reproduzido com a tela em branco, igual à
+    # execução sem cache. Exceção documentada de paridade: checkpoints
+    # anteriores ao ponto de retomada (de qualquer tipo) não são regerados
+    # (window.state_cache.hit=true sinaliza isso).
+    state_applied = False
+    if not indexed and state_hit is not None:
+        candidate_idx, envelope = state_hit
+        count = 0
+        for ev in events:
+            if count >= candidate_idx:
+                break
+            ev_type = str(ev.get("type") or "").strip()
+            if ev_type == "bytes":
+                count += 1
+            elif ev_type == "session_start" and count == 0:
+                pre_resume_session_starts.append(ev)
+        try:
+            engine.load_state(envelope["engine"])
+            resume_envelope = envelope
+            resume_from = candidate_idx
+            state_applied = True
+        except (ValueError, KeyError, TypeError):
+            cache_info["reason"] = "state_load_failed"
+            resume_from = 0
+    elif indexed and resume_envelope is not None:
+        # Estado validado na fase A (engine descartável); a carga real
+        # acontece aqui, depois do initial_snapshot. Uma falha neste ponto
+        # é anomalia — os eventos já foram materializados a partir do
+        # ponto de retomada, então cai para o parse completo.
+        try:
+            engine.load_state(resume_envelope["engine"])
+            state_applied = True
+        except (ValueError, KeyError, TypeError):
+            return prepare_session_replay_data(
+                log_dir, session_id,
+                offset=offset, limit=limit, state_cache_dir=state_cache_dir,
+                _allow_index=False,
+            )
 
-    skip_remaining = resume_from
+    if state_applied and resume_envelope is not None:
+        counters = resume_envelope.get("counters") or {}
+        restored_snapshot = snapshot_from_engine(engine)
+        current_snapshot = restored_snapshot
+        last_out_snapshot = restored_snapshot
+        last_snapshot = restored_snapshot
+        out_event_count = int(counters.get("out_event_count") or 0)
+        last_out_seq_global = int(counters.get("last_out_seq_global") or 0)
+        last_rows = int(counters.get("last_rows") or engine.rows)
+        last_cols = int(counters.get("last_cols") or engine.cols)
+        last_checkpoint_time_ms = int(counters.get("last_checkpoint_time_ms") or 0)
+        bytes_event_index = resume_from
+        cache_info["hit"] = True
+        cache_info["resumed_from"] = resume_from
+        # Reproduz o checkpoint do session_start inicial (tela
+        # em branco nesse ponto, igual à execução sem cache).
+        for ss_ev in pre_resume_session_starts:
+            checkpoint = {
+                "session_id": clean_sid,
+                "seq_global": int(ss_ev.get("seq_global") or 0),
+                "timestamp_ms": int(ss_ev.get("ts_ms") or 0),
+                "text_sig": initial_snapshot.get("text_sig", ""),
+                "visual_sig": initial_snapshot.get("visual_sig", ""),
+                "semantic_sig": initial_snapshot.get("semantic_sig", ""),
+                "rows": geometry["rows"],
+                "cols": geometry["cols"],
+                "term": geometry.get("term", "xterm"),
+                "encoding": detected_encoding,
+                "engine_version": engine.engine_version,
+                "reason": "session_start",
+            }
+            _attach_render_snapshot(checkpoint, initial_snapshot)
+            checkpoints.append(checkpoint)
+
+    # No caminho indexado, a materialização já começa no ponto de retomada
+    # (o bookkeeping pré-janela foi feito na fase A) — não há o que pular.
+    skip_remaining = 0 if indexed else resume_from
 
     for ev in events:
         ev_type = str(ev.get("type") or "").strip()
@@ -964,6 +1167,10 @@ def prepare_session_replay_data(
             # partir de estado persistido — checkpoints anteriores ao ponto
             # de retomada não são regerados.
             "state_cache": cache_info,
+            # Índice de sessão em disco (X6): hit=True indica que a janela
+            # foi materializada por seek (sem reparsear os audit-*.jsonl)
+            # e os totais vieram do índice.
+            "session_index": index_info,
         },
         # True quando o teto MAX_REPLAY_CHECKPOINTS interrompeu novos
         # checkpoints (sessões com redesenho constante de tela).

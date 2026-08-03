@@ -192,7 +192,11 @@ terminal — isso é garantido pelo teste
   sessão/replay, observabilidade, analytics, ambiente). Inclui
   `replay_state_cache.py` — cache em disco de estados da TerminalEngine
   (janela profunda de replay em sessões enormes, dívida X6; kill-switch
-  `REPLAY_STATE_CACHE=0`);
+  `REPLAY_STATE_CACHE=0`) e `session_index_cache.py` — índice em disco dos
+  eventos da sessão (tipo/seq/arquivo/offset + direção/tamanho decodificado
+  dos "bytes"): a janela de replay é materializada por seek e os totais de
+  playback saem de somas de arrays, sem reparsear os audit-*.jsonl a cada
+  request (kill-switch `REPLAY_SESSION_INDEX=0`);
 - Módulos de suporte na raiz de `control/`: `auth_support.py`,
   `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
   `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,

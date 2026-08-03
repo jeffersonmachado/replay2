@@ -102,7 +102,7 @@ def _sumario(payload: dict) -> dict:
         "canonical_signatures": payload["canonical_signatures"],
         "deterministic_events": payload["deterministic_events"],
         "geometry": payload["geometry"],
-        "window": {k: v for k, v in payload["window"].items() if k != "state_cache"},
+        "window": {k: v for k, v in payload["window"].items() if k not in ("state_cache", "session_index")},
     }
 
 

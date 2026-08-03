@@ -619,6 +619,7 @@ def prepare_session_replay_data(
     last_snapshot = initial_snapshot
     last_out_seq_global = 0  # seq_global do ultimo evento OUT
     out_event_count = 0
+    window_out_seen = False  # X6: algum OUT já materializado na janela (âncora)
     bytes_event_index = 0  # índice no espaço de eventos "bytes" (base da janela)
     last_rows = geometry["rows"]
     last_cols = geometry["cols"]
@@ -825,14 +826,33 @@ def prepare_session_replay_data(
 
                 # Gera checkpoint conforme politica
                 time_since_checkpoint = ts_ms - last_checkpoint_time_ms
+                # X6: dentro da janela materializada, checkpoints por
+                # intervalo (eventos/tempo) são redundantes — cada evento
+                # OUT da janela já carrega diff + assinaturas, e o tamanho
+                # da janela limita o custo de seek. Em regiões esparsas
+                # (captura 20 do MIG24: eventos a >3 s de distância), a
+                # regra de intervalo gerava um checkpoint com render
+                # completo por evento — o custo dominante do endpoint morno
+                # (~6 s dos ~12 s da janela profunda). Mantidos: a âncora
+                # da janela (primeiro OUT materializado, base de seek
+                # direto em janela profunda) e os checkpoints semânticos
+                # (RIS/clear/resize). No modo completo (win_end=None) a
+                # política de intervalos é inalterada — a sessão inteira
+                # está materializada e o seek não é limitado pela janela.
+                first_out_in_window = win_end is not None and in_window and not window_out_seen
                 generate_checkpoint = (
                     out_event_count == 1  # primeiro evento sempre gera checkpoint
-                    or out_event_count % CHECKPOINT_EVENT_INTERVAL == 0
-                    or time_since_checkpoint >= CHECKPOINT_TIME_INTERVAL_MS
+                    or first_out_in_window
+                    or (not (win_end is not None and in_window) and (
+                        out_event_count % CHECKPOINT_EVENT_INTERVAL == 0
+                        or time_since_checkpoint >= CHECKPOINT_TIME_INTERVAL_MS
+                    ))
                     or has_ris
                     or has_resize
                     or has_clear
                 )
+                if in_window:
+                    window_out_seen = True
                 # X6: teto de checkpoints — sessões com redesenho constante
                 # (clear-screen por página) gerariam um checkpoint com
                 # snapshot completo por evento OUT.
@@ -866,6 +886,7 @@ def prepare_session_replay_data(
                         "resize" if has_resize else
                         "clear_screen" if has_clear else
                         "session_start" if out_event_count == 1 else
+                        "window_start" if first_out_in_window else
                         "interval_events" if out_event_count % CHECKPOINT_EVENT_INTERVAL == 0 else
                         "interval_time"
                     )

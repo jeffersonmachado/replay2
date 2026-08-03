@@ -79,10 +79,12 @@
 
 ---
 
+**Intermitência conhecida (2026-08-03):** `gateway/tests/test_benchmark_routes.py::test_start_executes_and_produces_real_results` falhou 1× na suíte cheia (943/944) — a janela de polling de 20 s (200×0,1 s) que aguarda o run COMPLETED estoura sob contenção de CPU da suíte completa; isolado (2,3 s) e sob carga moderada passa, e a re-rodagem da suíte fechou 944/944. Não é regressão de código (benchmark não toca o serviço de replay); se repetir, avaliar espera adaptativa baseada em sinal de conclusão em vez de teto fixo — sem mascarar com timeout maior.
+
 ## 3. Ordem de Ataque Recomendada
 
 **Itens resolvidos:** R1–R5, S1, G1, G4, G5, X1, X3, X4 (12 itens).
-**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X6 (endpoints de captura para sessões grandes, **PARCIAL** — janela+cache de sessões+teto de checkpoints em 2026-08-01; UI paginada e cache de estado em disco (seek O(1) em janela profunda) em 2026-08-02; índice de sessão em disco (`session_index_cache.py` — materialização da janela por seek e totais de playback sem reparsear os audit-*.jsonl; kill-switch `REPLAY_SESSION_INDEX=0`) em 2026-08-03; falta cancelamento de request abandonada, limpeza de caches órfãos e revisão da política de checkpoints em regiões esparsas — renders de snapshot são o custo dominante remanescente, ~6 s dos ~18 s da janela profunda no AIX), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
+**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X6 (endpoints de captura para sessões grandes, **PARCIAL** — janela+cache de sessões+teto de checkpoints em 2026-08-01; UI paginada e cache de estado em disco (seek O(1) em janela profunda) em 2026-08-02; índice de sessão em disco (`session_index_cache.py` — materialização da janela por seek e totais de playback sem reparsear os audit-*.jsonl; kill-switch `REPLAY_SESSION_INDEX=0`) em 2026-08-03; política de checkpoints na janela revisada em 2026-08-03 (interval_time/interval_events não são mais gerados dentro da janela materializada — cada OUT já carrega diff+sigs e a janela limita o seek; mantidos âncora `window_start` e semânticos ris/clear/resize; modo completo inalterado); falta cancelamento de request abandonada e limpeza de caches órfãos), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
 
 ---
 

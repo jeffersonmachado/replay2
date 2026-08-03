@@ -82,6 +82,8 @@
 
 **Intermitência conhecida (2026-08-03):** `gateway/tests/test_benchmark_routes.py::test_start_executes_and_produces_real_results` falhou 1× na suíte cheia (943/944) — a janela de polling de 20 s (200×0,1 s) que aguarda o run COMPLETED estoura sob contenção de CPU da suíte completa; isolado (2,3 s) e sob carga moderada passa, e a re-rodagem da suíte fechou 944/944. Não é regressão de código (benchmark não toca o serviço de replay); se repetir, avaliar espera adaptativa baseada em sinal de conclusão em vez de teto fixo — sem mascarar com timeout maior.
 
+**Intermitência conhecida (2026-08-03, pipeline 0.8.1):** a fase 07 (`phase07-contamination`, `tests/acceptance/test_contamination_regression.py`) travou 1× no pipeline completo — log parado no START do passo e timeout global de 1500 s da fase; o gate reprovou corretamente a run (`tree_gate=False`) e o reaper matou o processo escapado (classificado escaped+leaked+killed, §25 funcionando). Isolada, a fase passa em ~3 min (GATE PASSED) e o re-run do pipeline fechou RELEASE VALIDATION PASSED com o mesmo tree_hash. Causa provável: contenção de CPU/Chromium nos testes aninhados (pytest + browser real dentro de pytest). Se repetir, instrumentar o passo com log de progresso por teste — sem aumentar timeouts.
+
 ## 3. Ordem de Ataque Recomendada
 
 **Itens resolvidos:** R1–R5, S1, G1, G2, G4, G5, X1, X3, X4, X5, X6 (15 itens).

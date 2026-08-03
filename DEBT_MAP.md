@@ -63,7 +63,7 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | T1 | `record.tcl` vs `audit_writer.py` | **BAIXA** | Duplicação funcional. `record.tcl` é simplificado e não substitui trilha auditável. Documentar claramente que `audit_writer.py` é a fonte de verdade. |
-| T2 | Testes Tcl cobrem 5 módulos de ~15 | **MÉDIA** | Faltam testes para `action.tcl`, `dump.tcl`, `events.tcl`, `log.tcl`, `plugins.tcl`. |
+| T2 | Testes Tcl cobrem 5 módulos de ~15 ✅ | **RESOLVIDA (2026-08-03)** | `log.tcl` já era coberto (`log.test.tcl`); adicionados `tests/action.test.tcl` (6 testes), `dump.test.tcl` (12), `events.test.tcl` (11) e `plugins.test.tcl` (10) — barramento de eventos (dedup/isolamento de sink/merge), dump de diagnósticos (configure/enabled/safe_filename/gravação/sink), plugins (discover/estado/enable-disable/load com plugin quebrado) e API de ações (erro sem Expect/clamp de sleep/fconfigure). `tclsh tests/all.tcl`: 68/68. |
 
 ---
 
@@ -86,8 +86,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R5, S1, G1, G2, G4, G5, X1, X3, X4, X5, X6 (15 itens).
-**Pendentes:** R6, S2–S4, T1–T2, X2 (severidade baixa/média).
+**Itens resolvidos:** R1–R5, S1, G1, G2, G4, G5, T2, X1, X3, X4, X5, X6 (16 itens).
+**Pendentes:** R6, S2–S4, T1, X2 (severidade baixa/média).
 
 ---
 

@@ -8,7 +8,8 @@
 > ~903 linhas (não ~505) e `synthetic_routes.py` tem 823 linhas (o trabalho
 > de delegação citado em R2 foi posteriormente revertido pelo crescimento do
 > módulo). Os status de resolução foram revistos: G1 resolvido por remoção do
-> componente Go (v0.3.0); G2 e itens de baixa severidade seguem abertos.
+> componente Go (v0.3.0); itens de baixa severidade seguem abertos. G2 foi
+> resolvida em 2026-08-03 com a decomposição do `replay_control.py` em pacote.
 
 ---
 
@@ -52,7 +53,7 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | G1 | Componente Go não integrado ✅ | **RESOLVIDO** | `gateway/internal/audit/` foi **removido** no commit `dd87592` (v0.3.0). O runtime Python é a única implementação de auditoria. |
-| G2 | `replay_control.py` — Runner monolítico | **ALTA** | Controla execução de replay, fila, status, retry. Extrair: `run_queue.py`, `run_executor.py`, `run_status.py`. |
+| G2 | `replay_control.py` — Runner monolítico ✅ | **RESOLVIDA (2026-08-03)** | Controla execução de replay, fila, status, retry. **Decomposto em pacote sem mudança de lógica:** `gateway/dakota_gateway/replay_control/` com `window.py` (helpers de janela/hash/params), `deterministic.py` (comparação determinística), `executors.py` (executores strict-global/parallel-sessions/concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + `Runner`) e `__init__.py` (fachada que reexporta toda a superfície importável do módulo antigo). Suíte completa verde (~954 passed). |
 | G3 | `source_analyzer/` com 9 extractors | **MÉDIA** | Extractors independentes mas sem interface comum. Criar `BaseExtractor` ABC. |
 | G4 | `synthetic/` com 29+ módulos ✅ | **CORRIGIDO** | `test_synthetic_gap_coverage.py` com 22 testes: 12 para `screen_differ`, 10 para `error_detector`. |
 | G5 | `replay_run_state.py` + `replay_failures.py` ✅ | **CORRIGIDO** | Extraídos do `replay_control.py`. |
@@ -83,8 +84,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R5, S1, G1, G4, G5, X1, X3, X4 (12 itens).
-**Pendentes:** G2 (`replay_control.py` monolítico, **ALTA**), X6 (endpoints de captura para sessões grandes, **PARCIAL** — janela+cache de sessões+teto de checkpoints em 2026-08-01; UI paginada e cache de estado em disco (seek O(1) em janela profunda) em 2026-08-02; índice de sessão em disco (`session_index_cache.py` — materialização da janela por seek e totais de playback sem reparsear os audit-*.jsonl; kill-switch `REPLAY_SESSION_INDEX=0`) em 2026-08-03; política de checkpoints na janela revisada em 2026-08-03 (interval_time/interval_events não são mais gerados dentro da janela materializada — cada OUT já carrega diff+sigs e a janela limita o seek; mantidos âncora `window_start` e semânticos ris/clear/resize; modo completo inalterado); cancelamento de request abandonada e janitor de caches órfãos implementados em 2026-08-03 (0.7.32) — X6 encerrada, resta observação operacional), X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
+**Itens resolvidos:** R1–R5, S1, G1, G2, G4, G5, X1, X3, X4, X6 (14 itens).
+**Pendentes:** X5 (Synthetic ↔ Replay não exposto na API), R6, S2–S4, T1–T2, X2 (severidade baixa/média).
 
 ---
 

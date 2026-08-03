@@ -133,7 +133,7 @@ def test_controlled_replay_canonical_only_checkpoint_blocks_then_allows(tmp_path
         comparison_mode=mode,
         checkpoint_quiet_ms=0,
     )
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         replay_parallel_sessions_controlled(
             cfg,
             params={"input_mode": "deterministic", "on_deterministic_mismatch": "skip", "comparison_mode": mode},
@@ -152,7 +152,7 @@ def test_controlled_replay_canonical_only_checkpoint_blocks_then_allows(tmp_path
     _Session.instances = []
     _Session.snapshots_by_session = {"s1": [_observed()]}
     cfg.log_dir = right_log
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         replay_parallel_sessions_controlled(
             cfg,
             params={"input_mode": "deterministic", "on_deterministic_mismatch": "skip", "comparison_mode": mode},
@@ -231,12 +231,21 @@ def _ast_forbidden_patterns(source_text: str, filename: str) -> list[str]:
 def test_controlled_replay_decision_is_not_screen_sig_only():
     """AST-based: canonical replay paths must not depend on legacy sig/screen_sig alone."""
     import inspect
-    source = inspect.getsource(replay_control)
+    submodules = {
+        "deterministic": replay_control.deterministic,
+        "executors": replay_control.executors,
+        "window": replay_control.window,
+        "runner": replay_control.runner,
+    }
+    sources = {name: inspect.getsource(mod) for name, mod in submodules.items()}
+    source = "".join(sources.values())
     assert "_event_requires_deterministic_comparison" in source
     assert source.count("and _event_requires_deterministic_comparison") == 3
 
     # AST analysis for forbidden legacy patterns
-    violations = _ast_forbidden_patterns(source, "replay_control.py")
+    violations = []
+    for name, mod_source in sources.items():
+        violations.extend(_ast_forbidden_patterns(mod_source, f"replay_control/{name}.py"))
     # Filter: get("sig")/get("screen_sig") is allowed in _expected_snapshot_from_event
     # and in legacy fallback paths, but NOT as the sole comparison trigger in canonical funcs
     real_violations = [
@@ -277,7 +286,7 @@ def test_controlled_replay_resolves_comparison_mode_from_session_when_params_omi
         checkpoint_quiet_ms=0,
     )
     failures = []
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         replay_parallel_sessions_controlled(
             cfg,
             params={"input_mode": "deterministic", "on_deterministic_mismatch": "skip"},
@@ -294,7 +303,7 @@ def test_controlled_replay_resolves_comparison_mode_from_session_when_params_omi
     cfg.log_dir = _log_dir(right_dir, _event(mode, right_sig, include_mode=False), session_mode=mode)
     _Session.instances = []
     _Session.snapshots_by_session = {"s1": [_observed()]}
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         replay_parallel_sessions_controlled(
             cfg,
             params={"input_mode": "deterministic", "on_deterministic_mismatch": "skip"},
@@ -327,7 +336,7 @@ def test_controlled_replay_checkpoint_canonical_without_legacy_sig(tmp_path, mod
     )
     _Session.instances = []
     _Session.snapshots_by_session = {"s1": [_observed()]}
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         with pytest.raises(Exception):
             replay_parallel_sessions_controlled(
                 cfg,
@@ -347,7 +356,7 @@ def test_controlled_replay_checkpoint_canonical_without_legacy_sig(tmp_path, mod
     _Session.instances = []
     _Session.snapshots_by_session = {"s1": [_observed()]}
     progress = []
-    with patch.object(replay_control, "_TargetSession", _Session), patch.object(replay_control.selectors, "DefaultSelector", _Selector):
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(replay_control.executors.selectors, "DefaultSelector", _Selector):
         replay_parallel_sessions_controlled(
             cfg,
             params={},

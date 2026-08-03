@@ -130,8 +130,14 @@ replay2/
 - `crypto.py` — primitivas criptográficas (HMAC, hash-chain);
 - `verifier.py` — verificação de integridade da trilha;
 - `replay.py` — replay no destino (modos `raw` e `deterministic`);
-- `replay_control.py` — runner de runs, concorrência, métricas, falhas
-  estruturadas, reprocessamento por faixa/sessão/checkpoint;
+- `replay_control/` — pacote (decomposto do módulo monolítico em 2026-08-03,
+  dívida G2): runner de runs, concorrência, métricas, falhas estruturadas,
+  reprocessamento por faixa/sessão/checkpoint. Submódulos: `window.py`
+  (helpers de janela/hash/params), `deterministic.py` (comparação
+  determinística), `executors.py` (executores strict-global/parallel-sessions/
+  concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + classe
+  `Runner`) e `__init__.py` (fachada que reexporta toda a superfície do
+  módulo antigo);
 - `replay_failures.py` / `replay_run_state.py` — taxonomia de falhas e estado
   de runs;
 - `screen.py` — normalização e assinatura de tela (fonte central do gateway);

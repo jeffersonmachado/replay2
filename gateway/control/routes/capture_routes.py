@@ -10,6 +10,8 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 """
 from __future__ import annotations
 
+import socket
+
 from control.routes.route_helpers import parse_int, public_error_message, write_json
 from control.services.capture_service import (
     get_capture as _get_capture,
@@ -24,6 +26,32 @@ from control.services.gateway_observability_service import (
 from control.services.session_replay_service import (
     prepare_session_replay_data as _prepare_session_replay_data,
 )
+
+
+def client_still_connected(handler) -> bool:
+    """Sonda não-bloqueante do socket do cliente (dívida X6).
+
+    Requests de replay em sessões enormes podem processar por segundos; se
+    o cliente desconectou (navegação, timeout de proxy), o processamento é
+    abortado em vez de queimar CPU até o fim. Tolerante a falhas: qualquer
+    erro na sonda assume cliente conectado (nunca aborta por dúvida).
+    """
+    sock = getattr(handler, "connection", None)
+    if sock is None:
+        return True
+    try:
+        blocking = sock.getblocking()
+        sock.setblocking(False)
+        try:
+            dados = sock.recv(1, socket.MSG_PEEK)
+        finally:
+            sock.setblocking(blocking)
+        # b'' = EOF (cliente fechou); dados presentes = conectado
+        return dados != b""
+    except BlockingIOError:
+        return True
+    except (OSError, AttributeError, ValueError):
+        return True
 
 
 def _replay_status_code(replay_data: dict) -> int:
@@ -184,7 +212,15 @@ def handle_capture_get_route(
         if offset_raw or limit_raw:
             replay_kwargs["offset"] = parse_int(offset_raw or "0", 0, min_value=0)
             replay_kwargs["limit"] = parse_int(limit_raw or "1000", 1000, min_value=1, max_value=5000)
-        replay_data = _prepare_session_replay_data(log_dir, session_id, **replay_kwargs)
+        replay_data = _prepare_session_replay_data(
+            log_dir, session_id,
+            abort_check=lambda: not client_still_connected(handler),
+            **replay_kwargs,
+        )
+        if replay_data.get("aborted"):
+            # Cliente desconectou no meio do processamento (X6): não há
+            # para quem responder — encerra sem escrever no socket morto.
+            return True
         status = _replay_status_code(replay_data)
         write_json(handler, status, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
         return True

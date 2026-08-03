@@ -196,7 +196,13 @@ terminal — isso é garantido pelo teste
   eventos da sessão (tipo/seq/arquivo/offset + direção/tamanho decodificado
   dos "bytes"): a janela de replay é materializada por seek e os totais de
   playback saem de somas de arrays, sem reparsear os audit-*.jsonl a cada
-  request (kill-switch `REPLAY_SESSION_INDEX=0`);
+  request (kill-switch `REPLAY_SESSION_INDEX=0`). O
+  `replay_state_cache.py` também fornece o janitor de caches órfãos
+  (`cleanup_orphan_caches` + `CacheJanitor`, thread ligada no boot do
+  control plane: kill-switch `REPLAY_CACHE_JANITOR=0`, intervalo
+  `REPLAY_CACHE_JANITOR_INTERVAL_S` default 3600) e o serviço de replay
+  aceita `abort_check` para cancelar o processamento quando o cliente
+  abandona a request (sonda a cada 64 linhas/eventos);
 - Módulos de suporte na raiz de `control/`: `auth_support.py`,
   `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
   `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,

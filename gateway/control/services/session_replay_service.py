@@ -293,6 +293,7 @@ def prepare_session_replay_data(
     offset: int | None = None,
     limit: int | None = None,
     state_cache_dir: str | None = None,
+    abort_check=None,
     _allow_index: bool = True,
 ) -> dict:
     """
@@ -306,9 +307,31 @@ def prepare_session_replay_data(
     primeiros DEFAULT_REPLAY_WINDOW_LIMIT, com window.truncated=True.
     O estado do terminal (snapshots/sigs) é sempre calculado sobre o
     prefixo completo, então a fatia é consistente com o modo completo.
+
+    abort_check (dívida X6): callable opcional → True para abortar (a rota
+    passa uma sonda do socket do cliente). Consultado periodicamente nos
+    loops de parse e de processamento; requests abandonados pelo cliente
+    não queimam CPU até o fim.
     """
     clean_dir = str(log_dir or "").strip()
     clean_sid = str(session_id or "").strip()
+
+    def _aborted() -> bool:
+        if abort_check is None:
+            return False
+        try:
+            return bool(abort_check())
+        except Exception:
+            return False
+
+    def _abort_result() -> dict:
+        return {
+            "error": {"code": "client_aborted", "message": "cliente desconectou durante o processamento"},
+            "events": [],
+            "timeline": _empty_reference_view(),
+            "playback": None,
+            "aborted": True,
+        }
 
     if not clean_dir or not clean_sid:
         return {
@@ -378,6 +401,7 @@ def prepare_session_replay_data(
             builder = session_index_cache.IndexBuilder() if SESSION_INDEX_ENABLED else None
 
     if not indexed:
+        _linhas_lidas = 0
         for file_idx, file_path in enumerate(files):
             try:
                 with open(file_path, "rb") as fh:
@@ -386,6 +410,13 @@ def prepare_session_replay_data(
                         raw_line = fh.readline()
                         if not raw_line:
                             break
+                        _linhas_lidas += 1
+                        # Abort de request abandonada (X6): a sonda é uma
+                        # syscall recv(MSG_PEEK) — custo desprezível frente
+                        # ao parse da linha; cadência curta dá abort
+                        # responsivo em sessões enormes.
+                        if _linhas_lidas % 64 == 0 and _aborted():
+                            return _abort_result()
                         line_offset = file_offset
                         file_offset += len(raw_line)
                         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -734,7 +765,13 @@ def prepare_session_replay_data(
     # (o bookkeeping pré-janela foi feito na fase A) — não há o que pular.
     skip_remaining = 0 if indexed else resume_from
 
+    _iter = 0
     for ev in events:
+        _iter += 1
+        # Abort de request abandonada (X6): sonda a cada 64 eventos — custo
+        # desprezível frente ao processamento (renders/feed da engine).
+        if _iter % 64 == 0 and _aborted():
+            return _abort_result()
         ev_type = str(ev.get("type") or "").strip()
 
         # Retomada (X6): eventos anteriores ao ponto de retomada já estão

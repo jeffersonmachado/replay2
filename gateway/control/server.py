@@ -273,6 +273,19 @@ class ControlServer(ThreadingHTTPServer):
             )
             self.host_metrics_sampler.start()
             log.info("[startup] sampler de recursos do host ativo (intervalo=%ss, retencao=%sd)", interval, retention)
+        # Janitor de caches de replay (X6): append em captura ativa muda a
+        # capture_sig e torna o cache anterior órfão; varre na partida e a
+        # cada REPLAY_CACHE_JANITOR_INTERVAL_S (default 3600; =0 desliga).
+        self.replay_cache_janitor = None
+        if os.environ.get("REPLAY_CACHE_JANITOR", "1") != "0":
+            from control.services.replay_state_cache import CacheJanitor
+            self.replay_cache_janitor = CacheJanitor(
+                self.capture_log_dir,
+                os.path.join(self.capture_log_dir, "replay_state_cache"),
+                interval_s=float(os.environ.get("REPLAY_CACHE_JANITOR_INTERVAL_S", "3600") or 3600),
+                logger=log,
+            )
+            self.replay_cache_janitor.start()
         # Boot com captura ativa (retomada ou recem auto-ativada acima): liga
         # o observador passivo da porta 22. Na ativacao via API/UI quem o liga
         # e a rota /api/gateway/activate; sem isto o boot deixava o sampler

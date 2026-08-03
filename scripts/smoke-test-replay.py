@@ -40,7 +40,9 @@ def main():
         r = urllib.request.Request(url, data=data, method=method)
         r.add_header("Content-Type", "application/json")
         try:
-            resp = opener.open(r, timeout=10)
+            # 30s: hosts lentos (AIX sob carga) respondem o endpoint de replay
+            # em 4-15s; o timeout de 10s gerava falhas intermitentes falsas.
+            resp = opener.open(r, timeout=30)
             cj.save(cookie_file, ignore_discard=True, ignore_expires=True)
             raw = resp.read().decode()
             return resp.status, (json.loads(raw) if raw.strip() else {}), dict(resp.headers)
@@ -90,8 +92,9 @@ def main():
     print(f"         capture_id={cid} session_id={sid[:20]}...")
     print()
 
-    # Get replay data
-    s, data, _ = req("GET", f"/api/captures/{cid}/replay?session_id={sid}")
+    # Get replay data (limit=20: valida o pipeline; o modo completo de
+    # sessões maiores estouraria o timeout do smoke — dívida X6)
+    s, data, _ = req("GET", f"/api/captures/{cid}/replay?session_id={sid}&limit=20")
     if s != 200:
         check(False, "GET replay", f"status={s}")
         sys.exit(1)

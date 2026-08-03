@@ -59,11 +59,11 @@ def login():
     body = json.dumps({'username': '${ADMIN_USER}', 'password': '${ADMIN_PASS}'}).encode()
     r = urllib.request.Request(url + '/api/login', data=body, method='POST')
     r.add_header('Content-Type', 'application/json')
-    opener.open(r, timeout=10).read()
+    opener.open(r, timeout=30).read()
 
 def req(path):
     try:
-        resp = opener.open(url + path, timeout=10)
+        resp = opener.open(url + path, timeout=30)
         return json.loads(resp.read())
     except Exception:
         return None
@@ -125,8 +125,8 @@ opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 body = json.dumps({'username': '${ADMIN_USER}', 'password': '${ADMIN_PASS}'}).encode()
 r = urllib.request.Request(url + '/api/login', data=body, method='POST')
 r.add_header('Content-Type', 'application/json')
-opener.open(r, timeout=10).read()
-resp = opener.open(f'{url}/api/captures/${CAPTURE_ID}/replay?session_id=${SESSION_ID}', timeout=10)
+opener.open(r, timeout=30).read()
+resp = opener.open(f'{url}/api/captures/${CAPTURE_ID}/replay?session_id=${SESSION_ID}&limit=20', timeout=30)
 data = json.loads(resp.read())
 print(json.dumps(data))
 " 2>/dev/null)

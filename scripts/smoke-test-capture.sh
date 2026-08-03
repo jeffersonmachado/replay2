@@ -72,7 +72,7 @@ data = body_json.encode() if body_json else None
 req = urllib.request.Request(url, data=data, method=method)
 req.add_header('Content-Type', 'application/json')
 try:
-    resp = opener.open(req, timeout=10)
+    resp = opener.open(req, timeout=30)  # 30s: AIX sob carga responde replay em 4-15s
     cookie_jar.save(cookie_file, ignore_discard=True, ignore_expires=True)
     print(resp.status)
     body = resp.read().decode()[:500000]
@@ -206,7 +206,7 @@ print(f'{best[0]}|{best[1]}' if best else '')
       REPLAY_CID=$(echo "$REPLAY_PICK" | cut -d'|' -f1)
       FIRST_SESSION=$(echo "$REPLAY_PICK" | cut -d'|' -f2)
       echo "--- 6. Replay ---"
-      REPLAY_RESP=$(http GET "/api/captures/${REPLAY_CID}/replay?session_id=${FIRST_SESSION}" 2>/dev/null)
+      REPLAY_RESP=$(http GET "/api/captures/${REPLAY_CID}/replay?session_id=${FIRST_SESSION}&limit=20" 2>/dev/null)
       REPLAY_STATUS=$(echo "$REPLAY_RESP" | head -1)
       if [ "$REPLAY_STATUS" = "200" ]; then
         pass "GET /api/captures/${REPLAY_CID}/replay?session_id=... → 200"

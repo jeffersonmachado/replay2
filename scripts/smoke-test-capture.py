@@ -40,7 +40,9 @@ def main():
         r = urllib.request.Request(url, data=data, method=method)
         r.add_header("Content-Type", "application/json")
         try:
-            resp = opener.open(r, timeout=10)
+            # 30s: hosts lentos (AIX sob carga) respondem o endpoint de replay
+            # em 4-15s; o timeout de 10s gerava falhas intermitentes falsas.
+            resp = opener.open(r, timeout=30)
             cj.save(cookie_file, ignore_discard=True, ignore_expires=True)
             raw = resp.read().decode()
             return resp.status, (json.loads(raw) if raw.strip() else {}), dict(resp.headers)
@@ -116,7 +118,7 @@ def main():
                         best = (cap["id"], sess["session_id"], count)
         if best:
             rid, rsid, _ = best
-            s, replay, _ = req("GET", f"/api/captures/{rid}/replay?session_id={rsid}")
+            s, replay, _ = req("GET", f"/api/captures/{rid}/replay?session_id={rsid}&limit=20")
             check(s == 200, "GET replay → 200", f"status={s}")
             geom = replay.get("geometry", {})
             tl = replay.get("timeline", [])

@@ -323,16 +323,18 @@ class BenchmarkRoutesTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["status"], "RUNNING")
 
         # start duplicado durante a execução → 409 (pode já ter concluído)
-        # aguarda o fim da thread supervisionada
-        final = None
-        for _ in range(200):
-            status, body, _ = self._request(
-                "GET", f"/api/benchmarks/{experiment_id}")
-            final = json.loads(body)["experiment"]
-            if final["status"] != "RUNNING":
-                break
-            time.sleep(0.1)
-        self.assertIsNotNone(final)
+        # Espera baseada no sinal real de conclusão: a thread supervisionada
+        # (join retorna no instante do fim). O polling anterior com teto fixo
+        # de 20 s estourava sob contenção de CPU da suíte cheia (DEBT_MAP,
+        # intermitências 0.8.0/0.8.4). O teto de 120 s só dispara se a thread
+        # travar de verdade — não é espera cega: concluiu, segue imediato.
+        concluiu = self.server.benchmark_supervisor.wait_completion(
+            experiment_id, timeout=120)
+        self.assertTrue(concluiu, "thread do experimento travada (deadlock?)")
+
+        status, body, _ = self._request(
+            "GET", f"/api/benchmarks/{experiment_id}")
+        final = json.loads(body)["experiment"]
         self.assertEqual(final["status"], "COMPLETED", final.get("reason"))
         self.assertGreater(final["runs_count"], 0)
 
@@ -386,6 +388,42 @@ class BenchmarkRoutesTests(unittest.TestCase):
             "POST", f"/api/benchmarks/{created['experiment_id']}/cancel", {})
         self.assertEqual(status, 409)
         self.assertIn("error", json.loads(body))
+
+
+class WaitCompletionUnitTests(unittest.TestCase):
+    """Cobre o sinal de conclusão do supervisor (sem servidor HTTP)."""
+
+    def _supervisor(self, tmp: str):
+        from control.services import benchmark_service
+        return benchmark_service.BenchmarkSupervisor(
+            f"{tmp}/bench.db", f"{tmp}/artifacts")
+
+    def test_sem_thread_conclui_imediato(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sup = self._supervisor(tmp)
+            self.assertTrue(sup.wait_completion("inexistente", timeout=0.01))
+
+    def test_thread_viva_timeout_false_e_apos_fim_true(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sup = self._supervisor(tmp)
+            started = threading.Event()
+            release = threading.Event()
+
+            def work():
+                started.set()
+                release.wait(5)
+
+            t = threading.Thread(target=work, daemon=True)
+            sup._threads["exp-1"] = t
+            t.start()
+            self.assertTrue(started.wait(2))
+            # viva: timeout expira e informa NÃO concluído
+            self.assertFalse(sup.wait_completion("exp-1", timeout=0.05))
+            # sinal real de conclusão: retorna True logo após o fim
+            release.set()
+            inicio = time.monotonic()
+            self.assertTrue(sup.wait_completion("exp-1", timeout=5))
+            self.assertLess(time.monotonic() - inicio, 2)
 
 
 if __name__ == "__main__":

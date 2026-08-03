@@ -603,6 +603,21 @@ class BenchmarkSupervisor:
             if event is not None:
                 event.set()
 
+    def wait_completion(self, experiment_id: str,
+                        timeout: float | None = None) -> bool:
+        """Aguarda a thread do experimento terminar (sinal real de conclusão).
+
+        Retorna True se a execução concluiu dentro de ``timeout`` (ou se não
+        há thread registrada); False se ainda está viva. Sem polling HTTP —
+        quem chama recebe o retorno no instante da conclusão.
+        """
+        with self._lock:
+            thread = self._threads.get(experiment_id)
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
+
     def _make_adapter(self, modelo: EnvironmentModel, contract,
                       cancel_event: threading.Event):
         factory = self._adapter_factory

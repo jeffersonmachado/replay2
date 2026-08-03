@@ -170,7 +170,11 @@ replay2/
 - `synthetic/` — P2-A Synthetic: planejador de dataset (grafo de dependências),
   sintetizador de dados, jornadas (inferência, geração CRUD, validação,
   verificação, dry-run), `journey_mix`, scheduler, executor remoto, stress
-  runner, explorador de telas, relatórios de evidência/homologação;
+  runner, explorador de telas, relatórios de evidência/homologação.
+  Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
+  `control/services/synthetic_replay_service.py` → `replay_adapter.py`
+  materializa a trilha auditável (hash-chain + HMAC) e cria run real via
+  `run_service.create_run_request_payload` + `Runner.start_run_async`;
 - `benchmark/` — pacote de benchmark (AIX vs Linux);
 - `templates/` — templates internos do gateway.
 
@@ -208,7 +212,10 @@ terminal — isso é garantido pelo teste
   control plane: kill-switch `REPLAY_CACHE_JANITOR=0`, intervalo
   `REPLAY_CACHE_JANITOR_INTERVAL_S` default 3600) e o serviço de replay
   aceita `abort_check` para cancelar o processamento quando o cliente
-  abandona a request (sonda a cada 64 linhas/eventos);
+  abandona a request (sonda a cada 64 linhas/eventos). Inclui também
+  `synthetic_replay_service.py` — fluxo Synthetic → Replay real (dívida X5):
+  materializa a jornada como trilha auditável efêmera e dispara run real
+  via replay_control;
 - Módulos de suporte na raiz de `control/`: `auth_support.py`,
   `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
   `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,

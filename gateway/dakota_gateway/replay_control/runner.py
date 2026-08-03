@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
+from pathlib import Path
 from threading import Lock
 
 from ..state_db import exec1, init_db, now_ms, query_one
@@ -158,6 +160,44 @@ class Runner:
         self._run(run_id)
 
     def _run(self, run_id: int) -> None:
+        try:
+            self._run_inner(run_id)
+        finally:
+            self._cleanup_ephemeral_log_dir(run_id)
+
+    def _cleanup_ephemeral_log_dir(self, run_id: int) -> None:
+        """Remove o log_dir efêmero de runs sintéticos (params.ephemeral_log_dir).
+
+        Runs criados pelo fluxo Synthetic → Replay (X5) materializam a trilha
+        em ``<state>/synthetic_runs/<uuid>/``; ao fim do run (sucesso ou
+        falha) o diretório é removido. Nada fora desse prefixo é tocado.
+        """
+        try:
+            con = db_connect(self.db_path)
+            try:
+                run = get_run(con, run_id)
+            finally:
+                con.close()
+        except Exception:
+            return
+        if not run:
+            return
+        try:
+            params = json.loads(run["params_json"]) if run["params_json"] else {}
+        except Exception:
+            params = {}
+        if not isinstance(params, dict) or not params.get("ephemeral_log_dir"):
+            return
+        log_dir = str(run["log_dir"] or "").strip()
+        if not log_dir:
+            return
+        base = (Path(self.db_path).resolve().parent / "synthetic_runs").resolve()
+        target = Path(log_dir).resolve()
+        if target == base or base not in target.parents:
+            return
+        shutil.rmtree(target, ignore_errors=True)
+
+    def _run_inner(self, run_id: int) -> None:
         # Conexão compartilhada com os workers (check_same_thread=False);
         # todo acesso é serializado por db_lock porque os callbacks de
         # progresso/falha são invocados a partir das threads de sessão.

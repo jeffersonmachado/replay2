@@ -124,6 +124,64 @@ paths:
                   errors: { type: integer }
                   duration_ms: { type: integer }
 
+  /api/synthetic/stress/real:
+    post:
+      operationId: runStressReal
+      summary: Executar stress sintético REAL via replay_control (X5 — não é simulação)
+      description: >
+        Materializa os inputs da jornada como trilha auditável
+        (`audit-*.jsonl` com hash-chain + HMAC, verificada pelo `verify_log`
+        do Runner) e cria um run real de replay (mesmo pipeline de
+        `POST /api/runs`, incluindo resolução de target e compliance
+        gateway-only). A resposta traz `simulation: false`: a execução
+        acontece contra o target informado via replay_control. O `log_dir`
+        é efêmero (`<state>/synthetic_runs/<uuid>/`) e é removido pelo
+        Runner ao fim do run (sucesso ou falha).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [journey_id]
+              properties:
+                journey_id: { type: string, description: "Journey ID (alias: scenario)" }
+                scenario: { type: string, description: "Alias de journey_id" }
+                mode:
+                  type: string
+                  enum: [strict-global, parallel-sessions]
+                  default: parallel-sessions
+                concurrency: { type: integer, default: 10 }
+                sessions: { type: integer, description: "Nº de sessões (default: concurrency*5)" }
+                seed: { type: integer, default: 0 }
+                target_env_id: { type: integer }
+                connection_profile_id: { type: integer }
+                target_host: { type: string }
+                target_user: { type: string }
+                target_command: { type: string }
+                params: { type: object, description: "Parâmetros extras de replay (match_mode, match_threshold, ...)" }
+      responses:
+        "202":
+          description: Run real criado e enfileirado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, status, simulation]
+                properties:
+                  run_id: { type: integer }
+                  status: { type: string, example: queued }
+                  log_dir: { type: string, description: "Trilha efêmera (removida ao fim do run)" }
+                  sessions: { type: integer }
+                  simulation:
+                    type: boolean
+                    enum: [false]
+                    description: Sempre false — execução real via replay_control
+        "400":
+          description: Body inválido (journey_id ausente, mode inválido, target inválido)
+        "404":
+          description: Jornada inexistente
+
   # ── Datasets ──
   /api/synthetic/datasets:
     get:

@@ -698,6 +698,27 @@ def handle_synthetic_post_route(handler, parsed_path, body: dict | None = None) 
         })
         return True
 
+    # --- Stress real (X5): Synthetic → Replay real via replay_control ---
+    if path == "/api/synthetic/stress/real":
+        user = handler._require(roles={"admin", "operator"})
+        if not user:
+            return True
+        from control.services.synthetic_replay_service import start_synthetic_replay_run
+        con = handler._db()
+        try:
+            result = start_synthetic_replay_run(
+                con,
+                created_by=int(user["id"]),
+                body=body,
+                db_path=handler.server.db_path,
+                hmac_key=handler.server.runner.hmac_key,
+                runner=handler.server.runner,
+            )
+        finally:
+            handler._db_release(con)
+        write_json(handler, int(result.get("status_code") or 200), result.get("payload") or {})
+        return True
+
     # --- Journey POST → delegado para journey_routes ---
     if path.startswith("/api/synthetic/journeys"):
         rewritten = path.replace("/api/synthetic/journeys", "/api/journeys", 1)

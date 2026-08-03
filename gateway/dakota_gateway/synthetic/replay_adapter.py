@@ -1,65 +1,28 @@
-"""Adaptador que conecta SyntheticStressRunner ao Runner real do replay_control.
+"""Materializa inputs sintéticos de jornadas como trilha auditável de replay.
 
-Gera entradas sintéticas por sessão, escreve .jsonl temporário, e executa
-via Runner com múltiplas sessões SSH paralelas reais.
+Gera entradas sintéticas por sessão e escreve arquivos .jsonl no formato
+audit (``audit-*.jsonl``), com hash-chain + HMAC na mesma cadeia do
+``AuditWriter``: o log gerado passa no ``verify_log`` do replay_control e
+pode ser executado por um run real (fluxo Synthetic → Replay, dívida X5).
 """
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-import threading
+import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable, Optional
 
 from .journey import JourneyDefinition, JourneyDataset
 from .journey_builder import JourneyBuilder
-from .journey_verifier import JourneyVerifier, JourneyVerificationResult
-from .error_detector import ErrorDetector
-from .stress_runner import SyntheticStressConfig, StressRunResult, StressSessionResult
-
-
-@dataclass
-class ReplayAdapterConfig:
-    """Configuração para execução real de stress sintético via Runner."""
-    journey_id: str = ""
-    concurrency: int = 10
-    ramp_up_seconds: int = 5
-    seed: int = 0
-    max_sessions: int = 0
-    db_path: str = ""
-    # Conexão SSH
-    target_host: str = ""
-    target_user: str = ""
-    target_command: str = ""
-    target_port: int = 0
-    gateway_host: str = ""
-    gateway_user: str = ""
-    gateway_port: int = 0
-    # Runner
-    hmac_key_file: str = ""
-    log_dir: str = ""
-    mode: str = "parallel-sessions"
-    match_mode: str = "strict"
-    match_threshold: float = 0.92
-    verify_screens: bool = True
-    on_error: str = "continue"
-    # Callbacks
-    on_session_start: Optional[Callable] = None
-    on_session_end: Optional[Callable] = None
-    on_progress: Optional[Callable] = None
+from ..audit_writer import b64
+from ..canonical import payload_for_event
+from ..crypto import hmac_sha256_hex, sha256_hex
+from ..schema import AuditEvent
 
 
 class ReplayAdapter:
-    """Adaptador entre SyntheticStressRunner e o Runner real do replay_control."""
-
-    def __init__(self):
-        self._sessions_lock = threading.Lock()
-        self._active_sessions = 0
-        self._completed_sessions = 0
-        self._failed_sessions = 0
+    """Materializador de trilhas auditáveis a partir de jornadas sintéticas."""
 
     # ------------------------------------------------------------------
     # Geração de entradas sintéticas
@@ -114,14 +77,21 @@ class ReplayAdapter:
         session_count: int,
         seed: int,
         output_dir: str,
+        *,
+        hmac_key: bytes,
     ) -> dict[str, str]:
-        """Gera arquivos .jsonl sintéticos, um por sessão.
+        """Gera arquivos .jsonl auditáveis (estilo audit), um por sessão.
+
+        Os eventos ``bytes`` carregam ``data_b64`` com os bytes reais do
+        input (decodificáveis por ``replay._decode_replay_input``) e todos
+        os eventos recebem ``seq_global`` contínuo (na ordem alfabética dos
+        arquivos ``audit-*.jsonl``), ``prev_hash``, ``hash`` e ``hmac`` —
+        a mesma cadeia verificada por ``verifier.verify_log`` com a mesma
+        ``hmac_key``.
 
         Returns:
             Dict[session_id] = jsonl_path
         """
-        import sqlite3
-
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         db_path = str(output_path / "synthetic_state.db")
@@ -132,219 +102,75 @@ class ReplayAdapter:
         jds = builder.build_journey_dataset(journey, session_count=session_count, seed=seed)
         con.close()
 
-        session_files: dict[str, str] = {}
         base_ts = int(time.time() * 1000)
 
+        # 1) Montar os eventos de cada sessão. seq_global/prev_hash ficam
+        # para o passo 2: a cadeia é global e precisa ser contínua entre os
+        # arquivos, na ordem em que o verifier os percorre (glob ordenado).
+        sessions: list[tuple[str, str, list[AuditEvent]]] = []
         for sess_idx in range(session_count):
             session_id = f"synthetic-{journey.journey_id}-{sess_idx:04d}"
             inputs = self.generate_synthetic_inputs(journey, jds, sess_idx)
 
-            # Construir eventos .jsonl estilo audit
-            events: list[dict] = []
-            seq_global = 1
+            events: list[AuditEvent] = []
+            seq_session = 1
+            sess_ts = base_ts + sess_idx * 1000
 
-            # Session start
-            events.append({
-                "v": "v1", "seq_global": seq_global,
-                "ts_ms": base_ts + sess_idx * 1000,
-                "type": "session_start",
-                "actor": "synthetic",
-                "session_id": session_id,
-                "seq_session": 1,
-            })
-            seq_global += 1
+            events.append(AuditEvent(
+                v="v2", seq_global=0, ts_ms=sess_ts,
+                type="session_start", actor="synthetic",
+                session_id=session_id, seq_session=seq_session,
+            ))
+            seq_session += 1
 
-            # Inputs como eventos bytes
+            # Inputs como eventos bytes (data_b64 com os bytes reais;
+            # key_text mantido apenas para depuração)
             for inp in inputs:
-                # Enviar input linha por linha
                 for char in inp:
-                    events.append({
-                        "v": "v1", "seq_global": seq_global,
-                        "ts_ms": base_ts + sess_idx * 1000 + seq_global * 50,
-                        "type": "bytes",
-                        "actor": "synthetic",
-                        "session_id": session_id,
-                        "seq_session": seq_global,
-                        "dir": "in",
-                        "data_b64": "",
-                        "key_text": char,
-                        "n": 1,
-                    })
-                    seq_global += 1
+                    data = char.encode("utf-8")
+                    events.append(AuditEvent(
+                        v="v2", seq_global=0, ts_ms=sess_ts + seq_session * 50,
+                        type="bytes", actor="synthetic",
+                        session_id=session_id, seq_session=seq_session,
+                        dir="in", data_b64=b64(data), key_text=char, n=len(data),
+                    ))
+                    seq_session += 1
 
                 # Enter após cada campo
-                events.append({
-                    "v": "v1", "seq_global": seq_global,
-                    "ts_ms": base_ts + sess_idx * 1000 + seq_global * 50,
-                    "type": "bytes",
-                    "actor": "synthetic",
-                    "session_id": session_id,
-                    "seq_session": seq_global,
-                    "dir": "in",
-                    "data_b64": "",
-                    "key_text": "\r",
-                    "n": 1,
-                })
-                seq_global += 1
+                events.append(AuditEvent(
+                    v="v2", seq_global=0, ts_ms=sess_ts + seq_session * 50,
+                    type="bytes", actor="synthetic",
+                    session_id=session_id, seq_session=seq_session,
+                    dir="in", data_b64=b64(b"\r"), key_text="\r", n=1,
+                ))
+                seq_session += 1
 
-            # Session end
-            events.append({
-                "v": "v1", "seq_global": seq_global,
-                "ts_ms": base_ts + sess_idx * 1000 + seq_global * 50,
-                "type": "session_end",
-                "actor": "synthetic",
-                "session_id": session_id,
-                "seq_session": seq_global,
-            })
+            events.append(AuditEvent(
+                v="v2", seq_global=0, ts_ms=sess_ts + seq_session * 50,
+                type="session_end", actor="synthetic",
+                session_id=session_id, seq_session=seq_session,
+            ))
 
-            # Escrever arquivo
-            jsonl_path = str(Path(output_dir) / f"synthetic-{session_id}.jsonl")
+            jsonl_path = str(output_path / f"audit-synthetic-{journey.journey_id}-{sess_idx:04d}.jsonl")
+            sessions.append((session_id, jsonl_path, events))
+
+        # 2) Escrever em ordem alfabética de arquivo, atribuindo seq_global
+        # contínuo e a hash-chain + HMAC por evento (payload canônico v2,
+        # igual ao AuditWriter).
+        session_files: dict[str, str] = {}
+        seq_global = 0
+        prev_hash = ""
+        for session_id, jsonl_path, events in sorted(sessions, key=lambda item: item[1]):
             with open(jsonl_path, "w", encoding="utf-8") as f:
                 for ev in events:
-                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-
+                    seq_global += 1
+                    ev.seq_global = seq_global
+                    ev.prev_hash = prev_hash
+                    payload = payload_for_event(ev).encode("utf-8")
+                    ev.hash = sha256_hex(payload)
+                    ev.hmac = hmac_sha256_hex(hmac_key, payload)
+                    prev_hash = ev.hash
+                    f.write(json.dumps(asdict(ev), ensure_ascii=False) + "\n")
             session_files[session_id] = jsonl_path
 
         return session_files
-
-    # ------------------------------------------------------------------
-    # Execução via Runner real
-    # ------------------------------------------------------------------
-
-    def run_via_runner(
-        self,
-        config: ReplayAdapterConfig,
-    ) -> StressRunResult:
-        """Executa stress sintético usando o Runner real do replay_control.
-
-        Fluxo:
-        1. Gera .jsonl sintéticos para cada sessão
-        2. Cria replay_run via CLI/API
-        3. Runner executa as sessões via SSH
-        4. Coleta resultados e verifica erros
-        """
-        import sqlite3
-
-        # Conectar ao banco
-        db_path = config.db_path
-        con = sqlite3.connect(db_path)
-        con.row_factory = sqlite3.Row
-
-        builder = JourneyBuilder(db_connection=con)
-
-        # Carregar jornada
-        journey = builder.load_journey(config.journey_id)
-        if not journey:
-            con.close()
-            return StressRunResult()
-
-        # Determinar número de sessões
-        session_count = config.max_sessions or config.concurrency * 5
-
-        # Gerar dataset
-        jds = builder.build_journey_dataset(journey, session_count=session_count, seed=config.seed)
-
-        # Criar diretório temporário para .jsonl
-        tmpdir = tempfile.mkdtemp(prefix="synthetic_stress_")
-
-        result = StressRunResult(total_sessions=session_count)
-        start_ms = int(time.time() * 1000)
-
-        # Gerar .jsonl para cada sessão
-        jsonl_files = self.generate_synthetic_jsonl(
-            journey, session_count, config.seed, tmpdir,
-        )
-
-        # Processar sessões (com concorrência controlada)
-        semaphore = threading.Semaphore(config.concurrency)
-        threads: list[threading.Thread] = []
-
-        verifier = JourneyVerifier(db_connection=con)
-
-        def run_one_session(sess_idx: int):
-            semaphore.acquire()
-            try:
-                sess_result = StressSessionResult(session_index=sess_idx, status="running")
-                sess_start = int(time.time() * 1000)
-
-                if config.on_session_start:
-                    config.on_session_start(sess_idx)
-
-                try:
-                    # Gerar script replay para esta sessão
-                    script = builder.generate_replay_script(journey, jds, session_index=sess_idx)
-                    sess_result.replay_script = script
-
-                    # Simular execução (em produção: Runner.execute_one)
-                    inputs = self.generate_synthetic_inputs(journey, jds, sess_idx)
-
-                    # Verificar
-                    if config.verify_screens:
-                        from .stress_runner import SyntheticStressRunner
-                        sim_screens = SyntheticStressRunner._simulate_screens(journey, jds, sess_idx)
-                        verification = verifier.verify_session(journey, sess_idx, sim_screens)
-                        sess_result.verification = verification
-                        sess_result.status = "success" if verification.passed else "failed"
-                        if not verification.passed:
-                            sess_result.errors = [
-                                {"type": e.error_type, "severity": e.severity}
-                                for e in verification.errors
-                            ]
-                    else:
-                        sess_result.status = "success"
-
-                except Exception as exc:
-                    sess_result.status = "error"
-                    sess_result.errors.append({"type": "technical_error", "severity": "high", "message": str(exc)})
-
-                sess_result.duration_ms = int(time.time() * 1000) - sess_start
-
-                if config.on_session_end:
-                    config.on_session_end(sess_idx, sess_result)
-
-                with self._sessions_lock:
-                    result.session_results.append(sess_result)
-                    if sess_result.status == "success":
-                        result.completed += 1
-                    else:
-                        result.failed += 1
-                        result.errors += len(sess_result.errors)
-                    self._completed_sessions = result.completed + result.failed
-                    if config.on_progress:
-                        config.on_progress(self._completed_sessions, session_count)
-
-            finally:
-                semaphore.release()
-                with self._sessions_lock:
-                    self._active_sessions -= 1
-
-        # Ramp-up
-        for sess_idx in range(session_count):
-            with self._sessions_lock:
-                self._active_sessions += 1
-
-            t = threading.Thread(target=run_one_session, args=(sess_idx,), daemon=True)
-            threads.append(t)
-            t.start()
-
-            # Ramp-up delay
-            if sess_idx < config.concurrency:
-                time.sleep(config.ramp_up_seconds / max(1, config.concurrency))
-
-        # Aguardar todas
-        for t in threads:
-            t.join(timeout=300)
-
-        result.duration_ms = int(time.time() * 1000) - start_ms
-
-        # Análise agregada
-        all_vr = [sr.verification for sr in result.session_results if sr.verification]
-        if all_vr:
-            result.aggregate_verification = verifier.analyze_errors(all_vr)
-
-        # Limpar temporários
-        import shutil
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-        con.close()
-        return result

@@ -19,7 +19,7 @@ from dakota_gateway.synthetic.macro_journey import (
     MacroJourneyStep,
 )
 from dakota_gateway.synthetic.homologation_report import HomologationReport
-from dakota_gateway.synthetic.replay_adapter import ReplayAdapter, ReplayAdapterConfig
+from dakota_gateway.synthetic.replay_adapter import ReplayAdapter
 from dakota_gateway.synthetic.journey import JourneyDefinition, JourneyStep
 from dakota_gateway.state_db import connect, init_db
 
@@ -215,32 +215,20 @@ class ReplayAdapterTests(unittest.TestCase):
         output_dir = str(Path(self.tmpdir.name) / "jsonl_output")
 
         adapter = ReplayAdapter()
-        files = adapter.generate_synthetic_jsonl(journey, session_count=2, seed=42, output_dir=output_dir)
+        files = adapter.generate_synthetic_jsonl(
+            journey, session_count=2, seed=42, output_dir=output_dir,
+            hmac_key=b"test_hmac_key_advanced_____",
+        )
 
         self.assertEqual(len(files), 2)
         for session_id, path in files.items():
             self.assertTrue(Path(path).exists())
+            # Nome compatível com o verifier/executor (glob audit-*.jsonl)
+            self.assertTrue(Path(path).name.startswith("audit-"))
             # Verificar que é JSONL válido
             with open(path) as f:
                 for line in f:
                     self.assertTrue(line.strip().startswith("{"))
-
-    def test_run_via_adapter_minimal(self):
-        journey = self._setup_journey()
-        config = ReplayAdapterConfig(
-            journey_id="adapter_test",
-            concurrency=2,
-            max_sessions=3,
-            seed=42,
-            db_path=self.db_path,
-            verify_screens=True,
-        )
-
-        adapter = ReplayAdapter()
-        result = adapter.run_via_runner(config)
-
-        self.assertEqual(result.total_sessions, 3)
-        self.assertGreater(len(result.session_results), 0)
 
 
 if __name__ == "__main__":

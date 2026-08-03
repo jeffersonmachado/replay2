@@ -58,7 +58,6 @@ _EXPORTS = {
     "DataDependency": ".expanded_inferencer",
     "TransactionBlock": ".expanded_inferencer",
     "ReplayAdapter": ".replay_adapter",
-    "ReplayAdapterConfig": ".replay_adapter",
     "HomologationReport": ".homologation_report",
     "MacroJourneyRunner": ".macro_journey",
     "MacroJourneyDefinition": ".macro_journey",

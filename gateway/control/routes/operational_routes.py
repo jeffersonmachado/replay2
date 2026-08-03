@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs
 
 from dakota_gateway.replay_control import query_one
 from control.routes.route_helpers import write_json
@@ -12,13 +13,13 @@ from control.services.scenario_service import (
     set_operational_scenario_favorite,
 )
 
-def handle_operational_get_route(handler, parsed_path, parse_qs_fn) -> bool:
+def handle_operational_get_route(handler, parsed_path) -> bool:
     if parsed_path.path != "/api/operational-scenarios":
         return False
     user = handler._require()
     if not user:
         return True
-    qs = parse_qs_fn(parsed_path.query or "")
+    qs = parse_qs(parsed_path.query or "")
     scenario_type = str((qs.get("scenario_type") or [""])[0])
     environment = str((qs.get("environment") or [""])[0])
     squad = str((qs.get("squad") or [""])[0])

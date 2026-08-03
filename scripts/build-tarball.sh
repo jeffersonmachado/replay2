@@ -30,6 +30,8 @@ STAGE_DIR="$STAGE_PARENT/${APP_NAME}-${VERSION}"
 
 cleanup() {
   rm -rf "$STAGE_PARENT"
+  # TMP_OUT pode não existir ainda (trap registrado antes da definição)
+  [ -z "${TMP_OUT:-}" ] || rm -f "$TMP_OUT"
 }
 trap cleanup EXIT INT TERM
 
@@ -166,20 +168,26 @@ rm -rf \
 
 TIMESTAMP="${DAKOTA_TARBALL_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
 OUT="$DIST_DIR/${APP_NAME}-${VERSION}-${TIMESTAMP}.tar.gz"
+# Escrita atômica: grava em nome temporário e publica via rename (mesma FS).
+# Sem isso, leitores concorrentes (build-selfinstall.sh, deploys AIX/Linux em
+# paralelo) podem ler um payload parcial — incidente real no deploy 0.8.3
+# ("sanity: payload gzip inválido").
+TMP_OUT="$OUT.tmp.$$"
 info "Gerando: $OUT"
 
 (cd "$STAGE_PARENT" && {
   # Em alguns AIX o `tar` não suporta -z. Preferimos tar+gzip quando necessário.
-  if tar -czf "$OUT" "${APP_NAME}-${VERSION}" >/dev/null 2>&1; then
+  if tar -czf "$TMP_OUT" "${APP_NAME}-${VERSION}" >/dev/null 2>&1; then
     :
   else
-    rm -f "$OUT"
+    rm -f "$TMP_OUT"
     if command -v gzip >/dev/null 2>&1; then
-      tar -cf - "${APP_NAME}-${VERSION}" | gzip -c >"$OUT"
+      tar -cf - "${APP_NAME}-${VERSION}" | gzip -c >"$TMP_OUT"
     else
       die "tar não suporta -z e gzip não encontrado. Instale gzip ou use um tar com suporte a -z."
     fi
   fi
 })
+mv -f "$TMP_OUT" "$OUT"
 
 info "OK: $OUT"

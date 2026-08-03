@@ -183,7 +183,7 @@ class ControlRoutesUnitTests(unittest.TestCase):
         )
 
         with patch.object(operational_routes, "list_operational_scenarios", return_value=[{"id": 5, "name": "cat"}]) as list_mock:
-            handled = operational_routes.handle_operational_get_route(handler, parsed, catalog_routes.parse_qs)
+            handled = operational_routes.handle_operational_get_route(handler, parsed)
 
         self.assertTrue(handled)
         self.assertEqual(handler.status_code, 200)
@@ -212,7 +212,6 @@ class ControlRoutesUnitTests(unittest.TestCase):
         handled = gateway_routes.handle_gateway_get_route(
             handler,
             parsed,
-            parse_qs_fn=catalog_routes.parse_qs,
             query_one_fn=lambda *args, **kwargs: None,
             read_gateway_monitor_fn=lambda log_dir, limit: {"log_dir": log_dir, "summary": {"window_events": limit}},
             read_gateway_sessions_fn=lambda *args, **kwargs: {},
@@ -231,8 +230,7 @@ class ControlRoutesUnitTests(unittest.TestCase):
             handled = gateway_routes.handle_gateway_get_route(
                 handler,
                 parsed,
-                parse_qs_fn=catalog_routes.parse_qs,
-                query_one_fn=lambda *args, **kwargs: None,
+                    query_one_fn=lambda *args, **kwargs: None,
                 read_gateway_monitor_fn=lambda *args, **kwargs: {},
                 read_gateway_sessions_fn=lambda log_dir, **kwargs: {"log_dir": log_dir, "sessions": [{"session_id": "s-1"}], "target_policy": kwargs.get("target_policy")},
                 read_gateway_session_detail_fn=lambda *args, **kwargs: {},
@@ -250,7 +248,6 @@ class ControlRoutesUnitTests(unittest.TestCase):
         handled = gateway_routes.handle_gateway_get_route(
             handler,
             parsed,
-            parse_qs_fn=catalog_routes.parse_qs,
             query_one_fn=lambda *args, **kwargs: None,
             read_gateway_monitor_fn=lambda *args, **kwargs: {},
             read_gateway_sessions_fn=lambda *args, **kwargs: {"sessions": []},

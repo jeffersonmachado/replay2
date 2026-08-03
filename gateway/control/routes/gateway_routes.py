@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs
 from pathlib import Path
 
 from dakota_gateway.state_db import query_all, query_one
@@ -59,7 +60,6 @@ def handle_gateway_get_route(
     handler,
     parsed_path,
     *,
-    parse_qs_fn,
     query_one_fn,
     read_gateway_monitor_fn,
     read_gateway_sessions_fn,
@@ -105,7 +105,7 @@ def handle_gateway_get_route(
         user = handler._require()
         if not user:
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = _validated_log_dir(handler, (qs.get("log_dir") or [""])[0])
         if log_dir is None:
             write_json(handler, 400, {"error": "log_dir fora do diretorio de capturas configurado"})
@@ -118,7 +118,7 @@ def handle_gateway_get_route(
         user = handler._require()
         if not user:
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = _validated_log_dir(handler, (qs.get("log_dir") or [""])[0])
         if log_dir is None:
             write_json(handler, 400, {"error": "log_dir fora do diretorio de capturas configurado"})
@@ -152,7 +152,7 @@ def handle_gateway_get_route(
             handler.end_headers()
             return True
         session_id = parts[4]
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = _validated_log_dir(handler, (qs.get("log_dir") or [""])[0])
         if log_dir is None:
             write_json(handler, 400, {"error": "log_dir fora do diretorio de capturas configurado"})
@@ -193,7 +193,7 @@ def handle_gateway_get_route(
         if not user:
             return True
         session_id = path.split("/")[-1] if path.split("/") else ""
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = _validated_log_dir(handler, (qs.get("log_dir") or [""])[0])
         if log_dir is None:
             write_json(handler, 400, {"error": "log_dir fora do diretorio de capturas configurado"})

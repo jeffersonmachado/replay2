@@ -5,6 +5,14 @@
 ## Objetivos:
 ## - Permitir `replay2 record` e inspeção posterior sem libs externas
 ## - Ser robusto: cada linha é um Tcl list com 1 elemento (o dict)
+##
+## ATENÇÃO — esta NÃO é a trilha auditável oficial.
+## Este módulo é um gravador SIMPLIFICADO da engine Tcl (depuração e
+## inspeção local): não tem ordem global (seq_global), hash-chain nem HMAC,
+## e não deve ser usado como evidência de migração nem como entrada de
+## verify/replay oficiais. A fonte de verdade da captura é o gateway SSH
+## (gateway/dakota_gateway/gateway.py) com persistência assinada em
+## gateway/dakota_gateway/audit_writer.py. Ver AGENTS.md §3.5 e §9.
 ########################################################################
 
 namespace eval ::record {

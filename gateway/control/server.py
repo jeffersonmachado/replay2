@@ -598,12 +598,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if handle_observability_get_route(self, p):
             return
-        if handle_operational_get_route(self, p, parse_qs):
+        if handle_operational_get_route(self, p):
             return
         if handle_gateway_get_route(
             self,
             p,
-            parse_qs_fn=parse_qs,
             query_one_fn=query_one,
             read_gateway_monitor_fn=_read_gateway_monitor,
             read_gateway_sessions_fn=_read_gateway_sessions,
@@ -613,7 +612,6 @@ class Handler(BaseHTTPRequestHandler):
         if handle_capture_get_route(
             self,
             p,
-            parse_qs_fn=parse_qs,
             read_gateway_monitor_fn=_read_gateway_monitor,
         ):
             return

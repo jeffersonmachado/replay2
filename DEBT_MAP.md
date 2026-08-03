@@ -37,7 +37,7 @@
 | R3 | `journey_routes.py` sobrepõe `synthetic_routes.py` ✅ | **CORRIGIDO** | Unificado: `journey_routes.py` é fonte canônica. `synthetic_routes.py` delega com rewrite de path. |
 | R4 | `_write_json` extraído ✅ | **CORRIGIDO** | 9 duplicações removidas. Centralizado em `route_helpers.py`. |
 | R5 | DELETE incompleto ✅ | **CORRIGIDO** | Adicionados: `DELETE /api/runs/{id}`, `DELETE /api/captures/{id}`, `DELETE /api/targets/{id}`, `DELETE /api/connection-profiles/{id}`. |
-| R6 | `parse_qs` importado vs injetado | **BAIXA** | Alguns handlers recebem `parse_qs_fn` como parâmetro, outros importam `parse_qs` direto. Padronizar injeção. |
+| R6 | `parse_qs` importado vs injetado ✅ | **RESOLVIDA (2026-08-03)** | Padronizado **import direto** (não injeção): nenhum teste injetava fake — os únicos usos passavam o próprio `parse_qs` real, então a injeção não comprava testabilidade e o padrão dominante já era import (9 módulos × 3). Removido `parse_qs_fn` de `operational_routes.py`, `capture_routes.py` e `gateway_routes.py`; `server.py` e `tests/test_control_routes_unit.py` atualizados. |
 
 ### 1.2 Camada de Serviços (`gateway/control/services/`)
 
@@ -62,8 +62,14 @@
 
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
-| T1 | `record.tcl` vs `audit_writer.py` | **BAIXA** | Duplicação funcional. `record.tcl` é simplificado e não substitui trilha auditável. Documentar claramente que `audit_writer.py` é a fonte de verdade. |
+| T1 | `record.tcl` vs `audit_writer.py` ✅ | **RESOLVIDA (2026-08-03)** | Header do `lib/record.tcl` agora declara explicitamente que é gravador simplificado (sem `seq_global`/hash-chain/HMAC), proibido como evidência de migração ou entrada de verify/replay oficiais, e aponta gateway SSH + `audit_writer.py` como fonte de verdade (AGENTS.md §3.5/§9 já diziam o mesmo). |
 | T2 | Testes Tcl cobrem 5 módulos de ~15 ✅ | **RESOLVIDA (2026-08-03)** | `log.tcl` já era coberto (`log.test.tcl`); adicionados `tests/action.test.tcl` (6 testes), `dump.test.tcl` (12), `events.test.tcl` (11) e `plugins.test.tcl` (10) — barramento de eventos (dedup/isolamento de sink/merge), dump de diagnósticos (configure/enabled/safe_filename/gravação/sink), plugins (discover/estado/enable-disable/load com plugin quebrado) e API de ações (erro sem Expect/clamp de sleep/fconfigure). `tclsh tests/all.tcl`: 68/68. |
+
+### 1.5 Build e Release (`scripts/`)
+
+| # | Item | Severidade | Descrição |
+|---|------|-----------|-----------|
+| B1 | Race de tarball em deploys paralelos ✅ | **RESOLVIDA (2026-08-03)** | Incidente real no deploy 0.8.3: AIX e Linux rebuildavam o tarball no mesmo `dist/` em paralelo e o `.run` foi montado sobre payload parcial (`sanity: payload gzip inválido`). `build-tarball.sh` agora grava em `$OUT.tmp.$$` e publica com `mv -f` (rename atômico na mesma FS); trap de cleanup remove o temporário. Regressão: `tests/test_build_tarball_atomic_unit.py` (contrato estático + 2 builds concorrentes com mesmo timestamp → gzip íntegro, sem órfãos). |
 
 ---
 
@@ -86,8 +92,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R5, S1, G1, G2, G3, G4, G5, T2, X1, X3, X4, X5, X6 (17 itens).
-**Pendentes:** R6, S2–S4, T1, X2 (severidade baixa/média).
+**Itens resolvidos:** R1–R6, S1, G1, G2, G3, G4, G5, T1, T2, X1, X3, X4, X5, X6, B1 (20 itens).
+**Pendentes:** S2–S4, X2 (severidade baixa).
 
 ---
 

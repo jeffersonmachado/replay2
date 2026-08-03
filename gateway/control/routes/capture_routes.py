@@ -11,6 +11,7 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 from __future__ import annotations
 
 import socket
+from urllib.parse import parse_qs
 
 from control.routes.route_helpers import parse_int, public_error_message, write_json
 from control.services.capture_service import (
@@ -83,7 +84,6 @@ def handle_capture_get_route(
     handler,
     parsed_path,
     *,
-    parse_qs_fn,
     read_gateway_monitor_fn,
 ) -> bool:
     path = parsed_path.path
@@ -92,7 +92,7 @@ def handle_capture_get_route(
         user = handler._require()
         if not user:
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         limit = parse_int((qs.get("limit") or ["20"])[0] or 20, 20, min_value=1, max_value=500)
         offset = parse_int((qs.get("offset") or ["0"])[0] or 0, 0, min_value=0)
         search = (qs.get("search") or [""])[0] or ""
@@ -134,7 +134,7 @@ def handle_capture_get_route(
             handler.send_response(404)
             handler.end_headers()
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = capture.get("log_dir") or ""
         limit = parse_int((qs.get("limit") or ["300"])[0] or 300, 300, min_value=1, max_value=1000)
         payload = read_gateway_monitor_fn(log_dir, limit=limit)
@@ -166,7 +166,7 @@ def handle_capture_get_route(
             handler.send_response(404)
             handler.end_headers()
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         log_dir = capture.get("log_dir") or ""
         limit = parse_int((qs.get("limit") or ["100"])[0] or 100, 100, min_value=1, max_value=500)
         sessions_payload = _read_gateway_sessions(log_dir, limit=limit)
@@ -198,7 +198,7 @@ def handle_capture_get_route(
             handler.send_response(404)
             handler.end_headers()
             return True
-        qs = parse_qs_fn(parsed_path.query or "")
+        qs = parse_qs(parsed_path.query or "")
         session_id = str((qs.get("session_id") or [""])[0] or "").strip()
         if not session_id:
             write_json(handler, 400, {"error": "session_id obrigatório"})

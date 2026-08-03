@@ -455,15 +455,17 @@ def prepare_session_replay_data(
     # ── Cache de estado em disco (X6): retomada em janela profunda ──────
     # Sem cache, uma janela com offset grande reprocessa o stream desde o
     # evento 0 (rolagem profunda quadrática). Em sessões enormes, retoma do
-    # estado persistido mais próximo <= win_start. Guarda de paridade: só
-    # é permitido retomar quando os eventos anteriores ao ponto de retomada
-    # não exigem reprodução: o session_start inicial é reproduzido com a
-    # tela em branco (igual à execução sem cache), deterministic_input só é
-    # materializado dentro da janela e demais tipos são ignorados pelo
-    # loop; session_end ou session_start não inicial antes do ponto impõem
-    # fallback para o processamento completo. Exceção documentada de
-    # paridade: checkpoints anteriores ao ponto de retomada não são
-    # regerados (window.state_cache.hit=true sinaliza isso).
+    # estado persistido mais próximo <= win_start. O estado restaurado já
+    # reflete TODOS os efeitos dos eventos anteriores (inclui engine.finish
+    # de session_end intermediários — capturas com reconexão reutilizam o
+    # session_id e têm centenas de pares session_start/session_end no meio
+    # do stream). Na fase de skip, session_start/session_end atualizam só o
+    # bookkeeping (campos do payload), sem reexecutar efeitos na engine, e
+    # deterministic_input pré-janela não é materializado (contrato de
+    # paginação). O checkpoint do session_start inicial é reproduzido com a
+    # tela em branco, igual à execução sem cache. Exceção documentada de
+    # paridade: checkpoints anteriores ao ponto de retomada (de qualquer
+    # tipo) não são regerados (window.state_cache.hit=true sinaliza isso).
     cache_dir_resolved = state_cache_dir or str(log_path.parent / "replay_state_cache")
     cache_enabled = bool(STATE_CACHE_ENABLED) and total_bytes_events > MAX_FULL_REPLAY_EVENTS
     cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
@@ -478,7 +480,6 @@ def prepare_session_replay_data(
         )
         if hit is not None:
             candidate_idx, envelope = hit
-            violation = False
             count = 0
             for ev in events:
                 if count >= candidate_idx:
@@ -488,53 +489,44 @@ def prepare_session_replay_data(
                     count += 1
                 elif ev_type == "session_start" and count == 0:
                     pre_resume_session_starts.append(ev)
-                elif ev_type in ("session_start", "session_end"):
-                    violation = True
-                    break
-                # demais tipos (deterministic_input, checkpoint, ...) não
-                # exigem reprodução: deterministic_input só é materializado
-                # dentro da janela e os demais são ignorados pelo loop
-            if violation:
-                cache_info["reason"] = "non_bytes_events_before_resume"
-            else:
-                try:
-                    engine.load_state(envelope["engine"])
-                    counters = envelope.get("counters") or {}
-                    resume_from = candidate_idx
-                    restored_snapshot = snapshot_from_engine(engine)
-                    current_snapshot = restored_snapshot
-                    last_out_snapshot = restored_snapshot
-                    last_snapshot = restored_snapshot
-                    out_event_count = int(counters.get("out_event_count") or 0)
-                    last_out_seq_global = int(counters.get("last_out_seq_global") or 0)
-                    last_rows = int(counters.get("last_rows") or engine.rows)
-                    last_cols = int(counters.get("last_cols") or engine.cols)
-                    last_checkpoint_time_ms = int(counters.get("last_checkpoint_time_ms") or 0)
-                    bytes_event_index = resume_from
-                    cache_info["hit"] = True
-                    cache_info["resumed_from"] = resume_from
-                    # Reproduz o checkpoint do session_start inicial (tela
-                    # em branco nesse ponto, igual à execução sem cache).
-                    for ss_ev in pre_resume_session_starts:
-                        checkpoint = {
-                            "session_id": clean_sid,
-                            "seq_global": int(ss_ev.get("seq_global") or 0),
-                            "timestamp_ms": int(ss_ev.get("ts_ms") or 0),
-                            "text_sig": initial_snapshot.get("text_sig", ""),
-                            "visual_sig": initial_snapshot.get("visual_sig", ""),
-                            "semantic_sig": initial_snapshot.get("semantic_sig", ""),
-                            "rows": geometry["rows"],
-                            "cols": geometry["cols"],
-                            "term": geometry.get("term", "xterm"),
-                            "encoding": detected_encoding,
-                            "engine_version": engine.engine_version,
-                            "reason": "session_start",
-                        }
-                        _attach_render_snapshot(checkpoint, initial_snapshot)
-                        checkpoints.append(checkpoint)
-                except (ValueError, KeyError, TypeError):
-                    cache_info["reason"] = "state_load_failed"
-                    resume_from = 0
+            try:
+                engine.load_state(envelope["engine"])
+                counters = envelope.get("counters") or {}
+                resume_from = candidate_idx
+                restored_snapshot = snapshot_from_engine(engine)
+                current_snapshot = restored_snapshot
+                last_out_snapshot = restored_snapshot
+                last_snapshot = restored_snapshot
+                out_event_count = int(counters.get("out_event_count") or 0)
+                last_out_seq_global = int(counters.get("last_out_seq_global") or 0)
+                last_rows = int(counters.get("last_rows") or engine.rows)
+                last_cols = int(counters.get("last_cols") or engine.cols)
+                last_checkpoint_time_ms = int(counters.get("last_checkpoint_time_ms") or 0)
+                bytes_event_index = resume_from
+                cache_info["hit"] = True
+                cache_info["resumed_from"] = resume_from
+                # Reproduz o checkpoint do session_start inicial (tela
+                # em branco nesse ponto, igual à execução sem cache).
+                for ss_ev in pre_resume_session_starts:
+                    checkpoint = {
+                        "session_id": clean_sid,
+                        "seq_global": int(ss_ev.get("seq_global") or 0),
+                        "timestamp_ms": int(ss_ev.get("ts_ms") or 0),
+                        "text_sig": initial_snapshot.get("text_sig", ""),
+                        "visual_sig": initial_snapshot.get("visual_sig", ""),
+                        "semantic_sig": initial_snapshot.get("semantic_sig", ""),
+                        "rows": geometry["rows"],
+                        "cols": geometry["cols"],
+                        "term": geometry.get("term", "xterm"),
+                        "encoding": detected_encoding,
+                        "engine_version": engine.engine_version,
+                        "reason": "session_start",
+                    }
+                    _attach_render_snapshot(checkpoint, initial_snapshot)
+                    checkpoints.append(checkpoint)
+            except (ValueError, KeyError, TypeError):
+                cache_info["reason"] = "state_load_failed"
+                resume_from = 0
 
     skip_remaining = resume_from
 
@@ -542,12 +534,18 @@ def prepare_session_replay_data(
         ev_type = str(ev.get("type") or "").strip()
 
         # Retomada (X6): eventos anteriores ao ponto de retomada já estão
-        # refletidos no estado restaurado — o session_start inicial já foi
-        # reproduzido e deterministic_input pré-janela não é materializado
-        # (contrato de paginação), então ambos são pulados aqui.
-        if skip_remaining > 0 and ev_type in ("bytes", "session_start", "deterministic_input"):
+        # refletidos no estado restaurado. session_start/session_end fazem
+        # só bookkeeping (campos do payload) — os efeitos na engine
+        # (engine.finish do session_end) já estão no estado; o checkpoint
+        # do session_start inicial já foi reproduzido; deterministic_input
+        # pré-janela não é materializado (contrato de paginação).
+        if skip_remaining > 0 and ev_type in ("bytes", "session_start", "session_end", "deterministic_input"):
             if ev_type == "bytes":
                 skip_remaining -= 1
+            elif ev_type == "session_start":
+                session_start = ev
+            elif ev_type == "session_end":
+                session_end = ev
             continue
 
         # Modo parcial (X6): a janela acabou — interrompe o processamento

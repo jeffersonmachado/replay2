@@ -13,8 +13,9 @@ Contrato coberto:
      são idênticos entre frio e morno;
   3. checkpoints dentro da janela são idênticos;
   4. deterministic_input é materializado apenas dentro da janela (contrato
-     de paginação) e não impede a retomada; session_end ou session_start
-     não inicial antes do ponto de retomada impõem fallback;
+     de paginação) e não impede a retomada; pares session_end/session_start
+     intermediários (reconexões com o mesmo session_id) também não — a fase
+     de skip faz só o bookkeeping dos campos do payload;
   5. alteração no arquivo de captura invalida o cache.
 
 Run:
@@ -31,11 +32,13 @@ import pytest
 from control.services import session_replay_service as svc
 
 
-def _gerar_sessao(tmpdir: str, n_eventos: int, *, deterministicos: tuple[int, ...] = ()) -> str:
+def _gerar_sessao(tmpdir: str, n_eventos: int, *, deterministicos: tuple[int, ...] = (), reconexoes: tuple[int, ...] = ()) -> str:
     """Gera sessão sintética (2/3 OUT, 1/3 IN) com clear-screen periódico.
 
     deterministicos: índices (no espaço de eventos bytes) após os quais um
     evento deterministic_input é inserido.
+    reconexoes: índices após os quais um par session_end/session_start é
+    inserido (capturas com reconexão reutilizam o session_id).
     """
     sid = "sessao-cache-x6"
     out_b64 = base64.b64encode(b"linha de teste 0123456789\r\n").decode()
@@ -70,6 +73,16 @@ def _gerar_sessao(tmpdir: str, n_eventos: int, *, deterministicos: tuple[int, ..
                     "seq_global": seq, "seq_session": seq, "ts_ms": 1000 + i * 10 + 5,
                     "screen_sig": "sig", "key_kind": "enter", "key_text": "",
                 }) + "\n")
+            if i in reconexoes:
+                for tipo in ("session_end", "session_start"):
+                    seq += 1
+                    ev = {
+                        "type": tipo, "session_id": sid, "seq_global": seq,
+                        "seq_session": seq, "ts_ms": 1000 + i * 10 + 6,
+                    }
+                    if tipo == "session_start":
+                        ev.update({"rows": 24, "cols": 80, "term": "xterm", "encoding": "utf-8"})
+                    f.write(json.dumps(ev) + "\n")
         seq += 1
         f.write(json.dumps({
             "type": "session_end", "session_id": sid, "seq_global": seq,
@@ -175,6 +188,33 @@ def test_deterministic_input_antes_do_resume_nao_bloqueia_retomada(cache_patches
     assert len(referencia["deterministic_events"]) == 1
     assert morno["deterministic_events"][0]["seq_global"] == \
         referencia["deterministic_events"][0]["seq_global"]
+
+
+def test_reconexoes_no_meio_do_stream_nao_bloqueiam_retomada(cache_patches, tmp_path):
+    """Pares session_end/session_start intermediários (capturas com
+    reconexão reutilizando o session_id, caso real da captura 20 do MIG24)
+    não impedem a retomada: os efeitos na engine já estão no estado
+    restaurado e a fase de skip faz só o bookkeeping dos campos do payload."""
+    log_dir = tmp_path / "cap"
+    log_dir.mkdir()
+    sid = _gerar_sessao(str(log_dir), 120, reconexoes=(10, 30), deterministicos=(50,))
+    cache_dir = str(tmp_path / "cache")
+
+    cache_patches.prepare_session_replay_data(str(log_dir), sid, offset=45, limit=20, state_cache_dir=cache_dir)
+    morno = cache_patches.prepare_session_replay_data(str(log_dir), sid, offset=45, limit=20, state_cache_dir=cache_dir)
+    assert morno["window"]["state_cache"]["hit"] is True
+    assert morno["window"]["state_cache"]["resumed_from"] == 40
+
+    referencia = cache_patches.prepare_session_replay_data(
+        str(log_dir), sid, offset=45, limit=20, state_cache_dir=str(tmp_path / "cache-vazio"))
+    assert _sumario(morno) == _sumario(referencia)
+    # bookkeeping dos limites de sessão preservado na retomada
+    assert morno["session_start"] == referencia["session_start"]
+    assert morno["session_end"] == referencia["session_end"]
+
+    seq_primeiro_evento = morno["events"][0]["seq_global"]
+    assert _checkpoints_na_janela(morno, seq_primeiro_evento) == \
+        _checkpoints_na_janela(referencia, seq_primeiro_evento)
 
 
 def test_alteracao_na_captura_invalida_cache(cache_patches, tmp_path):

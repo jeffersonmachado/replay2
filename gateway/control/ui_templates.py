@@ -239,7 +239,8 @@ def render_page(
     return render_template("base.html", context)
 
 
-LOGIN_HTML = _load_template("login.html")
+_VERSION = (Path(__file__).resolve().parent.parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+LOGIN_HTML = _load_template("login.html").replace("{{version}}", _VERSION)
 
 
 ROUTES_CONFIG = [

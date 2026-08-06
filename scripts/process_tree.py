@@ -228,29 +228,32 @@ def _kill_tree(run_id: str, sid: int, pgid: int, all_pids: list[dict],
     remaining_term = max(0.0, term_deadline - time.time())
     if remaining_term > 0:
         time.sleep(min(remaining_term, 0.5))
-    # KILL phase
-    if time.time() < kill_deadline:
+    # KILL phase — SEMPRE executada: os SIGKILLs são não-bloqueantes e
+    # baratos; apenas as ESPERAS respeitam os deadlines. Pular a fase inteira
+    # quando o TERM estoura o prazo (CPU starved) deixava sobreviventes
+    # vivos e killed_processes=[] — incidente do pipeline 0.8.5 na árvore
+    # extraída (regressão: tests/acceptance/test_process_tree_kill_phase.py).
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
+    for p in all_pids:
         try:
-            os.killpg(pgid, signal.SIGKILL)
-        except OSError:
+            os.kill(p["pid"], signal.SIGKILL)
+        except (OSError, ProcessLookupError):
             pass
-        for p in all_pids:
-            try:
-                os.kill(p["pid"], signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            killed_ids.add(p["pid"])
-        remaining_kill = max(0.0, kill_deadline - time.time())
-        if remaining_kill > 0:
-            time.sleep(min(remaining_kill, 0.3))
-        # Final sweep: kill any remaining by run_id
-        remaining = _find_by_run_id(run_id)
-        for rp in remaining:
-            try:
-                os.kill(rp["pid"], signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            killed_ids.add(rp["pid"])
+        killed_ids.add(p["pid"])
+    remaining_kill = max(0.0, kill_deadline - time.time())
+    if remaining_kill > 0:
+        time.sleep(min(remaining_kill, 0.3))
+    # Final sweep: kill any remaining by run_id
+    remaining = _find_by_run_id(run_id)
+    for rp in remaining:
+        try:
+            os.kill(rp["pid"], signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        killed_ids.add(rp["pid"])
     alive = []
     for p in all_pids:
         if _pid_alive(p["pid"]) and not _is_zombie(p["pid"]):

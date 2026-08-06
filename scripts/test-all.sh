@@ -123,7 +123,11 @@ else
 fi
 
 # Python — COMPLETO, sem exclusões
-run_suite python-full "$TIMEOUT" env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q tests/ || true
+# Orçamento próprio: a suíte tests/ mede ~390 s isolada e ~450 s sob carga
+# (pipeline 0.8.4: timeout aos 450,97 s com a suíte íntegra — estourou o
+# TIMEOUT genérico por margem, não por travamento; process_tree confirmou
+# 0 leaks/escaped). 900 s = 2× a medição sob carga. Só dispara em hang real.
+run_suite python-full "${DAKOTA_TEST_ALL_PYTHON_TIMEOUT:-900}" env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q tests/ || true
 run_suite gateway-tests 120 env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q gateway/tests/ || true
 
 # Tcl

@@ -5,7 +5,7 @@ from urllib.parse import parse_qs
 
 from dakota_gateway.replay_control import query_one
 from control.routes.route_helpers import write_json
-from control.services.scenario_service import (
+from control.services.operational_scenario_service import (
     delete_operational_scenario,
     instantiate_run_from_scenario,
     list_operational_scenarios,

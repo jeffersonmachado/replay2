@@ -11,11 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 GATEWAY_DIR = ROOT / "gateway"
 sys.path.insert(0, str(GATEWAY_DIR))
 
-from control.services.scenario_service import (
-    instantiate_run_from_scenario,
+from control.services.analytics_scenario_service import (
     list_analytics_scenarios,
-    list_operational_scenarios,
     save_analytics_scenario,
+)
+from control.services.operational_scenario_service import (
+    instantiate_run_from_scenario,
+    list_operational_scenarios,
     save_operational_scenario,
 )
 from dakota_gateway.state_db import connect, init_db, now_ms

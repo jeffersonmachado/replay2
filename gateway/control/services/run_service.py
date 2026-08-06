@@ -20,13 +20,15 @@ from dakota_gateway.replay_control import (
     retry_run,
     set_run_compliance,
 )
-from control.services.report_service import (
+from control.services.report_format_service import (
+    report_to_csv,
+    report_to_markdown,
+)
+from control.services.report_run_service import (
+    build_reprocess_trace,
     build_run_comparison,
     build_run_family,
     build_run_report,
-    build_reprocess_trace,
-    report_to_csv,
-    report_to_markdown,
 )
 from control.services.environment_service import resolve_run_target_request
 

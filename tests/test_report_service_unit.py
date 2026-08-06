@@ -11,10 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 GATEWAY_DIR = ROOT / "gateway"
 sys.path.insert(0, str(GATEWAY_DIR))
 
-from control.services.report_service import (
+from control.services.report_overview_service import build_runs_trend_report
+from control.services.report_run_service import (
     build_run_comparison,
     build_run_report,
-    build_runs_trend_report,
     create_reprocess_run_from_failure,
 )
 from dakota_gateway.replay_control import add_run_event, create_run

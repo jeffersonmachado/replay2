@@ -44,9 +44,9 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | S1 | `gateway_observability_service.py` ✅ | **CORRIGIDO** | Reduzido de 594 para 424 linhas. `prepare_session_replay_data` (174 linhas) extraído para `session_replay_service.py`. |
-| S2 | `operational_scenario_service.py` (412 linhas) | **BAIXA** | Tamanho aceitável mas tem lógica de validação inline. Extrair `scenario_validator.py`. |
-| S3 | `scenario_service.py` (41 linhas) | **BAIXA** | Thin facade. Poderia ser merging com `scenario_shared.py` (73 linhas). |
-| S4 | `report_service.py` (97 linhas) | **BAIXA** | Re-exporta funções de `report_run_service.py` e `report_overview_service.py`. Padrão okay, mas nomes confusos (report_service vs report_run_service). |
+| S2 | `operational_scenario_service.py` ✅ | **RESOLVIDA (2026-08-06)** | `normalize_operational_scenario_payload` (validação pura, sem banco) extraído para `scenario_validator.py`; service caiu de 412 para 363 linhas e importa o validador. Cobertura direta: `tests/test_scenario_validator_unit.py` (7 testes: defaults, erros de domínio, faixas SLA, normalização). |
+| S3 | `scenario_service.py` ✅ | **RESOLVIDA (2026-08-06)** | Fachada **removida** (merge com `scenario_shared.py` criaria import circular: `operational_scenario_service` → `scenario_shared` ← `scenario_service` → `operational_scenario_service`). Callers (`server.py`, `observability_routes.py`, `operational_routes.py`, testes) agora importam direto de `analytics_scenario_service`/`operational_scenario_service`. |
+| S4 | `report_service.py` ✅ | **RESOLVIDA (2026-08-06)** | Renomeado para `report_format_service.py` e reduzido aos formatters (`report_to_markdown`/`report_to_csv`); re-exports eliminados — callers importam builders dos módulos canônicos (`report_run_service`, `report_overview_service`). Fim da confusão de nomes. |
 
 ### 1.3 Camada Gateway Core (`gateway/dakota_gateway/`)
 
@@ -96,8 +96,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R6, S1, G1, G2, G3, G4, G5, T1, T2, X1, X3, X4, X5, X6, B1 (20 itens).
-**Pendentes:** S2–S4, X2 (severidade baixa).
+**Itens resolvidos:** R1–R6, S1–S4, G1, G2, G3, G4, G5, T1, T2, X1, X3, X4, X5, X6, B1 (23 itens).
+**Pendentes:** X2 (rate limiting, severidade baixa).
 
 ---
 

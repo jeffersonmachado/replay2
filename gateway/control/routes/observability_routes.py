@@ -7,8 +7,8 @@ from dakota_gateway.replay_control import query_one
 from control.routes.route_helpers import parse_int, write_json
 from control.routes.gateway_routes import _validated_log_dir
 from control.services.host_metrics_service import build_export, query_host_metrics, run_window
-from control.services.report_service import build_observability_overview, build_runs_trend_report
-from control.services.scenario_service import (
+from control.services.report_overview_service import build_observability_overview, build_runs_trend_report
+from control.services.analytics_scenario_service import (
     delete_analytics_scenario,
     list_analytics_scenarios,
     save_analytics_scenario,

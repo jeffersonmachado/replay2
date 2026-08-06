@@ -1,24 +1,16 @@
+"""Formatação de relatórios de run (Markdown/CSV).
+
+Renomeado de `report_service.py` (dívida S4): o nome antigo se confundia
+com `report_run_service.py`/`report_overview_service.py`. Este módulo contém
+APENAS os formatters; os builders vivem nos módulos canônicos:
+- `report_run_service.py` — relatório/família/comparação/trace de runs;
+- `report_overview_service.py` — overviews, analytics e trends.
+"""
+
 from __future__ import annotations
 
 import csv
 import io
-
-from control.services.report_common import extract_run_environment
-from control.services.report_overview_service import (
-    build_observability_overview,
-    build_ops_overview,
-    build_reprocess_analytics,
-    build_runs_trend_report,
-)
-from control.services.report_run_service import (
-    build_reprocess_trace,
-    build_run_comparison,
-    build_run_family,
-    build_run_report,
-    create_reprocess_run_from_failure,
-    find_baseline_run,
-)
-
 
 def report_to_markdown(report: dict, comparison: dict | None = None) -> str:
     report = report or {}
@@ -78,20 +70,3 @@ def report_to_csv(report: dict) -> str:
     for flow in report.get("flows") or []:
         writer.writerow(["flow", flow.get("flow_name") or "sem_fluxo", flow.get("failure_count") or 0])
     return output.getvalue()
-
-
-__all__ = [
-    "extract_run_environment",
-    "build_run_report",
-    "build_run_family",
-    "build_reprocess_trace",
-    "build_reprocess_analytics",
-    "create_reprocess_run_from_failure",
-    "build_ops_overview",
-    "build_observability_overview",
-    "build_runs_trend_report",
-    "find_baseline_run",
-    "build_run_comparison",
-    "report_to_markdown",
-    "report_to_csv",
-]

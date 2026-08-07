@@ -281,3 +281,92 @@ class SyntheticEngine:
                 )
 
         con.commit()
+
+    # ------------------------------------------------------------------
+    # Screen-entity bindings (knowledge base persistida)
+    # ------------------------------------------------------------------
+
+    def save_bindings(self, bindings: list) -> None:
+        """Persiste bindings tela→entidade — truncate + rebuild completo.
+
+        Antes disto os bindings só existiam em memória (recalculados a cada
+        uso): qualquer consumidor (synthesize, relatórios) re-parseava o
+        código-fonte inteiro. Com a tabela gravada no analyze-source, os
+        consumidores leem do banco (v0.8.13).
+        """
+        if not self.screen_registry:
+            raise RuntimeError("screen_registry nao configurado")
+
+        con = self.screen_registry.con
+        con.execute("DELETE FROM screen_entity_bindings")
+        now = datetime.now().isoformat()
+        for b in bindings:
+            con.execute(
+                """INSERT INTO screen_entity_bindings
+                   (screen_title, program_name, source_file,
+                    source_line_start, source_line_end, entity_name, operation,
+                    matched_fields_json, unmatched_fields_json, confidence,
+                    evidence_json, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    b.screen_title, b.program_name, b.source_file,
+                    b.source_lines[0], b.source_lines[1], b.entity_name,
+                    b.operation,
+                    json.dumps(b.matched_fields, ensure_ascii=False),
+                    json.dumps(b.unmatched_screen_fields, ensure_ascii=False),
+                    b.confidence,
+                    json.dumps(b.evidence, ensure_ascii=False),
+                    now,
+                ),
+            )
+        con.commit()
+
+    def load_entities(self) -> list[EntityDefinition]:
+        """Carrega entidades + campos do banco (base do analyze-source)."""
+        from ..source_analyzer.entity_catalog import FieldDefinition
+
+        if not self.screen_registry:
+            raise RuntimeError("screen_registry nao configurado")
+
+        con = self.screen_registry.con
+        entities: list[EntityDefinition] = []
+        rows = con.execute(
+            "SELECT id, name, storage_type, source, metadata_json "
+            "FROM source_entities ORDER BY name").fetchall()
+        field_rows = con.execute(
+            "SELECT entity_id, field_name, datatype, required, unique_flag, "
+            "constraints_json FROM source_entity_fields").fetchall()
+        fields_by_entity: dict[int, list] = {}
+        for fr in field_rows:
+            fields_by_entity.setdefault(fr[0], []).append(FieldDefinition(
+                name=fr[1], datatype=fr[2], required=bool(fr[3]),
+                unique_flag=bool(fr[4]), constraints_json=fr[5]))
+        for row in rows:
+            entities.append(EntityDefinition(
+                name=row[1], storage_type=row[2], source=row[3] or "",
+                fields=fields_by_entity.get(row[0], []),
+                metadata_json=row[4]))
+        return entities
+
+    def load_bindings(self) -> list:
+        """Carrega bindings tela→entidade do banco (base do analyze-source)."""
+        from ..source_analyzer.screen_entity_linker import ScreenEntityBinding
+
+        if not self.screen_registry:
+            raise RuntimeError("screen_registry nao configurado")
+
+        con = self.screen_registry.con
+        bindings = []
+        for row in con.execute(
+                "SELECT screen_title, program_name, source_file, "
+                "source_line_start, source_line_end, entity_name, operation, "
+                "matched_fields_json, unmatched_fields_json, confidence, "
+                "evidence_json FROM screen_entity_bindings").fetchall():
+            bindings.append(ScreenEntityBinding(
+                screen_title=row[0], program_name=row[1], source_file=row[2],
+                source_lines=(row[3], row[4]), entity_name=row[5],
+                operation=row[6],
+                matched_fields=json.loads(row[7] or "[]"),
+                unmatched_screen_fields=json.loads(row[8] or "[]"),
+                confidence=row[9], evidence=json.loads(row[10] or "[]")))
+        return bindings

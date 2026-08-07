@@ -367,11 +367,16 @@ def analyze_source_payload(con, source_dir: str) -> dict:
     engine = SyntheticEngine(db_connection=con)
     result = engine.analyze_source(source_dir)
     engine.register_screens(result)
-    entities, _ = (engine.inferencer._parser.parse_all()
-                   if engine.inferencer._parser else ([], []))
+    parser = engine.inferencer._parser
+    entities, _ = parser.parse_all() if parser else ([], [])
     engine.save_entities(entities)
+    # Persiste os bindings tela→entidade (knowledge base): sem isto, cada
+    # consumidor (synthesize, relatórios) re-parseava o fonte inteiro.
+    bindings = parser.screen_entity_bindings() if parser else []
+    engine.save_bindings(bindings)
     return {
         "screens": len(result.screens), "entities": len(entities),
+        "bindings": len(bindings),
         "screens_detail": [
             {"title": s.title, "program": s.program_name, "fields": len(s.fields)}
             for s in result.screens

@@ -72,8 +72,18 @@ def synthesize_capture(
 
     capture_jsonl = files[0] if len(files) == 1 else _combine_jsonl(files, output_dir / "capture_combined.jsonl")
 
+    # Reusa a knowledge base persistida pelo analyze-source quando disponível
+    # (entidades + bindings no banco) — re-parsear o fonte inteiro a cada
+    # síntese custava ~25 min por captura no AIX (1.965 programas).
+    from dakota_gateway.synthetic.engine import SyntheticEngine
+    engine = SyntheticEngine(db_connection=con)
+    entities = engine.load_entities()
+    bindings = engine.load_bindings()
+    kb = {"entities": entities, "bindings": bindings} if entities and bindings else {}
+
     synthesizer = JourneySynthesizer()
-    template = synthesizer.from_capture(capture_jsonl, source_path, name=name or run_name)
+    template = synthesizer.from_capture(
+        capture_jsonl, source_path, name=name or run_name, **kb)
     result = synthesizer.synthesize(template, samples=samples, out_dir=output_dir, seed=seed)
 
     validation = None

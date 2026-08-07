@@ -188,18 +188,31 @@ class JourneySynthesizer:
         capture_path: Path,
         source_dir: Path,
         name: str | None = None,
+        *,
+        entities: list | None = None,
+        bindings: list | None = None,
     ) -> JourneyTemplate:
-        """Analisa captura e fonte, gera JourneyTemplate."""
+        """Analisa captura e fonte, gera JourneyTemplate.
+
+        Se ``entities`` e ``bindings`` são fornecidos (base persistida pelo
+        analyze-source), o fonte NÃO é re-parseado — re-parsear milhares de
+        programas a cada síntese custava ~25 min por captura no AIX.
+        """
         capture_path = Path(capture_path)
         source_dir = Path(source_dir)
 
         # 1. Parametriza captura
         capture_template = self.parametrizer.analyze_capture(str(capture_path))
 
-        # 2. Analisa fonte
-        parser = SourceParser(str(source_dir))
-        entities, screens = parser.parse_all()
-        bindings = parser.screen_entity_bindings()
+        # 2. Base de conhecimento: reusa a persistida ou parseia o fonte
+        if entities is not None and bindings is not None:
+            knowledge_source = "db"
+            screens = []
+        else:
+            knowledge_source = "parse"
+            parser = SourceParser(str(source_dir))
+            entities, screens = parser.parse_all()
+            bindings = parser.screen_entity_bindings()
 
         # 3. Enriquece com knowledge base
         enriched = self.integrator.enrich_template(capture_template, entities, bindings)
@@ -217,6 +230,7 @@ class JourneySynthesizer:
         steps: list[JourneyStep] = []
         evidence: list[str] = [
             f"capture_source={capture_path.name}",
+            f"knowledge_source={knowledge_source}",
             f"entities_detected={len(entities)}",
             f"screens_detected={len(screens)}",
             f"bindings={len(bindings)}",

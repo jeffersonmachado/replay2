@@ -222,6 +222,14 @@ if [ -d "$SRC_ROOT/scripts" ]; then run_install_cmd cp -R "$SRC_ROOT/scripts" "$
 if [ -d "$SRC_ROOT/tests" ]; then run_install_cmd cp -R "$SRC_ROOT/tests" "$PREFIX/"; fi
 if [ -f "$SRC_ROOT/README.md" ]; then run_install_cmd cp -f "$SRC_ROOT/README.md" "$PREFIX/"; fi
 if [ -f "$SRC_ROOT/VERSION" ]; then run_install_cmd cp -f "$SRC_ROOT/VERSION" "$PREFIX/"; fi
+if [ -f "$SRC_ROOT/pytest.ini" ]; then run_install_cmd cp -f "$SRC_ROOT/pytest.ini" "$PREFIX/"; fi
+# Artefatos de benchmark (evidência de release, §33): o control plane adota
+# os experimentos no banco no boot (v0.8.8) — sem eles a UI /benchmark fica
+# vazia mesmo com relatórios reais no pacote.
+if [ -d "$SRC_ROOT/artifacts/benchmarks" ]; then
+  run_install_cmd mkdir -p "$PREFIX/artifacts"
+  run_install_cmd cp -R "$SRC_ROOT/artifacts/benchmarks" "$PREFIX/artifacts/"
+fi
 run_install_cmd cp -f "$SRC_ROOT/uninstall.sh" "$PREFIX/uninstall.sh"
 
 run_install_cmd chmod +x "$PREFIX/bin/main.exp" "$PREFIX/bin/replay2.exp" "$PREFIX/uninstall.sh"

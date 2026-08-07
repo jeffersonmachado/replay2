@@ -51,3 +51,22 @@ def test_tarball_stage_includes_pytest_ini():
 
     assert (ROOT / "pytest.ini").is_file()
     assert '"$ROOT_DIR/pytest.ini"' in script
+
+
+def test_installers_overlay_benchmark_artifacts_and_pytest_ini():
+    """Os instaladores/deploys devem entregar artifacts/benchmarks/ e pytest.ini
+    no servidor. O tarball inclui os artefatos (§33) e o control plane adota
+    os experimentos no boot (v0.8.8), mas o overlay do selfinstall (UPDATE) e
+    o install.sh copiavam só código — a UI /benchmark do servidor continuava
+    vazia mesmo após deploy."""
+    stub = (ROOT / "scripts" / "selfinstall-stub.sh").read_text(encoding="utf-8")
+    assert "artifacts/benchmarks" in stub, \
+        "selfinstall (UPDATE) deve sobrepor artifacts/benchmarks"
+    assert "pytest.ini" in stub, \
+        "selfinstall (UPDATE) deve sobrepor pytest.ini"
+
+    install = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "artifacts/benchmarks" in install, \
+        "install.sh (INSTALL novo) deve instalar artifacts/benchmarks"
+    assert "pytest.ini" in install, \
+        "install.sh (INSTALL novo) deve instalar pytest.ini"

@@ -197,11 +197,21 @@ if [ -f "$PREFIX/gateway/control/server.py" ]; then
   # Sobrepõe o código (o payload nunca contém gateway/state nem segredos)
   info "Sobrepondo código em $PREFIX ..."
   ITEMS=""
-  for item in bin lib screens examples gateway scripts tests install.sh uninstall.sh VERSION README.md conftest.py; do
+  for item in bin lib screens examples gateway scripts tests install.sh uninstall.sh VERSION README.md conftest.py pytest.ini; do
     [ -e "$SRC/$item" ] && ITEMS="$ITEMS $item"
   done
   (cd "$SRC" && tar -cf - $ITEMS) | (cd "$PREFIX" && tar -xf -) \
     || die "falha ao copiar arquivos para $PREFIX"
+
+  # Artefatos de benchmark (evidência de release, §33): o overlay acima não
+  # cobre artifacts/ inteiro para não tocar nas evidências locais do
+  # servidor, mas artifacts/benchmarks/ precisa chegar — o control plane
+  # adota os experimentos no banco no boot (v0.8.8).
+  if [ -d "$SRC/artifacts/benchmarks" ]; then
+    mkdir -p "$PREFIX/artifacts"
+    (cd "$SRC/artifacts" && tar -cf - benchmarks) | (cd "$PREFIX/artifacts" && tar -xf -) \
+      || die "falha ao copiar artifacts/benchmarks para $PREFIX"
+  fi
 
   # Limpa caches que possam ter ficado/vindo
   find "$PREFIX" -type d -name '__pycache__' -prune -exec rm -rf {} \; 2>/dev/null || true

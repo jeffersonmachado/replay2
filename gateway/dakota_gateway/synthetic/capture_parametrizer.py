@@ -2,6 +2,7 @@
 """Parametriza capturas .jsonl existentes para replay com dados sintéticos."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -35,6 +36,49 @@ class CaptureParametrizer:
 
     def __init__(self):
         self.template_engine = TemplateEngine()
+
+    @staticmethod
+    def _split_key_events(text: str) -> list[str]:
+        """Divide um bloco de input em texto corrido e teclas de controle.
+
+        ``deterministic_input`` traz o input inteiro da tela estável (ex.:
+        ``"1\\r"``); para parametrizar/replays precisamos da sequência
+        ``["1", "{KEY:ENTER}"]``. Sequências ANSI (``\\x1b[...``) viram
+        ``{KEY:...}`` como no fluxo de ``key_text``.
+        """
+        parts: list[str] = []
+        buf: list[str] = []
+        i = 0
+        n = len(text)
+
+        def flush() -> None:
+            if buf:
+                parts.append("".join(buf))
+                buf.clear()
+
+        while i < n:
+            ch = text[i]
+            if ch in ("\r", "\n"):
+                flush()
+                parts.append("{KEY:ENTER}")
+            elif ch == "\t":
+                flush()
+                parts.append("{KEY:TAB}")
+            elif ch == "\x1b":
+                flush()
+                m = re.match(r"^\x1b\[[A-Za-z]?", text[i:])
+                if m and len(m.group(0)) > 2:
+                    parts.append("{KEY:" + m.group(0)[2:] + "}")
+                    i += len(m.group(0)) - 1
+                else:
+                    parts.append("{KEY:ESC}")
+                    if m:
+                        i += len(m.group(0)) - 1
+            else:
+                buf.append(ch)
+            i += 1
+        flush()
+        return parts
 
     # ------------------------------------------------------------------
     # Análise de captura
@@ -79,6 +123,31 @@ class CaptureParametrizer:
                         "seq_global": event.get("seq_global", 0),
                         "input_start": len(inputs),
                     })
+
+                # Trilha auditável do gateway: tela estável + input no mesmo
+                # evento deterministic_input (screen_sig + key_text/key_b64).
+                # Sem este ramo, capturas reais viravam template vazio e a
+                # síntese dependia de conversor manual fora do fluxo oficial.
+                if event_type == "deterministic_input":
+                    sig = event.get("screen_sig") or ""
+                    if sig and (not screens
+                                or screens[-1].get("screen_sig") != sig):
+                        screens.append({
+                            "screen_sig": sig,
+                            "screen_sample": event.get("screen_sample", ""),
+                            "norm_len": event.get("norm_len", 0),
+                            "seq_global": event.get("seq_global", 0),
+                            "input_start": len(inputs),
+                        })
+                    key = event.get("key_text")
+                    if key is None and event.get("key_b64"):
+                        try:
+                            key = base64.b64decode(
+                                str(event["key_b64"])).decode("utf-8", "replace")
+                        except Exception:
+                            key = None
+                    if key:
+                        inputs.extend(self._split_key_events(str(key)))
 
                 # Coletar inputs (key_text)
                 if event_type in ("bytes", "checkpoint") and event.get("key_text"):

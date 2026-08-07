@@ -330,6 +330,27 @@ class ControlServer(ThreadingHTTPServer):
         self.benchmark_supervisor = BenchmarkSupervisor(
             db_path, self.benchmark_artifacts_dir)
 
+    def server_close(self):
+        """Para os componentes de fundo antes de fechar o socket.
+
+        Sem isto, cada instância vaza threads (host metrics a cada 5s, cache
+        janitor, sampler da porta 22, runtime capture) que seguem vivas após
+        o teardown — em suítes que sobem dezenas de servidores, as threads
+        residuais contendem no GIL e gravam em DBs já apagados (flake de
+        timeout em requisição loopback na árvore extraída do release 0.8.7).
+        Todos os stop() são idempotentes.
+        """
+        for attr in ("port22_sampler", "host_metrics_sampler",
+                     "replay_cache_janitor", "runtime_capture"):
+            component = getattr(self, attr, None)
+            if component is None:
+                continue
+            try:
+                component.stop()
+            except Exception:
+                pass
+        super().server_close()
+
     def _auto_activate_gateway(self, con):
         """Ativa o gateway automaticamente no boot (regra em gateway_state_service)."""
         _auto_activate_gateway_service(

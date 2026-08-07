@@ -215,7 +215,12 @@ terminal — isso é garantido pelo teste
   abandona a request (sonda a cada 64 linhas/eventos). Inclui também
   `synthetic_replay_service.py` — fluxo Synthetic → Replay real (dívida X5):
   materializa a jornada como trilha auditável efêmera e dispara run real
-  via replay_control;
+  via replay_control. O `benchmark_service.py` também faz a adoção de
+  experimentos de benchmark no boot do control plane
+  (`import_experiments_from_artifacts`): experimentos cujos artefatos vieram
+  no tarball (`artifacts/benchmarks/`, §33) são registrados em
+  `benchmark_experiments`/`benchmark_runs` de forma idempotente — sem isso a
+  lista `/api/benchmarks` ficava vazia após deploy (v0.8.8);
 - Módulos de suporte na raiz de `control/`: `auth_support.py`,
   `server_support.py`, `audit_scan_support.py`, `engineering_route_support.py`,
   `error_middleware.py`, `page_state_builders.py`, `runtime_supervision.py`,

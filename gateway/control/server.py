@@ -329,6 +329,26 @@ class ControlServer(ThreadingHTTPServer):
             default_project_root_from_file(__file__), "artifacts", "benchmarks")
         self.benchmark_supervisor = BenchmarkSupervisor(
             db_path, self.benchmark_artifacts_dir)
+        # Adoção de experimentos cujos artefatos vieram no tarball (§33):
+        # sem isto a lista /api/benchmarks ficava vazia após deploy mesmo com
+        # relatórios reais em artifacts/benchmarks/. Idempotente, nunca aborta
+        # o boot.
+        con4 = self.db_pool.acquire()
+        try:
+            from control.services.benchmark_service import (
+                import_experiments_from_artifacts,
+            )
+            importacao = import_experiments_from_artifacts(
+                con4, artifacts_dir=self.benchmark_artifacts_dir)
+            if importacao.get("imported"):
+                log.info(
+                    "[startup] experimentos de benchmark adotados dos artefatos: %s",
+                    ", ".join(importacao["imported"]),
+                )
+        except Exception:
+            log.exception("[startup] falha na importação de benchmarks (não fatal)")
+        finally:
+            self.db_pool.release(con4)
 
     def server_close(self):
         """Para os componentes de fundo antes de fechar o socket.

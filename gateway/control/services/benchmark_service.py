@@ -128,6 +128,78 @@ def _rebuild_result(experiment_dir: Path, contract) -> ExperimentResult:
     return resultado
 
 
+def import_experiments_from_artifacts(con, *, artifacts_dir) -> dict:
+    """Adota no banco experimentos cujos artefatos existem em disco (§24/§33).
+
+    Cobre o gap deploy → UI: o tarball de release inclui
+    ``artifacts/benchmarks/<experiment_id>/``, mas a listagem lê apenas
+    ``benchmark_experiments`` — servidor recém-atualizado mostrava a lista
+    vazia mesmo com relatórios reais em disco. Chamada no boot do control
+    plane (e disponível para uso operacional), é idempotente: experimento já
+    registrado é pulado e NUNCA sobrescrito. Diretório sem manifesto válido
+    vai para ``errors`` e não derruba o boot.
+    """
+    resumo: dict = {"imported": [], "skipped": [], "errors": []}
+    base = Path(artifacts_dir)
+    if not base.is_dir():
+        return resumo
+
+    for exp_dir in sorted(base.iterdir()):
+        if not exp_dir.is_dir():
+            continue
+        manifesto = exp_dir / "experiment-manifest.json"
+        if not manifesto.is_file():
+            continue
+        experiment_id = exp_dir.name
+        try:
+            if bp.get_experiment(con, experiment_id):
+                resumo["skipped"].append(experiment_id)
+                continue
+            contract = load_contract(manifesto)
+            if contract.experiment_id != experiment_id:
+                raise ValueError(
+                    f"experiment_id do manifesto ({contract.experiment_id}) "
+                    f"difere do diretório ({experiment_id})")
+
+            status, verdict, reason = "COMPLETED", "INCONCLUSIVE", ""
+            resultado_path = exp_dir / "execution-result.json"
+            if resultado_path.is_file():
+                dados = json.loads(resultado_path.read_text(encoding="utf-8"))
+                status = dados.get("status", status)
+                verdict = dados.get("verdict", verdict)
+                reason = dados.get("reason", reason)
+            bp.save_experiment(con, contract, status=status,
+                               verdict=verdict, reason=reason)
+
+            runs_dir = exp_dir / "runs"
+            if runs_dir.is_dir():
+                for run_dir in sorted(runs_dir.iterdir()):
+                    resumo_run = run_dir / "execution-result.json"
+                    if not run_dir.is_dir() or not resumo_run.is_file():
+                        continue
+                    dados = json.loads(resumo_run.read_text(encoding="utf-8"))
+                    run = EnvironmentRunResult(
+                        environment_id=dados.get("environment_id", ""),
+                        iteration=int(dados.get("iteration", 0)),
+                        concurrency=int(dados.get("concurrency", 0)),
+                        status=dados.get("status", "COMPLETED"),
+                        error_reason=dados.get("error_reason", ""),
+                    )
+                    bp.save_run(
+                        con,
+                        dados.get("run_id") or run_dir.name,
+                        experiment_id,
+                        run,
+                        phase_order=list(dados.get("environment_order") or []),
+                    )
+            resumo["imported"].append(experiment_id)
+        except Exception as exc:  # noqa: BLE001 — boot não pode abortar
+            log.warning("importação de benchmark ignorou %s: %s",
+                        experiment_id, exc)
+            resumo["errors"].append(experiment_id)
+    return resumo
+
+
 def _persist_result(con, contract, executor, result) -> None:
     """Persiste experimento, runs, amostras de aplicação e de host no SQLite."""
     bp.save_experiment(con, contract, status=result.status,

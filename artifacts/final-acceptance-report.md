@@ -1,5 +1,5 @@
-# Final Acceptance Report — release-20260806T213150Z-2744080b
-## Tree: 21335cb591842875e21d938e7c45c4380b178127e160e8c69b46bc7cbdc9dcd3
+# Final Acceptance Report — release-20260806T232348Z-d3f13f7b
+## Tree: 4b237ed7762b748bbaeb3c4d7c8b8059ab31435acfd10c9c7213f6130b78eeab
 ## Tree Gate: PASSED
 ## Baseline: VERIFIED
 ## Visual: bytes=78732 timeline=1

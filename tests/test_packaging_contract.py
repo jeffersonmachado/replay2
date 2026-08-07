@@ -41,3 +41,13 @@ def test_tarball_includes_final_reports_but_not_raw_log_directories():
     assert "final-acceptance-results.json" in script
     assert "manual-validation.json" in script
     assert '"$STAGE_DIR/logs"' in script
+
+
+def test_tarball_stage_includes_pytest_ini():
+    """Sem pytest.ini a árvore extraída perde pythonpath=gateway e os markers
+    registrados: a suíte pytest só coleta com PYTHONPATH externo (o pipeline
+    exporta na mão) e quebra standalone — incidente do release 0.8.7."""
+    script = (ROOT / "scripts" / "build-tarball.sh").read_text(encoding="utf-8")
+
+    assert (ROOT / "pytest.ini").is_file()
+    assert '"$ROOT_DIR/pytest.ini"' in script

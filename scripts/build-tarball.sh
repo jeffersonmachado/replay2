@@ -59,6 +59,9 @@ rm -rf "$STAGE_DIR/tests/tmp" 2>/dev/null || true
 cp -f "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/VERSION" "$STAGE_DIR/"
 # conftest.py da raiz aplica os markers do pytest (necessário para rodar a suíte no tarball)
 if [ -f "$ROOT_DIR/conftest.py" ]; then cp -f "$ROOT_DIR/conftest.py" "$STAGE_DIR/"; fi
+# pytest.ini: sem ele a árvore extraída perde pythonpath=gateway e os markers
+# registrados (collection quebra sem PYTHONPATH externo — incidente 0.8.7)
+if [ -f "$ROOT_DIR/pytest.ini" ]; then cp -f "$ROOT_DIR/pytest.ini" "$STAGE_DIR/"; fi
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
 # package.json + package-lock.json: puppeteer pinned (§29) — a árvore
 # extraída resolve a dependência visual sem instalação global silenciosa

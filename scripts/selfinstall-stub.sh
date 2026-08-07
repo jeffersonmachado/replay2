@@ -121,9 +121,13 @@ stop_services() {
 }
 
 start_services() {
-  su "$SERVICE_USER" -c "cd '$PREFIX/gateway' && DAKOTA_ADMIN=\"$BOOTSTRAP\" PYTHONPATH='$PREFIX/gateway':\$PYTHONPATH nohup python3 control/server.py --listen 0.0.0.0:$CONTROL_PORT --cookie-secret-file '$PREFIX/.local-secrets/cookie-secret' --hmac-key-file '$PREFIX/.local-secrets/hmac-key' --gateway-auto-activate --db '$PREFIX/gateway/state/replay.db' > /tmp/replay2-control.log 2>&1 &"
+  # Os su são destacados de stdin/stdout/stderr: sem isso os wrappers `bash -c`
+  # dos daemons herdam os descritores do chamador e uma sessão SSH de deploy
+  # (`ssh host "sh pacote.run"`) só encerra quando o último fd fecha — deploy
+  # travava com os serviços já saudáveis (homologação Linux, v0.8.9).
+  su "$SERVICE_USER" -c "cd '$PREFIX/gateway' && DAKOTA_ADMIN=\"$BOOTSTRAP\" PYTHONPATH='$PREFIX/gateway':\$PYTHONPATH nohup python3 control/server.py --listen 0.0.0.0:$CONTROL_PORT --cookie-secret-file '$PREFIX/.local-secrets/cookie-secret' --hmac-key-file '$PREFIX/.local-secrets/hmac-key' --gateway-auto-activate --db '$PREFIX/gateway/state/replay.db' > /tmp/replay2-control.log 2>&1 &" </dev/null >/dev/null 2>&1
   sleep 1
-  su "$SERVICE_USER" -c "cd '$PREFIX/gateway' && PYTHONPATH='$PREFIX/gateway':\$PYTHONPATH nohup python3 '$PREFIX/gateway/dakota-gateway' capture-daemon --db '$PREFIX/gateway/state/replay.db' --hmac-key-file '$PREFIX/.local-secrets/hmac-key' > /tmp/replay2-capture-daemon.log 2>&1 &"
+  su "$SERVICE_USER" -c "cd '$PREFIX/gateway' && PYTHONPATH='$PREFIX/gateway':\$PYTHONPATH nohup python3 '$PREFIX/gateway/dakota-gateway' capture-daemon --db '$PREFIX/gateway/state/replay.db' --hmac-key-file '$PREFIX/.local-secrets/hmac-key' > /tmp/replay2-capture-daemon.log 2>&1 &" </dev/null >/dev/null 2>&1
   sleep 3
   python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:$CONTROL_PORT/health',timeout=5).read().decode())" \
     || die "control plane não respondeu no /health (ver /tmp/replay2-control.log)"

@@ -554,8 +554,9 @@ ssh root@10.5.8.25 "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakot
 ```bash
 SSH_PASSWORD="$SSH_PASSWORD" bash scripts/deploy.sh --target linux
 ```
-(Deploy Linux ainda usa o fluxo tar-pipe; o caminho `.run` ainda não foi
-homologado para Linux.)
+O deploy Linux usa o mesmo **self-installing archive** (`.run`) do AIX
+(homologado na 0.8.9; o stub destaca stdin/stdout/stderr dos `su` de
+`start_services` para não travar a sessão SSH do deploy).
 
 O script cuida de: build do tarball/instalador, backup do banco, parada do
 serviço, sincronização, chown, restart e health check.

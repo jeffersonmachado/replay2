@@ -1088,6 +1088,21 @@ def _handle_benchmark(ns) -> int:
         }, ensure_ascii=False, indent=2))
         return 0
 
+    if ns.benchmark_cmd == "import":
+        # Adota no banco experimentos cujos artefatos existem em disco
+        # (mesma rotina do boot do control plane; útil em operação headless).
+        from control.services.benchmark_service import (
+            import_experiments_from_artifacts)
+        con = _connect(ns.db or _default_db_path())
+        _init_db(con)
+        try:
+            resumo = import_experiments_from_artifacts(
+                con, artifacts_dir=ns.artifacts_dir)
+        finally:
+            con.close()
+        print(json.dumps(resumo, ensure_ascii=False, indent=2))
+        return 1 if resumo["errors"] else 0
+
     experiment_dir = _bench_experiment_dir(ns)
     if experiment_dir is None:
         return 2
@@ -1708,6 +1723,11 @@ def main(argv: list[str] | None = None) -> int:
                                  help="JSON com os campos do contrato (§6)")
     ap_bmark_create.add_argument("--artifacts-dir", default="artifacts/benchmarks")
     ap_bmark_create.add_argument("--db", default="", help="Caminho do banco SQLite")
+
+    ap_bmark_import = ap_bmark_sub.add_parser(
+        "import", help="Adota no banco experimentos presentes nos artefatos")
+    ap_bmark_import.add_argument("--db", default="", help="Caminho do banco SQLite")
+    ap_bmark_import.add_argument("--artifacts-dir", default="artifacts/benchmarks")
 
     for nome, ajuda in [
         ("preflight", "Valida acessibilidade SSH dos ambientes do contrato"),

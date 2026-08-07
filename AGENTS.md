@@ -164,7 +164,10 @@ replay2/
   subcomandos (`analyze-source`, `screens`, `generate`, `stress`, `journey ...`,
   `schedule ...`, `record`, `explore`, `quickstart`, `pipeline`, `benchmark`,
   `assess`, `knowledge-base`, `export-junit`, `export-csv`, `watch`, `metrics`,
-  `diff-quickstart`);
+  `diff-quickstart`) e o subcomando top-level `benchmark` (benchmark real AIX ×
+  Linux: `create`, `preflight`, `run`, `status`, `compare`, `report`, `import`
+  — este último adota no banco experimentos presentes em
+  `artifacts/benchmarks/`, mesma rotina do boot do control plane);
 - `source_analyzer/` — P2-A Discovery: extratores SQL/ISAM/DBF/Recital, telas,
   menus, CRUD, relacionamentos, catálogo de programas/entidades, auditoria;
 - `synthetic/` — P2-A Synthetic: planejador de dataset (grafo de dependências),
@@ -406,6 +409,14 @@ De `CONTRIBUTING.md` + prática observada:
   que é shim legado);
 - Rotas novas em `gateway/control/routes/`, regras em `services/` — manter
   `server.py` enxuto.
+
+### Paridade UI × CLI (princípio obrigatório)
+- Todo recurso operacional deve existir **sempre via UI** — o usuário final é
+  leigo e não pode depender de terminal;
+- CLI é bem-vinda e desejada para os mesmos recursos (automação, servidores
+  headless, homologação), mas **nunca como substituto da UI**;
+- Regra nova de UI sem equivalente CLI é aceitável; recurso "só CLI" para
+  operação de usuário final, não — nesse caso a UI é obrigatória.
 
 ### Shell
 - POSIX compatível (sem bash-isms nos scripts de produção; `test.sh`/`dev.sh`

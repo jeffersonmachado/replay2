@@ -7,7 +7,7 @@
 <!-- Selo do tipo de resultado (REAL / SIMULATION / INCONCLUSIVE) -->
 <div id="bench_seal" class="r2ctl-card mb-4 p-4 border-stone-600/40">
   <div class="flex items-center gap-3">
-    <span id="bench_seal_badge" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVE</span>
+    <span id="bench_seal_badge" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVO</span>
     <span id="bench_seal_text" class="text-sm text-stone-300">Nenhum experimento selecionado. Crie um experimento real ou selecione um existente — números só aparecem após execução com amostras reais.</span>
   </div>
 </div>
@@ -51,7 +51,7 @@
           <input id="bexp_iterations" type="number" value="3" min="1" class="r2ctl-input w-full">
         </div>
         <div>
-          <label class="block text-sm text-stone-300 mb-1">Warm-up (s)</label>
+          <label class="block text-sm text-stone-300 mb-1">Aquecimento (s)</label>
           <input id="bexp_warmup" type="number" value="30" min="0" class="r2ctl-input w-full">
         </div>
         <div>
@@ -61,7 +61,7 @@
       </div>
       <div class="grid grid-cols-2 gap-3 mb-3 sm:grid-cols-4">
         <div>
-          <label class="block text-sm text-stone-300 mb-1">Cooldown (s)</label>
+          <label class="block text-sm text-stone-300 mb-1">Resfriamento (s)</label>
           <input id="bexp_cooldown" type="number" value="10" min="0" class="r2ctl-input w-full">
         </div>
         <div>
@@ -128,7 +128,7 @@
 
       <!-- Veredito -->
       <div class="mb-4">
-        <span id="bdetail_verdict" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVE</span>
+        <span id="bdetail_verdict" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-stone-700/60 text-stone-300">INCONCLUSIVO</span>
         <ul id="bdetail_reasons" class="mt-2 text-sm text-stone-300 list-disc list-inside"></ul>
         <div id="bdetail_recommendation" class="mt-2 text-sm text-emerald-300 hidden"></div>
       </div>
@@ -141,7 +141,7 @@
         <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Hash do dataset</span><br><code id="bdetail_dataset_sha" class="text-stone-200 break-all"></code></div>
         <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Concorrência</span><br><span id="bdetail_concurrency" class="text-stone-200"></span></div>
         <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Iterações</span><br><span id="bdetail_iterations" class="text-stone-200"></span></div>
-        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Warm-up / Medição / Cooldown</span><br><span id="bdetail_phases" class="text-stone-200"></span></div>
+        <div class="r2ctl-detail-surface rounded-xl p-2"><span class="text-stone-400">Aquecimento / Medição / Resfriamento</span><br><span id="bdetail_phases" class="text-stone-200"></span></div>
       </div>
 
       <!-- Ambientes + hardware -->
@@ -149,7 +149,7 @@
       <div id="bdetail_envs" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
 
       <!-- Desempenho por ambiente -->
-      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Desempenho (amostras de MEASUREMENT, pooling)</h4>
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">Desempenho (amostras de MEDIÇÃO, pooling)</h4>
       <div id="bdetail_stats_empty" class="text-sm text-stone-400 mb-4 hidden">Sem amostras reais — execute o experimento para ver TPS, percentis e erros.</div>
       <div id="bdetail_stats" class="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2"></div>
 
@@ -231,7 +231,7 @@
 
 <div id="bsim_result" class="hidden mb-4">
   <div class="rounded-xl border border-amber-600/50 bg-amber-950/40 p-3 mb-3 text-sm text-amber-200">
-    <span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-amber-600/30 text-amber-200 mr-2">SIMULATION</span>
+    <span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-amber-600/30 text-amber-200 mr-2">SIMULAÇÃO</span>
     Resultado de simulação — os números abaixo NÃO são medição real e NÃO sustentam decisão de migração.
   </div>
   <div id="bsim_summary" class="r2ctl-card mb-3 p-4 text-sm text-stone-200"></div>

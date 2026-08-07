@@ -19,6 +19,8 @@ function fmt(value, casas = 2) {
 function seal(kind, note) {
   const badge = qs("#bench_seal_badge");
   const card = qs("#bench_seal");
+  const translate = { REAL: "REAL", SIMULATION: "SIMULAÇÃO", INCONCLUSIVE: "INCONCLUSIVO" };
+  const label = translate[kind] || kind || "INCONCLUSIVO";
   const styles = {
     REAL: "bg-emerald-600/30 text-emerald-200",
     SIMULATION: "bg-amber-600/30 text-amber-200",
@@ -30,12 +32,13 @@ function seal(kind, note) {
     INCONCLUSIVE: "r2ctl-card mb-4 p-4 border-stone-600/40",
   };
   badge.className = `inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${styles[kind] || styles.INCONCLUSIVE}`;
-  badge.textContent = kind;
+  badge.textContent = label;
   card.className = borders[kind] || borders.INCONCLUSIVE;
   text("#bench_seal_text", note);
 }
 
 function verdictBadge(verdict) {
+  const translate = { PASS: "APROVADO", WARN: "ALERTA", FAIL: "REPROVADO", INCONCLUSIVE: "INCONCLUSIVO" };
   const styles = {
     PASS: "bg-emerald-600/30 text-emerald-200",
     WARN: "bg-amber-600/30 text-amber-200",
@@ -43,7 +46,8 @@ function verdictBadge(verdict) {
     INCONCLUSIVE: "bg-stone-700/60 text-stone-300",
   };
   const v = String(verdict || "INCONCLUSIVE").toUpperCase();
-  return `<span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${styles[v] || styles.INCONCLUSIVE}">${escapeHtml(v)}</span>`;
+  const label = translate[v] || v;
+  return `<span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${styles[v] || styles.INCONCLUSIVE}">${escapeHtml(label)}</span>`;
 }
 
 function statusBadge(status) {

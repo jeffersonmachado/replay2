@@ -99,7 +99,7 @@ function renderGenerated(r) {
       '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Operacao</th><th>Programa</th></tr>' +
       Object.entries(progs).map(([k,v]) => '<tr><td>' + esc(k) + '</td><td class="font-mono">' + esc(v) + '</td></tr>').join('') +
       '</table></div>' +
-      '<p class="r2ctl-report-meta mt-1">Dataset: ' + esc(JSON.stringify(rep.dataset_bindings || {})) + '</p>' +
+      '<p class="r2ctl-report-meta mt-1">Dataset: ' + formatBindings(rep.dataset_bindings || {}) + '</p>' +
     '</details>' +
   '</div>';
 }
@@ -112,6 +112,15 @@ function renderSkipped(r) {
     '<div class="r2ctl-reason mt-1">' + esc(sel.justification || 'CRUD incompleto') + '</div>' +
     (sel.missing_operations ? '<div class="text-xs text-stone-400 mt-1">Faltam: ' + esc(sel.missing_operations.join(', ')) + '</div>' : '') +
   '</div>';
+}
+
+function formatBindings(bindings) {
+  const entries = Object.entries(bindings || {});
+  if (!entries.length) return '<span class="text-stone-500">—</span>';
+  return entries.map(([k, v]) => {
+    const val = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—');
+    return '<span class="r2ctl-reason">' + esc(k) + ': <strong>' + esc(val) + '</strong></span>';
+  }).join(' ');
 }
 
 function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }

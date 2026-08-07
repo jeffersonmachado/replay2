@@ -8,7 +8,7 @@ export function targetCard(item) {
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.name || item.env_id || "-")}</div>
           <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.host || "-")} • ${escapeHtml(item.platform || "-")} • ${escapeHtml(item.transport_hint || "-")}</div>
         </div>
-        <span class="r2ctl-status-pill r2ctl-status ${item.gateway_required ? "r2ctl-status-danger" : "r2ctl-status-brand"}">${item.gateway_required ? "gateway-only" : "acesso flexivel"}</span>
+        <span class="r2ctl-status-pill r2ctl-status ${item.gateway_required ? "r2ctl-status-danger" : "r2ctl-status-brand"}">${item.gateway_required ? "somente gateway" : "acesso flexivel"}</span>
       </div>
     </div>
   `;

@@ -247,8 +247,8 @@ def handle_engineering_page_get_route(req, p: ParseResult) -> bool:
         },
         "/assess": {
             "template": "assess.html",
-            "title": "Dakota Calcados | AI Assessment",
-            "page_title": "AI Assessment",
+            "title": "Dakota Calcados | Avaliação IA",
+            "page_title": "Avaliação IA",
             "page_description": "Analise inteligente: garbage collector, gargalos, riscos e recomendacoes.",
             "page_kicker": "Engenharia de Validacao",
             "active_menu": "engineering",

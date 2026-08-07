@@ -86,6 +86,35 @@ function renderList(selector, items, keyName) {
   html(selector, statList(items || [], keyName));
 }
 
+const SEVERITY_LABELS = { critical: "Crítica", high: "Alta", medium: "Média", low: "Baixa", info: "Info" };
+const SEVERITY_COLORS = {
+  critical: "text-rose-300 bg-rose-900/30",
+  high: "text-amber-300 bg-amber-900/30",
+  medium: "text-yellow-300 bg-yellow-900/30",
+  low: "text-stone-300 bg-stone-700/40",
+  info: "text-sky-300 bg-sky-900/30",
+};
+
+function formatFailureCard(f) {
+  const severity = String(f.severity || "info").toLowerCase();
+  const sevLabel = SEVERITY_LABELS[severity] || severity;
+  const sevColor = SEVERITY_COLORS[severity] || SEVERITY_COLORS.info;
+  const ts = f.ts_ms ? new Date(f.ts_ms).toLocaleString("pt-BR") : "—";
+  return `
+    <div class="r2ctl-detail-surface rounded-xl px-3 py-2 mb-1">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span class="rounded-full ${sevColor} px-2 py-0.5 text-xs font-semibold">${escapeHtml(sevLabel)}</span>
+        <span class="text-stone-200 font-semibold">${escapeHtml(f.failure_type || "—")}</span>
+        <span class="text-xs text-stone-400 ml-auto">${escapeHtml(ts)}</span>
+      </div>
+      <div class="mt-1 flex flex-wrap gap-x-3 text-xs text-stone-400">
+        <span>run: <a href="/runs/${escapeHtml(f.run_id || "")}" class="text-stone-300 hover:underline font-mono">#${escapeHtml(String(f.run_id || "—"))}</a></span>
+        <span>sessão: <span class="text-stone-300 font-mono">${escapeHtml(String(f.session_id || "—"))}</span></span>
+        <span>seq: <span class="text-stone-300">${escapeHtml(String(f.seq_global ?? "—"))}</span></span>
+      </div>
+    </div>`;
+}
+
 async function loadOverview() {
   const qs = buildQuery(currentScenarioFilters());
   const result = await apiJson(`/api/observability/overview?${qs}`);
@@ -103,7 +132,10 @@ async function loadOverview() {
   renderList("#obs_gateway_types", (gw.summary || {}).top_types || [], "type");
   renderList("#obs_run_status", ops.run_status || [], "status");
   renderList("#obs_failure_types", ops.failure_types || [], "failure_type");
-  text("#obs_failures", JSON.stringify(ops.recent_failures || [], null, 2));
+  const failures = ops.recent_failures || [];
+  html("#obs_failures", failures.length
+    ? failures.map(formatFailureCard).join("")
+    : '<div class="text-sm text-stone-400">Nenhuma falha recente.</div>');
   html("#obs_runs", (ops.recent_runs || []).length ? (ops.recent_runs || []).map(runCompactCard).join("") : '<div class="text-sm text-stone-400">Sem runs recentes.</div>');
   html("#obs_regressions", (ops.recent_regressions || []).length ? (ops.recent_regressions || []).map(regressionCard).join("") : '<div class="text-sm text-stone-400">Nenhuma regressão relevante.</div>');
   html("#obs_active_filters", Object.entries((trend.summary || {}).filters || currentScenarioFilters()).map(([key, value]) => `<div class="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/40 px-3 py-2"><span class="text-xs uppercase tracking-[0.14em] text-stone-400">${escapeHtml(key)}</span><span class="font-mono text-xs text-stone-200">${escapeHtml(value || "-")}</span></div>`).join(""));

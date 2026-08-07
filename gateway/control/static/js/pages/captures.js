@@ -438,7 +438,41 @@ function renderCaptureSessions(captureId, capture, sessions, preferredSessionId)
 async function loadCaptureEvents(captureId) {
   const result = await apiJson(`/api/captures/${captureId}/events?limit=300`);
   if (!result?.data) return;
-  text("#cap_events_content", JSON.stringify(result.data, null, 2));
+  const events = Array.isArray(result.data) ? result.data : [];
+  if (!events.length) {
+    text("#cap_events_content", "Nenhum evento encontrado.");
+    return;
+  }
+  html("#cap_events_content", events.map((evt, i) => renderEventCard(evt, i)).join(""));
+}
+
+function renderEventCard(evt, index) {
+  const type = String(evt.type || evt.event_type || "—");
+  const seq = evt.seq_global ?? evt.seq ?? "—";
+  const ts = evt.ts_ms ? new Date(evt.ts_ms).toLocaleString("pt-BR") : "—";
+  const session = evt.session_id || evt.session_uuid || "—";
+
+  let details = "";
+  const skipKeys = new Set(["type", "event_type", "seq_global", "seq", "ts_ms", "session_id", "session_uuid"]);
+  const extra = Object.entries(evt).filter(([k]) => !skipKeys.has(k));
+  if (extra.length) {
+    details = `<div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-400">${extra.map(([k, v]) => {
+      const val = typeof v === "object" ? JSON.stringify(v) : String(v ?? "—");
+      return `<span><span class="text-stone-500">${escapeHtml(k)}:</span> <span class="text-stone-300">${escapeHtml(val)}</span></span>`;
+    }).join("")}</div>`;
+  }
+
+  return `
+    <div class="r2ctl-detail-surface rounded-xl px-3 py-2 mb-1">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span class="font-mono text-xs text-stone-500">#${index + 1}</span>
+        <span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs font-semibold text-stone-200">${escapeHtml(type)}</span>
+        <span class="text-xs text-stone-400">seq: <span class="text-stone-200">${escapeHtml(String(seq))}</span></span>
+        <span class="text-xs text-stone-400">sessão: <span class="text-stone-200 font-mono">${escapeHtml(String(session))}</span></span>
+        <span class="text-xs text-stone-500 ml-auto">${escapeHtml(ts)}</span>
+      </div>
+      ${details}
+    </div>`;
 }
 
 async function stopCapture(captureId) {

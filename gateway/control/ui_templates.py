@@ -69,7 +69,7 @@ _MENU_CONFIG = [
         "icon": "OB",
         "key": "observability",
         "children": [
-            {"label": "Overview", "href": "/observability/overview", "key": "observability"},
+            {"label": "Visão Geral", "href": "/observability/overview", "key": "observability"},
             {"label": "SLA", "href": "/observability/sla", "key": "observability_sla"},
             {"label": "Reprocessamentos", "href": "/observability/reprocess", "key": "observability_reprocess"},
             {"label": "Regressoes", "href": "/observability/regressions", "key": "observability_regressions"},
@@ -89,7 +89,7 @@ _MENU_CONFIG = [
             {"label": "Pipeline", "href": "/pipeline", "key": "engineering_pipeline"},
             {"label": "Synthetic", "href": "/synthetic", "key": "engineering_synthetic"},
             {"label": "Benchmark", "href": "/benchmark", "key": "engineering_benchmark"},
-            {"label": "AI Assessment", "href": "/assess", "key": "engineering_assess"},
+            {"label": "Avaliação IA", "href": "/assess", "key": "engineering_assess"},
             {"label": "Auditoria IA", "href": "/audit", "key": "engineering_audit"},
             {"label": "Relatorio Jornadas", "href": "/journeys-report", "key": "engineering_journeys_report"},
             {"label": "Regras de Negocio", "href": "/business-rules", "key": "engineering_business_rules"},
@@ -455,7 +455,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -466,7 +466,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/overview",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -478,7 +478,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/sla",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -490,7 +490,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/reprocess",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -502,7 +502,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/regressions",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -514,7 +514,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/trends",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -526,7 +526,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/flows",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -538,7 +538,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/signatures",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -550,7 +550,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/automation",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade",
         "page_description": "Diagnostico analitico, SLA, reprocessamentos e tendencias da operacao.",
         "page_kicker": "Replay Suite",
@@ -562,7 +562,7 @@ ROUTES_CONFIG = [
     {
         "path": "/observability/resources",
         "template": "observability.html",
-        "title": "Dakota Calcados | Observability",
+        "title": "Dakota Calcados | Observabilidade",
         "page_title": "Observabilidade - Recursos do Host",
         "page_description": "CPU, memoria, load e disco do servidor durante a execucao, com comparacao entre ambientes.",
         "page_kicker": "Replay Suite",
@@ -680,8 +680,8 @@ ROUTES_CONFIG = [
     {
         "path": "/synthetic",
         "template": "synthetic.html",
-        "title": "Dakota Calcados | Synthetic Control",
-        "page_title": "Synthetic Control",
+        "title": "Dakota Calcados | Controle Sintetico",
+        "page_title": "Controle Sintetico",
         "page_description": "Geração de massa sintética, jornadas, stress e homologação.",
         "page_kicker": "Qualidade & Homologação",
         "menu": "engineering",
@@ -712,8 +712,8 @@ ROUTES_CONFIG = [
     {
         "path": "/assess",
         "template": "assess.html",
-        "title": "Dakota Calcados | AI Assessment",
-        "page_title": "AI Assessment",
+        "title": "Dakota Calcados | Avaliação IA",
+        "page_title": "Avaliação IA",
         "page_description": "Analise inteligente: garbage collector, gargalos, riscos e recomendacoes.",
         "page_kicker": "Engenharia de Validacao",
         "menu": "engineering",

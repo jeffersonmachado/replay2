@@ -9,10 +9,10 @@
 
 <div class="r2ctl-syn-actions">
   <input class="r2ctl-syn-input r2ctl-syn-input-wide" id="source-dir" placeholder="/opt/dados/sistema/fusao/desenv/" value="/opt/dados/sistema/fusao/desenv/">
-  <button class="r2ctl-syn-btn" onclick="analyzeSource()">🔍 Analyze Source</button>
-  <button class="r2ctl-syn-btn" onclick="loadDataPlans()">🧠 Infer Data Plans</button>
-  <button class="r2ctl-syn-btn" onclick="inferJourneys()">🗺️ Infer Journeys</button>
-  <button class="r2ctl-syn-btn" onclick="loadStatus()">🔄 Refresh</button>
+  <button class="r2ctl-syn-btn" onclick="analyzeSource()">🔍 Analisar Código</button>
+  <button class="r2ctl-syn-btn" onclick="loadDataPlans()">🧠 Inferir Planos</button>
+  <button class="r2ctl-syn-btn" onclick="inferJourneys()">🗺️ Inferir Jornadas</button>
+  <button class="r2ctl-syn-btn" onclick="loadStatus()">🔄 Atualizar</button>
 </div>
 
 <div class="r2ctl-syn-grid">
@@ -130,6 +130,19 @@ function renderJsonTable(targetId, records) {
   </table>`;
 }
 
+function renderRecordData(data) {
+  if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
+    return '<div class="r2ctl-syn-muted">Sem dados.</div>';
+  }
+  const rows = Object.entries(data).map(([key, value]) => {
+    const displayValue = value === null || value === undefined ? '<span class="text-stone-500">—</span>'
+      : typeof value === 'object' ? `<span class="font-mono text-xs">${escapeHtml(JSON.stringify(value))}</span>`
+      : escapeHtml(String(value));
+    return `<tr><td class="text-stone-400 text-xs font-semibold pr-3 py-1 align-top">${escapeHtml(key)}</td><td class="text-stone-200 text-sm py-1">${displayValue}</td></tr>`;
+  }).join('');
+  return `<table class="r2ctl-syn-table">${rows}</table>`;
+}
+
 function selectedPlan() {
   const planId = document.getElementById('plan-select').value;
   return currentPlans.find(plan => plan.plan_id === planId) || null;
@@ -203,7 +216,7 @@ function renderPreflight(preflight) {
           <span>Registro ${record.record_index}</span>
           <span class="r2ctl-syn-badge ${badgeClass(record.passed)}">${record.passed ? 'ok' : 'erro'}</span>
         </div>
-        <pre class="r2ctl-syn-pre">${escapeHtml(JSON.stringify(record.data, null, 2))}</pre>
+        <div class="r2ctl-syn-record-data">${renderRecordData(record.data)}</div>
         ${violations || '<div class="r2ctl-syn-muted">Sem violações.</div>'}
       </div>`;
   }).join('');

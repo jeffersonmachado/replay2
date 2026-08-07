@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { html, text } from "../core/dom.js";
+import { escapeHtml, html, text } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 
 async function reprocessFromFailure(runId, failureId, scope) {
@@ -56,7 +56,51 @@ async function loadDetail(id) {
   ]);
   if (!detail?.data?.run) return;
   renderDetail(detail.data.run, report?.data?.report || {}, comparison?.data?.comparison || {}, failures?.data?.failures || []);
-  text("#events", JSON.stringify({ failures: failures?.data?.failures || [], events: events?.data?.events || [] }, null, 2));
+  const failureList = failures?.data?.failures || [];
+  const eventList = events?.data?.events || [];
+
+  let eventsHtml = "";
+  if (!failureList.length && !eventList.length) {
+    eventsHtml = '<div class="text-sm text-stone-400">Nenhum evento ou falha registrado.</div>';
+  } else {
+    eventsHtml = '<div class="space-y-4">';
+
+    if (failureList.length) {
+      eventsHtml += '<div><div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Falhas (' + failureList.length + ')</div>';
+      eventsHtml += '<div class="r2ctl-table-scroll"><table class="w-full text-sm"><thead><tr class="text-left text-stone-400 border-b border-stone-700/40">'
+        + '<th class="py-1 pr-2">Tipo</th><th class="py-1 pr-2">Gravidade</th><th class="py-1 pr-2">Sessão</th><th class="py-1 pr-2">Seq</th><th class="py-1">Data/Hora</th></tr></thead><tbody>';
+      eventsHtml += failureList.map(f => {
+        const sev = String(f.severity || "—");
+        const ts = f.ts_ms ? new Date(f.ts_ms).toLocaleString("pt-BR") : "—";
+        return '<tr class="border-b border-stone-800/40">'
+          + '<td class="py-1 pr-2 text-stone-200">' + escapeHtml(f.failure_type || "—") + '</td>'
+          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs">' + escapeHtml(sev) + '</span></td>'
+          + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(f.session_id || "—")) + '</td>'
+          + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(f.seq_global ?? "—")) + '</td>'
+          + '<td class="py-1 text-xs text-stone-400">' + escapeHtml(ts) + '</td></tr>';
+      }).join("");
+      eventsHtml += '</tbody></table></div></div>';
+    }
+
+    if (eventList.length) {
+      eventsHtml += '<div><div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Eventos (' + eventList.length + ')</div>';
+      eventsHtml += '<div class="r2ctl-table-scroll"><table class="w-full text-sm"><thead><tr class="text-left text-stone-400 border-b border-stone-700/40">'
+        + '<th class="py-1 pr-2">Tipo</th><th class="py-1 pr-2">Seq Global</th><th class="py-1 pr-2">Sessão</th><th class="py-1">Data/Hora</th></tr></thead><tbody>';
+      eventsHtml += eventList.map(e => {
+        const ts = e.ts_ms ? new Date(e.ts_ms).toLocaleString("pt-BR") : "—";
+        return '<tr class="border-b border-stone-800/40">'
+          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs font-semibold text-stone-200">' + escapeHtml(e.type || e.event_type || "—") + '</span></td>'
+          + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(e.seq_global ?? e.seq ?? "—")) + '</td>'
+          + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(e.session_id || e.session_uuid || "—")) + '</td>'
+          + '<td class="py-1 text-xs text-stone-400">' + escapeHtml(ts) + '</td></tr>';
+      }).join("");
+      eventsHtml += '</tbody></table></div></div>';
+    }
+
+    eventsHtml += '</div>';
+  }
+
+  html("#events", eventsHtml);
 }
 
 window.addEventListener("DOMContentLoaded", () => {

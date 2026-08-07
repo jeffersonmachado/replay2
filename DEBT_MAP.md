@@ -33,7 +33,7 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | R1 | `ui_routes.py` ✅ | **CORRIGIDO** | Reduzido de 597 para 102 linhas. `ROUTES_CONFIG` extraído para `ui_templates.py`. |
-| R2 | `synthetic_routes.py` | **PARCIAL** | Reduzido de 599 para 396 linhas no ciclo de 2026-06; o módulo voltou a crescer e tem **823 linhas** em 2026-07-23. Delegação para `journey_routes.py` mantida, mas o tamanho atual indica dívida reaberta. |
+| R2 | `synthetic_routes.py` ✅ | **RESOLVIDA (2026-08-07, v0.8.11)** | Reduzido de 599 para 396 linhas no ciclo de 2026-06; reabriu e chegou a **886 linhas**. Decomposto: regras de domínio (serializadores de plan/dataset/preflight, persistência, builders de payload GET/POST, pipeline async) extraídas para `services/synthetic_plan_service.py` (567 linhas); a rota ficou com 486 linhas, só acoplamento HTTP. Contrato anti-regressão: `tests/test_routes_thin_contract.py` (teto de 500 linhas + serializadores fora da rota). |
 | R3 | `journey_routes.py` sobrepõe `synthetic_routes.py` ✅ | **CORRIGIDO** | Unificado: `journey_routes.py` é fonte canônica. `synthetic_routes.py` delega com rewrite de path. |
 | R4 | `_write_json` extraído ✅ | **CORRIGIDO** | 9 duplicações removidas. Centralizado em `route_helpers.py`. |
 | R5 | DELETE incompleto ✅ | **CORRIGIDO** | Adicionados: `DELETE /api/runs/{id}`, `DELETE /api/captures/{id}`, `DELETE /api/targets/{id}`, `DELETE /api/connection-profiles/{id}`. |

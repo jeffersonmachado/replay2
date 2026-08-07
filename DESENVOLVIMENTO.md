@@ -87,6 +87,10 @@ DAKOTA_GATEWAY_AUTO_ACTIVATE=true npm run dev
 # Modo de operação (lab, production, homologation)
 DAKOTA_ENV=production npm run dev
 
+# Rate limiting de /api/* por IP (default 600 req/min; 0 desliga)
+DAKOTA_RATE_LIMIT_RPM=600 npm run dev
+DAKOTA_RATE_LIMIT=0 npm run dev
+
 # Combinação completa para bootstrap após reset
 DAKOTA_ADMIN='admin:Dakota@2026!' \
   DAKOTA_GATEWAY_AUTO_ACTIVATE=true \

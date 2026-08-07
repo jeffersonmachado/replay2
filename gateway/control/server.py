@@ -60,6 +60,7 @@ from control.routes import (
     handle_ui_get_route,
 )
 from control.routes.route_helpers import write_json
+from control.rate_limit import from_env as _rate_limiter_from_env
 # Re-exports de services: consumidos como CONTROL._* pelos testes de
 # integração (tests/test_gateway_status_unit.py, test_targets_api.py, ...).
 from control.services.environment_service import (
@@ -267,6 +268,9 @@ class ControlServer(ThreadingHTTPServer):
             self.db_pool.release(con2)
         self.runner = Runner(db_path, hmac_key)
         self.port22_sampler = _Port22CaptureSampler()
+        # Rate limiting por IP para /api/* (X2) — None quando
+        # DAKOTA_RATE_LIMIT=0. /api/login tem throttle próprio mais estrito.
+        self.rate_limiter = _rate_limiter_from_env()
         # Sampler de recursos do host (CPU/mem/load/disco) para o painel
         # /observability/resources e comparação de estresse entre ambientes.
         self.host_metrics_sampler = None
@@ -536,11 +540,39 @@ class Handler(BaseHTTPRequestHandler):
         write_json(self, 401, {"error": "autenticacao requerida"})
         return False
 
+    def _rate_limit_guard(self, path: str) -> bool:
+        """Rate limit por IP para /api/* (X2). /api/login é excluído — já tem
+        throttle próprio mais estrito por (IP, username) em admin_routes.
+
+        Retorna True se a requisição pode prosseguir; caso contrário já
+        respondeu 429 com Retry-After. Roda ANTES do auth guard para conter
+        também tráfego abusivo não autenticado.
+        """
+        limiter = getattr(self.server, "rate_limiter", None)
+        if limiter is None or not path.startswith("/api/") or path == "/api/login":
+            return True
+        client_host = self.client_address[0] if hasattr(self, "client_address") else ""
+        if limiter.allow(client_host or "unknown"):
+            return True
+        retry_after = limiter.retry_after(client_host or "unknown")
+        body = json.dumps(
+            {"error": "limite de requisições excedido; tente novamente em breve"},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Retry-After", str(retry_after))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
+
     @error_guard
     def do_GET(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
 
+        if not self._rate_limit_guard(p.path):
+            return
         if not self._api_auth_guard(p.path):
             return
 
@@ -643,6 +675,8 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
 
+        if not self._rate_limit_guard(p.path):
+            return
         # Guard de autenticação antes de ler o corpo (M5/C1).
         if not self._api_auth_guard(p.path):
             return
@@ -708,6 +742,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         p = urlparse(self.path)
         p = p._replace(path=self._normalize_path(p.path))
+        if not self._rate_limit_guard(p.path):
+            return
         if not self._api_auth_guard(p.path):
             return
         if handle_run_delete_route(self, p):

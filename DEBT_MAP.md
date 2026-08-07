@@ -78,7 +78,7 @@
 | # | Item | Severidade | Descrição |
 |---|------|-----------|-----------|
 | X1 | Sem middleware de erro ✅ | **CORRIGIDO** | `error_middleware.py` com decorator `@error_guard` aplicado em `do_GET`, `do_POST`, `do_DELETE`. Retorna 500 JSON padronizado com traceback no console. |
-| X2 | Sem rate limiting | **BAIXA** | Nenhuma proteção contra abuso de endpoints. |
+| X2 | Sem rate limiting ✅ | **RESOLVIDA (2026-08-06)** | Duas camadas: (1) throttle de login já existente em `admin_routes.py` (5 falhas/10 min → lockout 60 s por IP+username); (2) limiter genérico por IP para `/api/*` — `gateway/control/rate_limit.py` (janela fixa em memória, thread-safe, poda preguiçosa), ligado no `ControlServer` e aplicado em do_GET/POST/DELETE **antes** do auth guard, com 429 + `Retry-After`. Config: `DAKOTA_RATE_LIMIT_RPM` (default 600 — generoso para a UI, só dispara em abuso) e `DAKOTA_RATE_LIMIT=0` (off). `/api/login` e `/health` fora do limiter genérico. Testes: `tests/test_rate_limit_unit.py` (9: janela/reset/isolamento/retry_after/poda/env + integração HTTP real com 429 e exclusões). |
 | X3 | Sem versionamento de API ✅ | **CORRIGIDO** | Prefixo `/v1` suportado em todos os handlers via `_normalize_path()`. `/v1/api/...` e `/api/...` funcionam identicamente. |
 | X4 | ConnectionPool subutilizado ✅ | **CORRIGIDO** | `connect()` direto só usado no `main()` para bootstrap inicial (antes do pool existir). Runtime usa `db_pool` via `Handler._db()`. |
 | X5 | Synthetic ↔ Replay não integrado | **RESOLVIDA (2026-08-03)** | Novo fluxo `POST /api/synthetic/stress/real` (rota fina em `synthetic_routes.py` → `control/services/synthetic_replay_service.py`): materializa os inputs da jornada como trilha auditável (`audit-*.jsonl` com `data_b64` real, hash-chain + HMAC pela chave do servidor — passa no `verify_log`) em `<state>/synthetic_runs/<uuid>/` e cria run real via `run_service.create_run_request_payload` (mesma resolução de target e compliance gateway-only de `POST /api/runs`), disparando `runner.start_run_async`. O Runner remove o `log_dir` efêmero ao fim do run (`params.ephemeral_log_dir`, restrito ao prefixo `synthetic_runs/`). O `run_via_runner` simulado do `replay_adapter.py` (que descartava os jsonl e usava `_simulate_screens`) foi removido junto com `ReplayAdapterConfig`; o bug de formato (`data_b64: ""` + `key_text`, que enviaria zero bytes) foi corrigido. Regressão: `tests/test_synthetic_replay_service_unit.py` (12 testes). |
@@ -98,8 +98,8 @@
 
 ## 3. Ordem de Ataque Recomendada
 
-**Itens resolvidos:** R1–R6, S1–S4, G1, G2, G3, G4, G5, T1, T2, X1, X3, X4, X5, X6, B1 (23 itens).
-**Pendentes:** X2 (rate limiting, severidade baixa).
+**Itens resolvidos:** R1–R6, S1–S4, G1, G2, G3, G4, G5, T1, T2, X1, X2, X3, X4, X5, X6, B1 (24 itens).
+**Pendentes:** nenhum — mapa zerado em 2026-08-06.
 
 ---
 

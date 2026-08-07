@@ -272,7 +272,10 @@ Variáveis de ambiente de dev: `LISTEN` (default `127.0.0.1:8090`), `DB_PATH`
 `SECRETS_DIR`, `COOKIE_SECRET_FILE`, `HMAC_KEY_FILE`, `WATCH_MODE` (0 desliga
 hot-reload), `HOST_METRICS_ENABLED` (0 desliga o sampler de recursos do host),
 `HOST_METRICS_INTERVAL_S` (default `5`), `HOST_METRICS_RETENTION_DAYS`
-(default `7`). O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
+(default `7`). `DAKOTA_RATE_LIMIT_RPM`
+(default `600`) e `DAKOTA_RATE_LIMIT` (`0` desliga) controlam o rate limiting por IP
+de `/api/*` (`gateway/control/rate_limit.py`); `/api/login` tem throttle
+próprio mais estrito em `admin_routes.py` e não passa pelo limiter genérico. O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
 sobe o servidor com `--gateway-auto-activate`.
 
 Execução manual do control plane:

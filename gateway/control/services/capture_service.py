@@ -244,6 +244,24 @@ def ensure_active_capture_for_gateway(
     if existing:
         return _serialize(existing)
 
+    # Retomada sem acumulo: se a captura interrompida mais recente esta vazia
+    # (nenhuma sessao/evento gravado), reativa a mesma row em vez de criar
+    # uma captura nova a cada boot do control server. Capturas com sessoes
+    # mantem o comportamento anterior (row nova, log_dir novo) para preservar
+    # a separacao da trilha auditavel.
+    last = query_one(
+        con,
+        "SELECT * FROM capture_sessions WHERE status='interrupted' ORDER BY id DESC LIMIT 1",
+        (),
+    )
+    if last and int(last["session_count"] or 0) == 0 and int(last["event_count"] or 0) == 0:
+        con.execute(
+            "UPDATE capture_sessions SET status='active', ended_at_ms=NULL WHERE id=?",
+            (int(last["id"]),),
+        )
+        row = query_one(con, "SELECT * FROM capture_sessions WHERE id=?", (int(last["id"]),))
+        return _serialize(row)
+
     user_id = gw.get("activated_by_id")
     username = str(gw.get("activated_by_username") or "").strip()
     if not user_id or not username:

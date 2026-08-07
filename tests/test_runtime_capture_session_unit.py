@@ -15,13 +15,7 @@ sys.path.insert(0, str(GATEWAY_DIR))
 from dakota_gateway.cli_commands.runtime import _resolve_capture_log_dir, _resolve_capture_session
 from dakota_gateway import auth
 from dakota_gateway.state_db import connect, init_db, now_ms
-# ensure_active_capture_for_gateway was removed from capture_service;
-# the corresponding test is skipped until the function is restored.
-try:
-    from control.services.capture_service import ensure_active_capture_for_gateway  # noqa: F401
-    _HAS_ENSURE_ACTIVE = True
-except ImportError:
-    _HAS_ENSURE_ACTIVE = False
+from control.services.capture_service import ensure_active_capture_for_gateway  # noqa: F401
 
 CONTROL_SERVER_PATH = GATEWAY_DIR / "control" / "server.py"
 SPEC = importlib.util.spec_from_file_location("control_server", CONTROL_SERVER_PATH)
@@ -98,7 +92,6 @@ class RuntimeCaptureSessionUnitTests(unittest.TestCase):
             self.assertEqual(capture["session_uuid"], "sess-42")
             self.assertTrue(capture["log_dir"].endswith("captures/sess-42"))
 
-    @unittest.skipUnless(_HAS_ENSURE_ACTIVE, "ensure_active_capture_for_gateway was removed from capture_service")
     def test_ensure_active_capture_for_gateway_creates_capture_when_gateway_is_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "test.db")
@@ -141,6 +134,166 @@ class RuntimeCaptureSessionUnitTests(unittest.TestCase):
         self.assertEqual(active_count, 1)
         self.assertEqual(capture["status"], "active")
         self.assertIn("captura retomada automaticamente", capture["notes"])
+
+    def _activate_gateway(self, con, user_id: int) -> None:
+        ts = now_ms()
+        con.execute(
+            """
+            UPDATE gateway_state
+            SET active=1,
+                activated_at_ms=?,
+                activated_by_id=?,
+                activated_by_username=?,
+                environment_json='{}',
+                connection_profile_id=NULL,
+                operational_user_id=NULL,
+                capture_enabled=1,
+                updated_at_ms=?
+            WHERE id=1
+            """,
+            (ts, int(user_id), "admin", ts),
+        )
+
+    def _insert_capture(self, con, user_id: int, capture_log_dir: str, *,
+                        session_uuid: str, status: str,
+                        session_count: int = 0, event_count: int = 0,
+                        notes: str = "") -> int:
+        con.execute(
+            """
+            INSERT INTO capture_sessions(
+                session_uuid,status,created_by,created_by_username,started_at_ms,
+                environment_json,connection_profile_id,connection_profile_name,
+                operational_user_id,gateway_state_snapshot_json,log_dir,target_env_id,
+                notes,session_count,event_count
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                session_uuid,
+                status,
+                int(user_id),
+                "admin",
+                now_ms(),
+                "{}",
+                None,
+                None,
+                None,
+                "{}",
+                str(Path(capture_log_dir) / session_uuid),
+                None,
+                notes,
+                session_count,
+                event_count,
+            ),
+        )
+        return int(con.execute(
+            "SELECT id FROM capture_sessions WHERE session_uuid=?", (session_uuid,)
+        ).fetchone()["id"])
+
+    def test_ensure_active_capture_reuses_empty_interrupted_capture(self):
+        """Regressao: boot NAO pode acumular captura nova quando a captura
+        interrompida mais recente esta vazia (0 sessoes, 0 eventos)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "test.db")
+            log_dir_base = str(Path(tmp) / "captures")
+            con = connect(db_path)
+            init_db(con)
+            user_id = con.execute(
+                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
+                ("admin", auth.pbkdf2_hash_password("admin123"), "admin", now_ms()),
+            ).lastrowid
+            self._activate_gateway(con, user_id)
+            empty_id = self._insert_capture(
+                con, user_id, log_dir_base,
+                session_uuid="empty-sess", status="interrupted",
+            )
+
+            capture = ensure_active_capture_for_gateway(
+                con, log_dir_base=log_dir_base, now_ms_fn=now_ms,
+            )
+            rows = con.execute(
+                "SELECT id, session_uuid, status FROM capture_sessions ORDER BY id"
+            ).fetchall()
+            con.close()
+
+        self.assertEqual(len(rows), 1, "captura vazia deve ser reativada, sem row nova")
+        self.assertEqual(int(capture["id"]), empty_id)
+        self.assertEqual(capture["status"], "active")
+        self.assertEqual(capture["session_uuid"], "empty-sess")
+
+    def test_ensure_active_capture_creates_new_when_interrupted_has_sessions(self):
+        """Captura interrompida COM sessoes preserva a trilha: o resume abre
+        uma captura nova (log_dir novo), como sempre fez."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "test.db")
+            log_dir_base = str(Path(tmp) / "captures")
+            con = connect(db_path)
+            init_db(con)
+            user_id = con.execute(
+                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
+                ("admin", auth.pbkdf2_hash_password("admin123"), "admin", now_ms()),
+            ).lastrowid
+            self._activate_gateway(con, user_id)
+            old_id = self._insert_capture(
+                con, user_id, log_dir_base,
+                session_uuid="used-sess", status="interrupted",
+                session_count=2, event_count=10,
+            )
+
+            capture = ensure_active_capture_for_gateway(
+                con, log_dir_base=log_dir_base, now_ms_fn=now_ms,
+            )
+            rows = con.execute(
+                "SELECT id, status FROM capture_sessions ORDER BY id"
+            ).fetchall()
+            con.close()
+
+        self.assertEqual(len(rows), 2)
+        self.assertNotEqual(int(capture["id"]), old_id)
+        self.assertEqual(capture["status"], "active")
+
+    def test_control_server_startup_reuses_empty_stale_capture(self):
+        """Regressao ponta-a-ponta: restart do control server com captura ativa
+        vazia reativa a mesma captura em vez de acumular rows."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "test.db")
+            capture_log_dir = str(Path(tmp) / "captures")
+            con = connect(db_path)
+            init_db(con)
+            user_id = con.execute(
+                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,?,?)",
+                ("admin", auth.pbkdf2_hash_password("admin123"), "admin", now_ms()),
+            ).lastrowid
+            self._activate_gateway(con, user_id)
+            self._insert_capture(
+                con, user_id, capture_log_dir,
+                session_uuid="stale-sess", status="active", notes="stale capture",
+            )
+            con.close()
+
+            try:
+                server = CONTROL.ControlServer(
+                    ("127.0.0.1", 0),
+                    CONTROL.Handler,
+                    db_path=db_path,
+                    cookie_secret=b"test_cookie_secret_32_bytes___",
+                    hmac_key=b"test_hmac_key_32_bytes__________",
+                    capture_log_dir=capture_log_dir,
+                )
+            except PermissionError as exc:
+                raise unittest.SkipTest(f"sandbox sem permissao para abrir socket local: {exc}") from exc
+            server.port22_sampler.stop()
+            server.runtime_capture.stop()
+            server.server_close()
+
+            con = connect(db_path)
+            rows = con.execute(
+                "SELECT id, session_uuid, status FROM capture_sessions ORDER BY id"
+            ).fetchall()
+            con.close()
+
+        self.assertEqual(len(rows), 1, "captura vazia deve ser reativada, sem acumulo")
+        self.assertEqual(rows[0]["status"], "active")
+        self.assertEqual(rows[0]["session_uuid"], "stale-sess")
 
     def test_control_server_startup_reconciles_active_gateway_with_new_capture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,6 +345,13 @@ class RuntimeCaptureSessionUnitTests(unittest.TestCase):
                     None,
                     "stale capture",
                 ),
+            )
+            # Captura stale COM sessao gravada em disco: o resume deve abrir
+            # uma captura nova para preservar a separacao da trilha.
+            stale_dir = Path(capture_log_dir) / "stale-sess"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+            (stale_dir / "audit-20260101-000000.part001.jsonl").write_text(
+                '{"v":"v1","type":"session_start"}\n', encoding="utf-8"
             )
             con.close()
 

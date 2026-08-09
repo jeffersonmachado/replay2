@@ -634,9 +634,12 @@ class JourneySynthesizer:
                         unresolved.append(f"{sf.name}: {obj.get('placeholder', '?')}")
                         sess_ok = False
                     if obj.get("type") == "command":
-                        command_counts[obj.get("value", "")] = command_counts.get(obj.get("value", ""), 0) + 1
+                        cmd = obj.get("value") or ""
+                        command_counts[cmd] = command_counts.get(cmd, 0) + 1
                     elif obj.get("type") == "input":
-                        fn = obj.get("field", "?")
+                        # "field": null explícito (navegação) vira "?" — sem
+                        # isso o sorted() abaixo mistura None com str e quebra.
+                        fn = obj.get("field") or "?"
                         field_counts[fn] = field_counts.get(fn, 0) + 1
                 if sess_ok:
                     valid += 1

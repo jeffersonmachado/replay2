@@ -196,6 +196,12 @@ if [ -f "$PREFIX/gateway/control/server.py" ]; then
 
   DB="$PREFIX/gateway/state/replay.db"
   if [ -f "$DB" ]; then
+    # Rotação ANTES do backup novo: mantém os 2 mais recentes (cada backup
+    # tem o tamanho do banco; sem rotação o /opt encheu 2x em produção).
+    KEEP="${REPLAY_DB_BACKUP_KEEP:-2}"
+    ls -t "$DB".bak.* 2>/dev/null | tail -n +$((KEEP)) | while IFS= read -r old; do
+      rm -f "$old" && info "Backup antigo removido: $old"
+    done
     BAK="$DB.bak.$(date +%Y%m%d-%H%M%S)"
     cp "$DB" "$BAK" && info "Backup do banco: $BAK"
   fi

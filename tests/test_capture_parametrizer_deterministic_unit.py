@@ -115,3 +115,88 @@ class CaptureParametrizerDeterministicInputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaptureParametrizerCoalesceTests(unittest.TestCase):
+    """Regressão: teclas ecoadas 1 a 1 viram UM input de dados por campo.
+
+    A captura 13 real (AIX) grava um deterministic_input por caractere
+    ecoado: um campo digitado vira N tokens de 1 char ('4','0','0',...).
+    Sem a fusão, cada caractere disputava uma posição de campo no
+    mapeamento input→campo e a síntese gerava valores sintéticos por
+    caractere. Comandos {KEY:...} delimitam campos e não são fundidos.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmpdir.name)
+        self.param = CaptureParametrizer()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_chars_digitados_fundem_em_campo(self):
+        sig = "L=24;W=80;LBL=Pedido"
+        eventos = [
+            {"type": "deterministic_input", "session_id": "s1",
+             "seq_global": i + 1, "screen_sig": sig,
+             "screen_sample": "Pedido", "key_text": k}
+            for i, k in enumerate(["4", "\r", "0", "0", "1", "\r"])
+        ]
+        p = self.d / "capture.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in eventos), encoding="utf-8")
+        template = self.param.analyze_capture(str(p))
+        inputs = template.screen_contexts[0]["inputs"]
+        self.assertEqual(inputs, ["4", "{KEY:ENTER}", "001", "{KEY:ENTER}"])
+
+    def test_comandos_separam_campos(self):
+        sig = "L=5;W=40"
+        eventos = [
+            {"type": "deterministic_input", "session_id": "s1",
+             "seq_global": i + 1, "screen_sig": sig,
+             "screen_sample": "Tela", "key_text": k}
+            for i, k in enumerate(["A", "B", "\t", "C", "\r"])
+        ]
+        p = self.d / "capture.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in eventos), encoding="utf-8")
+        template = self.param.analyze_capture(str(p))
+        inputs = template.screen_contexts[0]["inputs"]
+        self.assertEqual(
+            inputs, ["AB", "{KEY:TAB}", "C", "{KEY:ENTER}"])
+
+
+class CaptureParametrizerKeyB64Tests(unittest.TestCase):
+    """Regressão: key_b64 (bytes reais) prevalece sobre key_text escapado.
+
+    A trilha v2 do gateway grava key_text como string "display" ESCAPADA
+    (ENTER = '\\r' literal, backslash+r) e os bytes reais em key_b64
+    ('DQ=='). Preferir o key_text fazia ENTERs virarem texto '\\r',
+    quebrando a fusão de teclas e a delimitação de campos (captura 13).
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmpdir.name)
+        self.param = CaptureParametrizer()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_key_b64_prevalece_sobre_key_text_escapado(self):
+        sig = "L=8;W=36;LBL=Digite a sua opcao;MIG24"
+        eventos = [
+            {"type": "deterministic_input", "session_id": "s1",
+             "seq_global": i + 1, "screen_sig": sig, "screen_sample": "Menu",
+             "key_text": disp, "key_b64": _b64(real), "key_kind": kind}
+            for i, (disp, real, kind) in enumerate([
+                ("e", "e", "printable"),
+                ("s", "s", "printable"),
+                ("t", "t", "printable"),
+                ("\\r", "\r", "enter"),
+            ])
+        ]
+        p = self.d / "capture.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in eventos), encoding="utf-8")
+        template = self.param.analyze_capture(str(p))
+        self.assertEqual(template.screen_contexts[0]["inputs"],
+                         ["est", "{KEY:ENTER}"])

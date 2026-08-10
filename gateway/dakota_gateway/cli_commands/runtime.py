@@ -267,6 +267,7 @@ def handle_runtime_command(ns, read_key) -> int:
                 cols=term_opts["cols"],
                 term=term_opts["term"],
                 encoding=term_opts["encoding"],
+                term_override=str(getattr(ns, "term", "") or "").strip(),
             )
             if ns.mode == "strict-global":
                 replay_strict_global(cfg)

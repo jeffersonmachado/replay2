@@ -1,10 +1,11 @@
 import { escapeHtml, formatCount, formatDate, statusLabel, statusToneClass } from "../core/dom.js";
+import { runSyntheticBadgeHtml } from "./run_views.js";
 
 export function runIdentityCard(run) {
   return `
     <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
       <div class="flex items-center justify-between gap-3">
-        <div class="font-mono text-sm text-stone-100">#${escapeHtml(run.id || "-")}</div>
+        <div class="font-mono text-sm text-stone-100">#${escapeHtml(run.id || "-")}${runSyntheticBadgeHtml(run)}</div>
         <span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </div>
       <div class="mt-3 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>

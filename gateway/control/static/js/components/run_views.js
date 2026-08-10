@@ -1,5 +1,35 @@
 import { escapeHtml, formatAgo, formatCount, formatDate, statusLabel, statusToneClass } from "../core/dom.js";
 
+// Extrai a origem sintética da run (params_json gravado pelo replay
+// sintético 1-clique: synthetic=true, source_capture_id, journey_id).
+export function runSyntheticOrigin(run) {
+  if (!run) return null;
+  let params = run.params;
+  if (!params || typeof params !== "object") {
+    try {
+      params = JSON.parse(run.params_json || "{}");
+    } catch {
+      return null;
+    }
+  }
+  if (!params || params.synthetic !== true) return null;
+  const captureId = Number(params.source_capture_id || 0);
+  return {
+    captureId: Number.isInteger(captureId) && captureId > 0 ? captureId : null,
+    journeyId: String(params.journey_id || "").trim(),
+  };
+}
+
+// Badge "sintético" com link para a captura de referência (rastreabilidade).
+export function runSyntheticBadgeHtml(run) {
+  const origin = runSyntheticOrigin(run);
+  if (!origin) return "";
+  const captureLink = origin.captureId
+    ? `<a href="/captures/${origin.captureId}" class="underline decoration-rose-400/60 underline-offset-2 hover:text-rose-100">captura #${origin.captureId}</a>`
+    : "captura n/d";
+  return `<span class="ml-2 inline-flex items-center gap-1 rounded-full border border-rose-900/60 bg-rose-950/50 px-2 py-0.5 text-xs text-rose-200" title="Run gerada pelo replay sintético (dados substituídos)">sintético • ${captureLink}</span>`;
+}
+
 export function runSummaryCards(items) {
   return (items || [])
     .map(
@@ -40,7 +70,7 @@ export function runTableRow(run) {
   return `
     <tr class="r2ctl-row align-top">
       <td class="px-4 py-4">
-        <a href="/runs/${escapeHtml(run.id)}" class="r2ctl-run-id">#${escapeHtml(run.id)}</a>
+        <a href="/runs/${escapeHtml(run.id)}" class="r2ctl-run-id">#${escapeHtml(run.id)}</a>${runSyntheticBadgeHtml(run)}
       </td>
       <td class="px-4 py-4"><span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span></td>
       <td class="px-4 py-4 text-stone-300">

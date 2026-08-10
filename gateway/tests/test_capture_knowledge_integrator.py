@@ -361,3 +361,144 @@ class TestIsTextCompatible:
 
     def test_text_to_number_field(self, integrator):
         assert integrator._is_text_compatible("text", "money", "decimal") is False
+
+
+class TestScreenLabels:
+    """Labels visíveis no screen_sample guiam o mapeamento por tela.
+
+    Regressão multi-tela: o matched_fields global do binding desalinha os
+    índices quando a entidade é preenchida em mais de uma tela (cada tela
+    reinicia o data_index). As labels da própria tela ("Cliente:" etc.)
+    são a evidência correta da ordem dos campos naquela tela.
+    """
+
+    @pytest.fixture
+    def entity_pedidos(self) -> EntityDefinition:
+        return EntityDefinition(
+            name="PEDIDOS",
+            storage_type="sql",
+            fields=[
+                FieldDefinition(name="ID", datatype="INTEGER"),
+                FieldDefinition(name="cliente", datatype="text"),
+                FieldDefinition(name="produto", datatype="text"),
+                FieldDefinition(name="quantidade", datatype="text"),
+            ],
+        )
+
+    def _capture_duas_telas(self) -> CaptureTemplate:
+        tela1 = "Cadastro de PEDIDOS\nCliente: ____\n"
+        tela2 = "PEDIDOS - Item\nProduto: ____\nQuantidade: ____\n"
+        return CaptureTemplate(
+            capture_source="cap.jsonl",
+            session_id="s1",
+            screen_sequence=["sig1", "sig2"],
+            input_templates=[],
+            screen_contexts=[
+                {"screen_sig": "sig1", "screen_sample": tela1,
+                 "inputs": ["ACME COMERCIO", "{KEY:ENTER}"]},
+                {"screen_sig": "sig2", "screen_sample": tela2,
+                 "inputs": ["PARAFUSO", "{KEY:ENTER}", "250", "{KEY:ENTER}"]},
+            ],
+        )
+
+    def test_labels_da_tela_orientam_mapeamento(self, integrator, entity_pedidos):
+        enriched = integrator.enrich_template(
+            self._capture_duas_telas(), [entity_pedidos], [])
+        sm1, sm2 = enriched.screen_mappings
+        assert sm1.entity_name == "PEDIDOS"
+        assert sm2.entity_name == "PEDIDOS"
+        por_valor = {
+            mi.original_value: mi.field_name
+            for sm in (sm1, sm2) for mi in sm.mapped_inputs
+        }
+        assert por_valor["ACME COMERCIO"] == "cliente"
+        assert por_valor["PARAFUSO"] == "produto"
+        assert por_valor["250"] == "quantidade"
+        assert enriched.unmapped_inputs == 0
+
+    def test_sem_labels_cai_no_matched_fields_do_binding(
+            self, integrator, entity_pedidos):
+        """Tela sem labels reconhecíveis mantém o comportamento anterior."""
+        binding = ScreenEntityBinding(
+            program_name="cadped", entity_name="PEDIDOS", operation="",
+            confidence=0.95, matched_fields=["cliente", "produto", "quantidade"],
+            screen_title="PEDIDOS")
+        capture = CaptureTemplate(
+            capture_source="cap.jsonl", session_id="s1",
+            screen_sequence=["sig1"],
+            input_templates=[],
+            screen_contexts=[{
+                "screen_sig": "sig1",
+                "screen_sample": "PEDIDOS\n____\n____\n",  # sem labels "Campo:"
+                "inputs": ["ACME", "{KEY:ENTER}", "PARAFUSO", "{KEY:ENTER}"],
+            }],
+        )
+        enriched = integrator.enrich_template(capture, [entity_pedidos], [binding])
+        por_valor = {
+            mi.original_value: mi.field_name
+            for mi in enriched.screen_mappings[0].mapped_inputs
+        }
+        assert por_valor["ACME"] == "cliente"
+        assert por_valor["PARAFUSO"] == "produto"
+
+
+class TestRealCaptureGuards:
+    """Guardas evidenciadas pela captura 13 real (AIX, trilha v2)."""
+
+    def test_substring_nao_casa_binding(self, integrator):
+        """Binding do programa "arq" NÃO casa com "ARQUIVO" no cabeçalho."""
+        binding = ScreenEntityBinding(
+            program_name="arq", entity_name="ARQ", operation="",
+            confidence=0.62, matched_fields=["total", "frete"],
+            screen_title="")
+        sample = " DAKOTA S/A   ESTOQUE\n Arquivo  Consulta  Pedido externo:"
+        found = integrator._find_binding_for_screen(
+            sample, "L=24;W=80", {"ARQ": binding}, {})
+        assert found is None or found.entity_name != "ARQ"
+
+    def test_palavra_inteira_casa(self, integrator):
+        binding = ScreenEntityBinding(
+            program_name="cadped", entity_name="PEDIDOS", operation="",
+            confidence=0.9, matched_fields=["cliente"], screen_title="PEDIDOS")
+        found = integrator._find_binding_for_screen(
+            "Cadastro de PEDIDOS - Cliente", "L=6;W=40",
+            {"PEDIDOS": binding}, {})
+        assert found is not None and found.entity_name == "PEDIDOS"
+
+    def test_fallback_nao_substitui_sem_label(self, integrator):
+        """Entidade só citada no texto da tela: sem label, preserva o valor."""
+        entity = EntityDefinition(
+            name="OPCAO", storage_type="sql",
+            fields=[FieldDefinition(name="codigo", datatype="text"),
+                    FieldDefinition(name="descricao", datatype="text")])
+        capture = CaptureTemplate(
+            capture_source="cap.jsonl", session_id="s1",
+            screen_sequence=["sig1"], input_templates=[],
+            screen_contexts=[{
+                "screen_sig": "sig1",
+                "screen_sample": "Digite a sua opcao:",  # sem label de campo
+                "inputs": ["estl", "{KEY:ENTER}"],
+            }],
+        )
+        enriched = integrator.enrich_template(capture, [entity], [])
+        mi = enriched.screen_mappings[0].mapped_inputs[0]
+        assert not mi.field_name, "fallback sem label não deve mapear"
+        assert enriched.mapped_inputs == 0
+
+    def test_fallback_com_label_mapeia(self, integrator):
+        """Fallback + label visível da tela → mapeia pela label."""
+        entity = EntityDefinition(
+            name="PEDIDOS", storage_type="sql",
+            fields=[FieldDefinition(name="cliente", datatype="text")])
+        capture = CaptureTemplate(
+            capture_source="cap.jsonl", session_id="s1",
+            screen_sequence=["sig1"], input_templates=[],
+            screen_contexts=[{
+                "screen_sig": "sig1",
+                "screen_sample": "Cadastro de PEDIDOS\nCliente: ____\n",
+                "inputs": ["ACME", "{KEY:ENTER}"],
+            }],
+        )
+        enriched = integrator.enrich_template(capture, [entity], [])
+        mi = enriched.screen_mappings[0].mapped_inputs[0]
+        assert mi.field_name == "cliente"

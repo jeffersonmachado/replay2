@@ -48,7 +48,9 @@ def build_reprocess_analytics(con, limit: int = 100) -> dict:
         env_bucket = by_environment.setdefault(environment, {"environment": environment, "attempts": 0, "resolved": 0, "repeated": 0, "not_repeated": 0, "inconclusive": 0})
         env_bucket["attempts"] += 1
         env_bucket[outcome] = int(env_bucket.get(outcome, 0)) + 1
-        signature = "|".join([str(source_failure.get("failure_type") or ""), str(source_failure.get("severity") or ""), str(source_failure.get("expected_value") or ""), str(source_failure.get("observed_value") or "")])
+        # Assinatura sem observed_value, alinhada ao agrupamento de
+        # build_run_report (observed muda a cada sessão — ver Rec 2).
+        signature = "|".join([str(source_failure.get("failure_type") or ""), str(source_failure.get("severity") or ""), str(source_failure.get("expected_value") or "")])
         sig_bucket = by_signature.setdefault(signature, {"signature": signature, "failure_type": source_failure.get("failure_type") or "", "severity": source_failure.get("severity") or "", "attempts": 0, "resolved": 0, "repeated": 0, "not_repeated": 0, "inconclusive": 0})
         sig_bucket["attempts"] += 1
         sig_bucket[outcome] = int(sig_bucket.get(outcome, 0)) + 1

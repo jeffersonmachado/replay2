@@ -53,6 +53,10 @@ class ReplayConfig:
     cols: int = 80
     term: str = "xterm"
     encoding: str = "utf-8"
+    # Quando preenchido (param `term` da run), vence o `term` do session_start
+    # da captura — o TERM gravado é o do terminal do usuário (ex.: dk100 do
+    # TeraTerm) e termos com porta auxiliar (ESC[5i) travam o replay headless.
+    term_override: str = ""
 
     checkpoint_quiet_ms: int = 250
     checkpoint_timeout_ms: int = 5000
@@ -108,8 +112,10 @@ def _session_config_from_event(cfg: ReplayConfig, ev: dict) -> ReplayConfig:
         geom = validate_terminal_geometry(int(ev.get("rows", session_cfg.rows)), int(ev.get("cols", session_cfg.cols)))
         session_cfg.rows = geom.rows
         session_cfg.cols = geom.cols
-    if ev.get("term"):
+    if ev.get("term") and not session_cfg.term_override:
         session_cfg.term = str(ev["term"])
+    if session_cfg.term_override:
+        session_cfg.term = session_cfg.term_override
     if ev.get("encoding"):
         session_cfg.encoding = normalize_encoding(str(ev["encoding"]))
     if ev.get("comparison_mode"):
@@ -191,10 +197,22 @@ class _TargetSession:
             pass
 
     def write_in(self, data: bytes):
-        _write_all(self.master_fd, data)
+        try:
+            _write_all(self.master_fd, data)
+        except OSError:
+            # Sessão remota já terminou (ex.: trilha com `exit` no fim) —
+            # inputs tardios são descartados em vez de derrubar a run.
+            pass
 
     def read_out(self) -> bytes:
-        data = os.read(self.master_fd, 8192)
+        try:
+            data = os.read(self.master_fd, 8192)
+        except OSError:
+            # EIO: o lado slave do PTY fechou (a sessão remota terminou —
+            # ex.: trilha que encerra com `exit`). Tratar como EOF: sem isso
+            # a run morria com "OSError: [Errno 5] I/O error" nos eventos
+            # finais da trilha.
+            return b""
         if data:
             self.last_out_ms = int(time.time() * 1000)
             self.screen_state.feed_bytes(data)

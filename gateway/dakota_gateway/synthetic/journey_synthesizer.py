@@ -126,6 +126,7 @@ class TemplateInput:
     confidence: float = 0.0
     original_type: str = ""
     evidence: list[str] = field(default_factory=list)
+    picture: str = ""  # PICTURE do GET (inputs mapeados por posição)
 
 
 @dataclass
@@ -201,6 +202,10 @@ class JourneySynthesizer:
         capture_path = Path(capture_path)
         source_dir = Path(source_dir)
 
+        # Mapeamento posicional (cursor ↔ @ row,col GET) precisa ler os .prg
+        if not self.integrator.source_root:
+            self.integrator.source_root = str(source_dir)
+
         # 1. Parametriza captura
         capture_template = self.parametrizer.analyze_capture(str(capture_path))
 
@@ -259,6 +264,7 @@ class JourneySynthesizer:
                     confidence=mi.confidence,
                     original_type=mi.original_type,
                     evidence=list(mi.evidence),
+                    picture=mi.picture,
                 ))
 
             # screen_title: binding > screen_context > screen_sample
@@ -315,10 +321,18 @@ class JourneySynthesizer:
 
         for entity_name in template.entities_involved:
             fields_for_entity: list[FieldSchema] = []
+            seen_fields: set[str] = set()
             for step in template.steps:
                 if step.entity_name and step.entity_name.upper() == entity_name.upper():
                     for inp in step.inputs:
-                        if inp.field_name and inp.method != "command":
+                        # A mesma entidade pode aparecer em várias telas —
+                        # acumular campos de TODAS (dedup por nome), senão os
+                        # placeholders das demais telas ficam sem valor no
+                        # dataset e as sessões saem com {{...}} não resolvido.
+                        field_key = (inp.field_name or "").strip().lower()
+                        if (inp.field_name and inp.method != "command"
+                                and field_key not in seen_fields):
+                            seen_fields.add(field_key)
                             fu = (inp.field_name or "").upper().strip()
                             # Formato especifico (cpf, email, phone)
                             fmt = None
@@ -355,9 +369,13 @@ class JourneySynthesizer:
                                 min_value=_value_range_for_field(inp.field_name)[0],
                                 max_value=_value_range_for_field(inp.field_name)[1],
                             )
+                            # PICTURE do GET (inputs mapeados por posição de
+                            # cursor) limita a geração à largura real do campo
+                            if getattr(inp, "picture", ""):
+                                CaptureKnowledgeIntegrator._picture_to_constraints(
+                                    fs, inp.picture)
                             fields_for_entity.append(fs)
                             entity_field_map.setdefault(entity_name, {})[inp.field_name.lower()] = inp.field_name
-                    break
 
             if not fields_for_entity:
                 continue

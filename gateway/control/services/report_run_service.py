@@ -64,7 +64,10 @@ def build_run_report(con, run_id: int) -> dict | None:
         by_flow[flow_name] = by_flow.get(flow_name, 0) + 1
         flow_severity.setdefault(flow_name, {})
         flow_severity[flow_name][sev] = int(flow_severity[flow_name].get(sev) or 0) + 1
-        group_key = "|".join([ftype, sev, str(item.get("expected_value") or ""), str(item.get("observed_value") or "")])
+        # A assinatura do grupo NÃO inclui o observed_value: o observado muda
+        # a cada sessão (nº de pedido, data/hora, dado sintético) e impedia
+        # o reconhecimento da mesma falha como recorrente entre runs.
+        group_key = "|".join([ftype, sev, str(item.get("expected_value") or "")])
         group = grouped.setdefault(group_key, {"signature": group_key, "failure_type": ftype, "severity": sev, "expected_value": item.get("expected_value") or "", "observed_value": item.get("observed_value") or "", "count": 0, "sessions": set(), "seq_globals": set(), "messages": []})
         group["count"] += 1
         if sid:
@@ -177,7 +180,7 @@ def build_reprocess_trace(con, run_id: int) -> dict | None:
         )
     if source_failure:
         current_report = build_run_report(con, int(run_id)) or {}
-        signature = "|".join([str(source_failure["failure_type"] or ""), str(source_failure["severity"] or ""), str(source_failure["expected_value"] or ""), str(source_failure["observed_value"] or "")])
+        signature = "|".join([str(source_failure["failure_type"] or ""), str(source_failure["severity"] or ""), str(source_failure["expected_value"] or "")])
         repeated_in_current = any(str(item.get("signature") or "") == signature for item in (current_report.get("grouped_failures") or []))
     outcome = "inconclusive"
     current_run = query_one(con, "SELECT status FROM replay_runs WHERE id=?", (int(run_id),))

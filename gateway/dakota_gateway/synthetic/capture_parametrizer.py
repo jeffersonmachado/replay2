@@ -94,8 +94,12 @@ class CaptureParametrizer:
 
         screens: list[dict] = []
         inputs: list[str] = []
+        keystroke: list[bool] = []  # True = token de tecla ecoada (det_input)
+        cursors: list[tuple[int, int] | None] = []  # cursor por token (pré-fusão)
         session_id = ""
         current_input_start: int = 0
+        term_state = None   # engine alimentada pelo fluxo OUT (bytes do host)
+        term_broken = False
 
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -113,6 +117,31 @@ class CaptureParametrizer:
                 event_type = event.get("type", "")
                 if not session_id:
                     session_id = event.get("session_id", "")
+
+                # O fluxo OUT (bytes do host) alimenta uma engine de terminal
+                # viva: o cursor no instante de cada deterministic_input é a
+                # posição do campo em digitação. O screen_raw da tela estável
+                # NÃO serve para isso — a aplicação estaciona o cursor no
+                # canto (24,79) após o redraw; os posicionamentos reais
+                # (ESC[r;cH antes de cada campo) só existem no fluxo bruto.
+                if event_type == "bytes" and event.get("data_b64") and \
+                        (event.get("dir") or event.get("direction")) == "out":
+                    if term_state is None and not term_broken:
+                        try:
+                            from ..screen import TerminalScreenState
+                            term_state = TerminalScreenState(
+                                rows=int(event.get("rows") or 25),
+                                cols=int(event.get("cols") or 80),
+                                encoding=str(event.get("encoding") or "utf-8"),
+                            )
+                        except Exception:
+                            term_broken = True
+                    if term_state is not None:
+                        try:
+                            term_state.feed_bytes(base64.b64decode(
+                                str(event["data_b64"])))
+                        except Exception:
+                            pass  # frame ruim não pode derrubar a análise
 
                 # Coletar screen signatures
                 if event_type == "checkpoint" and event.get("screen_sig"):
@@ -139,31 +168,50 @@ class CaptureParametrizer:
                             "seq_global": event.get("seq_global", 0),
                             "input_start": len(inputs),
                         })
-                    key = event.get("key_text")
-                    if key is None and event.get("key_b64"):
+                    # key_b64 é a fonte canônica dos bytes reais; key_text é
+                    # a forma "display" ESCAPADA ('\r' literal, backslash+r).
+                    # Preferir o b64 — senão ENTERs da trilha real viram
+                    # texto '\r' e quebram a fusão de teclas e a navegação.
+                    key = None
+                    if event.get("key_b64"):
                         try:
                             key = base64.b64decode(
                                 str(event["key_b64"])).decode("utf-8", "replace")
                         except Exception:
                             key = None
+                    if key is None:
+                        key = event.get("key_text")
                     if key:
-                        inputs.extend(self._split_key_events(str(key)))
+                        parts = self._split_key_events(str(key))
+                        inputs.extend(parts)
+                        keystroke.extend([True] * len(parts))
+                        pos = (term_state.r, term_state.c) \
+                            if term_state is not None else None
+                        cursors.extend([pos] * len(parts))
 
                 # Coletar inputs (key_text)
                 if event_type in ("bytes", "checkpoint") and event.get("key_text"):
                     key_text = str(event.get("key_text", ""))
                     if key_text in ("\r", "\n"):
                         inputs.append("{KEY:ENTER}")
+                        keystroke.append(False)
                     elif key_text == "\t":
                         inputs.append("{KEY:TAB}")
+                        keystroke.append(False)
                     elif key_text == "\x1b":
                         inputs.append("{KEY:ESC}")
+                        keystroke.append(False)
                     elif re.match(r"^\x1b\[", key_text):
                         inputs.append("{KEY:" + key_text[2:] + "}")
+                        keystroke.append(False)
                     elif key_text == "":
                         continue
                     else:
                         inputs.append(key_text)
+                        keystroke.append(False)
+                    # fluxo bytes/checkpoint não tem posição de campo
+                    while len(cursors) < len(inputs):
+                        cursors.append(None)
 
         # Fecha input_end de cada tela
         for i, screen in enumerate(screens):
@@ -171,22 +219,92 @@ class CaptureParametrizer:
                 screen["input_end"] = screens[i + 1]["input_start"]
             else:
                 screen["input_end"] = len(inputs)
-            # Adiciona os inputs daquela tela
+            # Adiciona os inputs daquela tela (+ posição de cursor de cada um:
+            # a do 1º token fundido, que é onde o campo começa na tela)
             start = screen.get("input_start", 0)
             end = screen.get("input_end", len(inputs))
-            screen["inputs"] = inputs[start:end]
+            groups = self._coalesce_groups(
+                inputs[start:end], keystroke[start:end], cursors[start:end])
+            screen["inputs"] = [
+                "".join(str(inputs[start + k]) for k in g) for g in groups]
+            screen["input_positions"] = [
+                cursors[start + g[0]] if start + g[0] < len(cursors) else None
+                for g in groups
+            ]
 
         template.session_id = session_id
         template.screen_sequence = [s["screen_sig"] for s in screens]
         template.screen_contexts = screens
-        template.input_templates = self.template_engine.detect_placeholders(inputs)
+        coalesced = [inp for s in screens for inp in s["inputs"]]
+        template.input_templates = self.template_engine.detect_placeholders(coalesced)
         template.metadata = {
             "total_screens": len(screens),
-            "total_inputs": len(inputs),
-            "original_inputs": inputs,
+            "total_inputs": len(coalesced),
+            "original_inputs": coalesced,
         }
 
         return template
+
+    @staticmethod
+    def _coalesce_groups(tokens: list[str],
+                         keystroke: list[bool] | None = None,
+                         cursors: list | None = None) -> list[list[int]]:
+        """Agrupa os índices dos tokens que formam um único input de campo.
+
+        Mesma regra de ``_coalesce_printable``, mas devolvendo grupos de
+        índices — permite derivar metadados paralelos (ex.: posição do
+        cursor) sem duplicar a lógica de fusão.
+
+        Quando ``cursors`` é informado, um salto de cursor quebra o grupo:
+        máscaras de edição (``@R 999.999.999-99``) avançam o cursor 1-2
+        colunas, mas um salto maior (ou mudança de linha) é a aplicação
+        auto-avançando para OUTRO campo sem ENTER — fundir os dois campos
+        num token só misturaria valores de campos diferentes (captura 13:
+        ``'15'``+``'229,9'`` viravam ``'15229,9'``).
+        """
+        if keystroke is None:
+            keystroke = [True] * len(tokens)
+        groups: list[list[int]] = []
+        buf: list[int] = []
+        for i, (tok, is_keystroke) in enumerate(zip(tokens, keystroke)):
+            tok = str(tok)
+            if is_keystroke and len(tok) == 1 and not tok.startswith("{KEY:"):
+                if buf and cursors is not None:
+                    prev = cursors[buf[-1]] if buf[-1] < len(cursors) else None
+                    cur = cursors[i] if i < len(cursors) else None
+                    if prev is not None and cur is not None and (
+                            cur[0] != prev[0]
+                            or not 0 < cur[1] - prev[1] <= 3):
+                        groups.append(buf)
+                        buf = []
+                buf.append(i)
+            else:
+                if buf:
+                    groups.append(buf)
+                    buf = []
+                groups.append([i])
+        if buf:
+            groups.append(buf)
+        return groups
+
+    @staticmethod
+    def _coalesce_printable(tokens: list[str],
+                            keystroke: list[bool] | None = None) -> list[str]:
+        """Funde sequências de teclas ecoadas 1 a 1 em um input por campo.
+
+        Capturas reais (gateway) emitem um ``deterministic_input`` por tecla
+        ecoada — um campo digitado vira N tokens de 1 caractere
+        (``'4','0','0',...``). Sem a fusão, cada caractere disputava uma
+        posição de campo no mapeamento input→campo. Só tokens de 1 caractere
+        originados de ``deterministic_input`` (``keystroke=True``) são
+        fundidos: tokens multi-caractere já são blocos completos (colagem/
+        paste ou o fluxo ``bytes``/``checkpoint`` — contrato coberto por
+        test_capture_parametrizer_screen_inputs e
+        test_capture_parametrizer_deterministic_unit). Comandos
+        ({KEY:ENTER}, {KEY:TAB}, setas) delimitam campos e nunca são fundidos.
+        """
+        groups = CaptureParametrizer._coalesce_groups(tokens, keystroke)
+        return ["".join(str(tokens[i]) for i in g) for g in groups]
 
     def analyze_capture_dir(self, capture_dir: str) -> list[CaptureTemplate]:
         """Analisa todos os .jsonl em um diretório de captura."""

@@ -24,6 +24,22 @@ def _read_key(path: str) -> bytes:
     return key
 
 
+def _kb_from_db(con) -> dict:
+    """Carrega entidades + bindings persistidos pelo analyze-source.
+
+    Reusa a knowledge base do banco quando disponível — re-parsear o fonte
+    inteiro a cada síntese custava ~25 min por captura no AIX. Retorna dict
+    vazio quando a base está ausente/incompleta (fallback: parse do fonte).
+    """
+    from .synthetic.engine import SyntheticEngine
+    engine = SyntheticEngine(db_connection=con)
+    entities = engine.load_entities()
+    bindings = engine.load_bindings()
+    if entities and bindings:
+        return {"entities": entities, "bindings": bindings}
+    return {}
+
+
 def _handle_journey(ns, con) -> int:
     """Dispatch para comandos de jornada."""
     import json
@@ -83,6 +99,7 @@ def _handle_journey(ns, con) -> int:
             capture_path=Path(ns.capture),
             source_dir=Path(ns.source_dir),
             name=ns.name or None,
+            **_kb_from_db(con),
         )
         out_path = Path(ns.out) if ns.out else Path(ns.capture).with_suffix(".template.json")
         syn.save_template(template, out_path)
@@ -106,6 +123,7 @@ def _handle_journey(ns, con) -> int:
                 capture_path=Path(ns.capture),
                 source_dir=Path(ns.source_dir),
                 name=ns.name or None,
+                **_kb_from_db(con),
             )
         else:
             print("Erro: informe --template ou --capture + --source-dir", file=sys.stderr)
@@ -417,10 +435,20 @@ def _handle_synthetic(ns) -> int:
             entities, _ = engine.inferencer._parser.parse_all() if engine.inferencer._parser else ([], [])
             engine.save_entities(entities)
 
+            # Persiste os bindings tela→entidade (knowledge base), como o
+            # endpoint HTTP já fazia: sem isto, o journey template/synthesize
+            # via CLI nunca reusava a base e re-parseava o fonte inteiro.
+            bindings = (
+                engine.inferencer._parser.screen_entity_bindings()
+                if engine.inferencer._parser else []
+            )
+            engine.save_bindings(bindings)
+
             print(json.dumps({
                 "screens": len(result.screens),
                 "schemas": len(result.schemas),
                 "entities": len(entities),
+                "bindings": len(bindings),
                 "screens_detail": [
                     {"title": s.title, "program": s.program_name, "fields": len(s.fields)}
                     for s in result.screens
@@ -1532,6 +1560,7 @@ def main(argv: list[str] | None = None) -> int:
     ap_runs_create.add_argument("--match-mode", choices=["strict", "contains", "regex", "fuzzy"], default="strict")
     ap_runs_create.add_argument("--match-threshold", type=float, default=0.92)
     ap_runs_create.add_argument("--match-ignore-case", action="store_true")
+    ap_runs_create.add_argument("--term", default="", help="TERM da sessão de replay (default: o da captura; use xterm para replay headless — terminais com porta auxiliar, ex.: dk100, travam a sessão)")
 
     register_targets_parser(sub)
     register_profiles_parser(sub)
@@ -1940,6 +1969,8 @@ def main(argv: list[str] | None = None) -> int:
                 params["on_deterministic_mismatch"] = ns.on_deterministic_mismatch
                 if ns.match_ignore_case:
                     params["match_ignore_case"] = True
+                if getattr(ns, "term", ""):
+                    params["term"] = ns.term
                 if partial:
                     params.update(partial)
                 con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (json.dumps(params, ensure_ascii=False), rid))

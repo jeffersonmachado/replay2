@@ -130,6 +130,12 @@ replay2/
 - `crypto.py` — primitivas criptográficas (HMAC, hash-chain);
 - `verifier.py` — verificação de integridade da trilha;
 - `replay.py` — replay no destino (modos `raw` e `deterministic`);
+  `ReplayConfig.term_override` (param `term` da run) vence o TERM gravado no
+  `session_start` da captura — terminais com sequências de porta auxiliar
+  (ex.: `dk100` do TeraTerm, `ESC[5i`) travam a sessão de replay headless,
+  então o replay sintético usa `xterm` por default. Fim de sessão remota
+  (slave do PTY fechado após `exit`) é tratado como EOF limpo, sem derrubar
+  a run com `OSError EIO`;
 - `replay_control/` — pacote (decomposto do módulo monolítico em 2026-08-03,
   dívida G2): runner de runs, concorrência, métricas, falhas estruturadas,
   reprocessamento por faixa/sessão/checkpoint. Submódulos: `window.py`
@@ -174,6 +180,30 @@ replay2/
   sintetizador de dados, jornadas (inferência, geração CRUD, validação,
   verificação, dry-run), `journey_mix`, scheduler, executor remoto, stress
   runner, explorador de telas, relatórios de evidência/homologação.
+  Síntese a partir de captura real: `capture_parametrizer.py` registra a
+  posição do cursor de cada input a partir do fluxo bruto OUT (o screen_raw
+  da tela estável estaciona o cursor no canto — não serve), funde teclas em
+  campos e quebra o campo quando o cursor "teleporta" (auto-avanço sem
+  ENTER); `screen_layout.py` extrai os `@ row,col GET` do .prg (inclusive
+  labels `SAY fTraduz(...)`) e `capture_knowledge_integrator.py` vincula a
+  tela ao fonte pelo código de menu (3.6.1 → est361.prg) + labels
+  posicionados e mapeia input→campo por `by_cursor_position` (PICTURE do
+  GET vira constraint de geração do dado sintético).
+  Replay sintético em 1 clique (v0.8.15): `synthetic_trail.py`
+  (`build_synthetic_trail`) regrava a trilha da captura com os valores
+  substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira
+  substituição identidade para preservar a posição do cursor), remove o
+  banner pré-sessão e re-assina hash-chain + HMAC; a rota
+  `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
+  detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)
+  encadeia síntese → trilha → run real determinística `send-anyway`. Runs
+  sintéticas carregam `params.synthetic=true` + `source_capture_id` — a UI
+  exibe o badge "sintético • captura #N" (lista e detalhe da run,
+  `run_views.runSyntheticBadgeHtml`). Nessas runs, checkpoint não
+  estabilizado com tela observada é classificado `screen_divergence`/
+  `medium` (divergência de conteúdo esperada), não `timeout`/`high`, e a
+  assinatura do grupo de falhas não inclui o `observed_value` (muda a cada
+  sessão) para a comparação entre runs reconhecer recorrência.
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via
@@ -581,7 +611,9 @@ Hotfixes devem ser seguidos de deploy completo via `deploy.sh` na próxima oport
 
 - `record.tcl` é gravador simplificado; a captura oficial é o gateway SSH;
 - Taxonomia de falhas (`timeout`, `screen_divergence`, `navigation_error`,
-  `concurrency_error`) ainda é heurística e pendente de refinamento por fluxo;
+  `concurrency_error`) ainda é heurística e pendente de refinamento por fluxo
+  (exceção já refinada: run sintética `send-anyway` classifica checkpoint
+  não estabilizado com tela observada como `screen_divergence`/`medium`);
 - Não existe catálogo formal de cenários de carga;
 - Telnet suportado na camada de replay, mas autenticação automática prefere SSH;
 - Portabilidade AIX pendente de homologação operacional dedicada.

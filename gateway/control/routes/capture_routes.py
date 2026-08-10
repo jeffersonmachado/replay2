@@ -10,6 +10,7 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 """
 from __future__ import annotations
 
+import os
 import socket
 from urllib.parse import parse_qs
 
@@ -20,7 +21,10 @@ from control.services.capture_service import (
     start_capture as _start_capture,
     stop_capture as _stop_capture,
 )
-from control.services.capture_synthesis_service import synthesize_capture as _synthesize_capture
+from control.services.capture_synthesis_service import (
+    start_synthetic_replay as _start_synthetic_replay,
+    synthesize_capture as _synthesize_capture,
+)
 from control.services.gateway_observability_service import (
     read_gateway_sessions as _read_gateway_sessions,
 )
@@ -350,7 +354,11 @@ def handle_capture_post_route(
 
         source_dir = str(body.get("source_dir") or "").strip()
         if not source_dir:
-            write_json(handler, 400, {"error": "source_dir obrigatório"})
+            # Amigável para o usuário leigo: sem source_dir no payload, usa o
+            # padrão do servidor (configurado em control.env no deploy).
+            source_dir = os.environ.get("DAKOTA_SOURCE_ROOT", "").strip()
+        if not source_dir:
+            write_json(handler, 400, {"error": "source_dir obrigatório (ou configure DAKOTA_SOURCE_ROOT no servidor)"})
             return True
 
         con = handler._db()
@@ -374,6 +382,54 @@ def handle_capture_post_route(
             return True
         except Exception as exc:
             write_json(handler, 500, {"ok": False, "error": str(exc)})
+            return True
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
+        return True
+
+    # POST /api/captures/{id}/synthetic-replay — replay sintético em 1 clique
+    if path.startswith("/api/captures/") and path.endswith("/synthetic-replay"):
+        user = handler._require(roles={"admin", "operator"})
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+
+        source_dir = str(body.get("source_dir") or "").strip()
+        if not source_dir:
+            source_dir = os.environ.get("DAKOTA_SOURCE_ROOT", "").strip()
+        if not source_dir:
+            write_json(handler, 400, {"error": "source_dir obrigatório (ou configure DAKOTA_SOURCE_ROOT no servidor)"})
+            return True
+
+        con = handler._db()
+        try:
+            payload = _start_synthetic_replay(
+                con,
+                capture_id,
+                created_by=int(user["id"]),
+                source_dir=source_dir,
+                seed=body.get("seed"),
+                target_host=str(body.get("target_host") or "").strip(),
+                target_user=str(body.get("target_user") or "").strip(),
+                term=str(body.get("term") or "").strip(),
+                skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else [],
+                runner=handler.server.runner,
+                hmac_key=handler.server.runner.hmac_key,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status = 404 if "não encontrada" in message else 400
+            write_json(handler, status, {"ok": False, "error": message})
+            return True
+        except Exception as exc:
+            write_json(handler, 500, {"ok": False, "error": public_error_message(exc, fallback="falha ao gerar replay sintético")})
             return True
         finally:
             handler._db_release(con)

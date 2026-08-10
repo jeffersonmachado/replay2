@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -483,6 +484,210 @@ ENDDO
         self.assertTrue(Path(data["artifacts"]["sessions_dir"]).is_dir())
         self.assertEqual(data["validation"]["total_sessions"], 3)
 
+    def _make_finished_capture(self):
+        """Cria captura finalizada com JSONL mínimo; retorna o capture_id."""
+        capture_log_dir = Path(self.tmpdir.name) / "captures" / "cap-fallback"
+        capture_log_dir.mkdir(parents=True, exist_ok=True)
+        (capture_log_dir / "audit-20260709.part001.jsonl").write_text(
+            json.dumps({"type": "bytes", "session_id": "sess-001", "key_text": "X", "seq_global": 1}),
+            encoding="utf-8",
+        )
+        self.con.execute(
+            "INSERT INTO users(id, username, password_hash, role, created_at_ms) VALUES (?,?,?,?,?)",
+            (99, "admin2", "hash", "admin", 1),
+        )
+        self.con.execute(
+            """
+            INSERT INTO capture_sessions(
+                session_uuid, status, created_by, created_by_username,
+                started_at_ms, environment_json, gateway_state_snapshot_json, log_dir, notes
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            ("cap-fallback", "finished", 99, "admin2", 123, "{}", "{}", str(capture_log_dir), ""),
+        )
+        self.con.commit()
+        return self.con.execute(
+            "SELECT id FROM capture_sessions WHERE session_uuid=?", ("cap-fallback",)
+        ).fetchone()[0]
+
+    def test_synthesize_capture_sem_source_dir_usa_dakota_source_root(self):
+        """Sem source_dir no payload, o endpoint usa DAKOTA_SOURCE_ROOT do servidor."""
+        from control.routes.capture_routes import handle_capture_post_route
+
+        capture_id = self._make_finished_capture()
+        old_root = os.environ.get("DAKOTA_SOURCE_ROOT")
+        os.environ["DAKOTA_SOURCE_ROOT"] = str(self.source_dir)
+        try:
+            handler = _FakeHandler(self.db_path, method="POST", body={"samples": 2, "seed": 42})
+            parsed = _FakeParsedPath(f"/api/captures/{capture_id}/synthesize")
+            handled = handle_capture_post_route(
+                handler, parsed, handler._body,
+                now_ms_fn=lambda: 456,
+                log_dir_base=str(Path(self.tmpdir.name) / "captures"),
+            )
+        finally:
+            if old_root is None:
+                os.environ.pop("DAKOTA_SOURCE_ROOT", None)
+            else:
+                os.environ["DAKOTA_SOURCE_ROOT"] = old_root
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.status_code, 200)
+        data = json.loads(handler.wfile.data.decode("utf-8"))
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated_sessions"], 2)
+
+    def test_synthesize_capture_sem_source_dir_e_sem_env_retorna_400(self):
+        """Sem source_dir e sem DAKOTA_SOURCE_ROOT, mantém o 400 explicativo."""
+        from control.routes.capture_routes import handle_capture_post_route
+
+        capture_id = self._make_finished_capture()
+        old_root = os.environ.pop("DAKOTA_SOURCE_ROOT", None)
+        try:
+            handler = _FakeHandler(self.db_path, method="POST", body={"samples": 2, "seed": 42})
+            parsed = _FakeParsedPath(f"/api/captures/{capture_id}/synthesize")
+            handled = handle_capture_post_route(
+                handler, parsed, handler._body,
+                now_ms_fn=lambda: 456,
+                log_dir_base=str(Path(self.tmpdir.name) / "captures"),
+            )
+        finally:
+            if old_root is not None:
+                os.environ["DAKOTA_SOURCE_ROOT"] = old_root
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.status_code, 400)
+        data = json.loads(handler.wfile.data.decode("utf-8"))
+        self.assertIn("DAKOTA_SOURCE_ROOT", data.get("error", ""))
+
+    def test_synthetic_replay_endpoint_cria_run(self):
+        """POST /api/captures/{id}/synthetic-replay — 1 clique: sintetiza e cria a run."""
+        from control.routes.capture_routes import handle_capture_post_route
+
+        capture_log_dir = Path(self.tmpdir.name) / "captures" / "cap-replay"
+        capture_log_dir.mkdir(parents=True)
+        base = {
+            "v": "v1",
+            "ts_ms": 1000,
+            "actor": "tester",
+            "session_id": "sess-replay",
+            "seq_session": 1,
+        }
+        events = [
+            {**base, "type": "session_start", "seq_global": 1, "logname": "ferblo"},
+            {
+                **base,
+                "type": "checkpoint",
+                "screen_sig": "CAD_CLI_TEST",
+                "screen_sample": "Cadastro de Clientes",
+                "seq_global": 2,
+                "norm_len": 400,
+            },
+            {**base, "type": "bytes", "key_text": "123.456.789-09", "seq_global": 3},
+            {**base, "type": "bytes", "key_text": "JOAO TESTE", "seq_global": 4},
+            {**base, "type": "bytes", "key_text": "{KEY:F10}", "seq_global": 5},
+        ]
+        (capture_log_dir / "audit-20260709.part001.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events),
+            encoding="utf-8",
+        )
+        self.con.execute(
+            "INSERT INTO users(id, username, password_hash, role, created_at_ms) VALUES (?,?,?,?,?)",
+            (1, "admin", "hash", "admin", 1),
+        )
+        self.con.execute(
+            """
+            INSERT INTO capture_sessions(
+                session_uuid, status, created_by, created_by_username,
+                started_at_ms, environment_json, gateway_state_snapshot_json, log_dir, notes
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            ("cap-replay", "finished", 1, "admin", 123, "{}", "{}", str(capture_log_dir), ""),
+        )
+        self.con.commit()
+        capture_id = self.con.execute(
+            "SELECT id FROM capture_sessions WHERE session_uuid=?", ("cap-replay",)
+        ).fetchone()[0]
+
+        handler = _FakeHandler(self.db_path, method="POST", body={
+            "source_dir": str(self.source_dir),
+            "seed": 42,
+        })
+        runner = _FakeRunner()
+        handler.server = _FakeServer(self.db_path, runner)
+        parsed = _FakeParsedPath(f"/api/captures/{capture_id}/synthetic-replay")
+        handled = handle_capture_post_route(
+            handler,
+            parsed,
+            handler._body,
+            now_ms_fn=lambda: 456,
+            log_dir_base=str(Path(self.tmpdir.name) / "captures"),
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.status_code, 200)
+        data = json.loads(handler.wfile.data.decode("utf-8"))
+        self.assertTrue(data["ok"])
+        self.assertGreater(data["run_id"], 0)
+        self.assertEqual(data["target_user"], "ferblo")
+        self.assertEqual(data["target_host"], "127.0.0.1")
+        self.assertEqual(runner.started, [data["run_id"]])
+        # trilha materializada e íntegra (hash-chain + HMAC do runner fake)
+        from dakota_gateway.verifier import verify_log
+        verify_log(data["trail_dir"], runner.hmac_key)
+        # run registrada com marcador sintético
+        row = self.con.execute(
+            "SELECT params_json, status FROM replay_runs WHERE id=?", (data["run_id"],)
+        ).fetchone()
+        params = json.loads(row[0] or "{}")
+        self.assertTrue(params.get("synthetic"))
+        self.assertEqual(params.get("source_capture_id"), capture_id)
+        # default do replay headless: xterm (TERM da captura pode travar a sessão)
+        self.assertEqual(params.get("term"), "xterm")
+
+    def test_synthetic_replay_skip_fields_mantem_originais(self):
+        """skip_fields mantém o valor original da captura (identidade posicional)."""
+        from control.services.capture_synthesis_service import _extract_substitutions
+
+        mappings = [{
+            "screen_title": "Pedido",
+            "inputs": [
+                {"original": "00109829069", "placeholder": "{{arq.cpf}}", "field_name": "cpf"},
+                {"original": "1", "placeholder": "{{arq.frete}}", "field_name": "frete"},
+            ],
+        }]
+        row = {"cpf": "185.032.574-08", "frete": 104529.05}
+
+        subs = _extract_substitutions(mappings, row)
+        self.assertEqual(len(subs), 2)
+        self.assertNotEqual(subs[0][0], subs[0][1])  # cpf substituído
+
+        subs_skip = _extract_substitutions(mappings, row, skip_fields={"cpf"})
+        # cpf vira identidade (preserva posição do cursor) e frete é substituído
+        self.assertEqual(subs_skip[0], ("00109829069", "00109829069"))
+        self.assertEqual(subs_skip[1][0], "1")
+        self.assertNotEqual(subs_skip[1][0], subs_skip[1][1])
+
+    def test_synthetic_replay_sem_source_dir_retorna_400(self):
+        from control.routes.capture_routes import handle_capture_post_route
+
+        capture_id = self._make_finished_capture()
+        old_root = os.environ.pop("DAKOTA_SOURCE_ROOT", None)
+        try:
+            handler = _FakeHandler(self.db_path, method="POST", body={"seed": 42})
+            parsed = _FakeParsedPath(f"/api/captures/{capture_id}/synthetic-replay")
+            handled = handle_capture_post_route(
+                handler, parsed, handler._body,
+                now_ms_fn=lambda: 456,
+                log_dir_base=str(Path(self.tmpdir.name) / "captures"),
+            )
+        finally:
+            if old_root is not None:
+                os.environ["DAKOTA_SOURCE_ROOT"] = old_root
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.status_code, 400)
+
 
 # ---------------------------------------------------------------------------
 # Fake HTTP handler para testes
@@ -510,7 +715,7 @@ class _FakeHandler:
         self.wfile = _FakeWFile()
 
     def _require(self, roles=None):
-        return {"username": "admin", "role": "admin"}
+        return {"id": 1, "username": "admin", "role": "admin"}
 
     def _db(self):
         con = connect(self._db_path)
@@ -528,6 +733,23 @@ class _FakeHandler:
 
     def end_headers(self):
         pass
+
+
+class _FakeRunner:
+    """Runner mínimo: registra start_run_async e expõe hmac_key."""
+
+    def __init__(self):
+        self.hmac_key = b"fake-runner-hmac"
+        self.started = []
+
+    def start_run_async(self, run_id: int):
+        self.started.append(int(run_id))
+
+
+class _FakeServer:
+    def __init__(self, db_path: str, runner):
+        self.db_path = db_path
+        self.runner = runner
 
 
 class _FakeRFile:

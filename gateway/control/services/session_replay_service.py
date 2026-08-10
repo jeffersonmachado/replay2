@@ -1182,7 +1182,13 @@ def prepare_session_replay_data(
                 item["checkpoint"] = True
         playback_items.append(item)
     timeline_view = ReferenceView(
-        event_refs=reference_payload["timeline"]["event_refs"],
+        # A timeline inclui TAMBÉM os deterministic_input (det-N): sem eles
+        # nos refs, o filtro "Determinístico" da UI nunca listava nada no
+        # contrato de referências (X6). O playback continua só com "bytes".
+        event_refs=[
+            str(item.get("event_id") or item.get("id") or item.get("seq_global") or idx)
+            for idx, item in enumerate(sorted_timeline)
+        ],
         checkpoint_refs=reference_payload["timeline"]["checkpoint_refs"],
         items=sorted_timeline,
     )

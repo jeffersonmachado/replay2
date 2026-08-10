@@ -327,19 +327,100 @@ async function loadCaptureDetail(captureId) {
 function setupSynthesisPanel(captureId, capture) {
   const panel = document.getElementById("cap_synthesis_panel");
   if (!panel) return;
-  const isFinished = String(capture?.status || "") === "finished";
-  panel.classList.toggle("hidden", !isFinished);
-  if (!isFinished) return;
+  const status = String(capture?.status || "");
+  // "interrupted" (gateway reiniciado, etc.) também tem trilha completa e
+  // pode ser sintetizada/reproduzida — só capturas ativas ficam de fora.
+  const isSynthesizable = status === "finished" || status === "interrupted";
+  panel.classList.toggle("hidden", !isSynthesizable);
+  if (!isSynthesizable) return;
 
+  const pageState = window.__R2CTL_PAGE_STATE__ || {};
+  const defaultSourceDir = String(pageState.default_source_dir || "").trim();
   const sourceInput = document.getElementById("cap_synth_source_dir");
   const samplesInput = document.getElementById("cap_synth_samples");
   const seedInput = document.getElementById("cap_synth_seed");
-  if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || "";
+  if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || defaultSourceDir;
   if (samplesInput && !samplesInput.value) samplesInput.value = localStorage.getItem("replay2.captureSynth.samples") || "10";
   if (seedInput && !seedInput.value) seedInput.value = localStorage.getItem("replay2.captureSynth.seed") || "42";
 
   const btn = document.getElementById("cap_synthesize_btn");
   if (btn) btn.onclick = () => synthesizeCapture(captureId);
+
+  const replayBtn = document.getElementById("cap_synth_replay_btn");
+  if (replayBtn) replayBtn.onclick = () => syntheticReplay(captureId);
+}
+
+async function syntheticReplay(captureId) {
+  const btn = document.getElementById("cap_synth_replay_btn");
+  const sourceInput = document.getElementById("cap_synth_source_dir");
+  const seedInput = document.getElementById("cap_synth_seed");
+  const feedback = document.getElementById("cap_synthesis_feedback");
+  const resultEl = document.getElementById("cap_synthesis_result");
+
+  const pageState = window.__R2CTL_PAGE_STATE__ || {};
+  let sourceDir = String(sourceInput?.value || "").trim();
+  if (!sourceDir) {
+    sourceDir = String(pageState.default_source_dir || "").trim();
+    if (sourceDir && sourceInput) sourceInput.value = sourceDir;
+  }
+  const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
+  const skipFields = String(document.getElementById("cap_synth_skip_fields")?.value || "")
+    .split(",")
+    .map((f) => f.trim())
+    .filter(Boolean);
+
+  if (!sourceDir) {
+    if (feedback) {
+      feedback.className = "mt-3 text-sm text-amber-300";
+      feedback.textContent = "Informe a pasta dos fontes Recital (o servidor não tem um padrão configurado).";
+    }
+    return;
+  }
+
+  localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
+  localStorage.setItem("replay2.captureSynth.seed", String(seed));
+
+  if (btn) { btn.disabled = true; btn.textContent = "Gerando replay..."; }
+  if (feedback) {
+    feedback.className = "mt-3 text-sm text-stone-300";
+    feedback.textContent = "Sintetizando dados e disparando a run de replay...";
+  }
+  if (resultEl) {
+    resultEl.classList.add("hidden");
+    resultEl.innerHTML = "";
+  }
+
+  const response = await apiJson(`/api/captures/${captureId}/synthetic-replay`, jsonRequest("POST", {
+    source_dir: sourceDir,
+    seed,
+    skip_fields: skipFields,
+  }));
+
+  if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
+
+  if (!response?.ok) {
+    if (feedback) {
+      feedback.className = "mt-3 text-sm text-rose-300";
+      feedback.textContent = response?.data?.error || "Falha ao gerar replay sintético.";
+    }
+    return;
+  }
+
+  const data = response.data || {};
+  if (feedback) {
+    feedback.className = "mt-3 text-sm text-emerald-300";
+    feedback.textContent = `Run ${data.run_id} disparada — ${formatCount(data.substitutions_count || 0)} campo(s) substituído(s).`;
+  }
+  if (resultEl) {
+    resultEl.classList.remove("hidden");
+    resultEl.innerHTML = `
+      <div class="grid gap-2 text-xs md:grid-cols-2">
+        <span>run: <a class="font-mono text-emerald-50 underline" href="/runs/${escapeHtml(String(data.run_id))}">#${escapeHtml(String(data.run_id))}</a></span>
+        <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
+        <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>
+      </div>
+    `;
+  }
 }
 
 async function synthesizeCapture(captureId) {
@@ -350,14 +431,20 @@ async function synthesizeCapture(captureId) {
   const feedback = document.getElementById("cap_synthesis_feedback");
   const resultEl = document.getElementById("cap_synthesis_result");
 
-  const sourceDir = String(sourceInput?.value || "").trim();
+  const pageState = window.__R2CTL_PAGE_STATE__ || {};
+  let sourceDir = String(sourceInput?.value || "").trim();
+  if (!sourceDir) {
+    // Fallback amigável: usa o padrão do servidor (DAKOTA_SOURCE_ROOT).
+    sourceDir = String(pageState.default_source_dir || "").trim();
+    if (sourceDir && sourceInput) sourceInput.value = sourceDir;
+  }
   const samples = normalizeNumber(samplesInput?.value, 10, 1, 10000);
   const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
 
   if (!sourceDir) {
     if (feedback) {
       feedback.className = "mt-3 text-sm text-amber-300";
-      feedback.textContent = "Informe o source_dir.";
+      feedback.textContent = "Informe a pasta dos fontes Recital (o servidor não tem um padrão configurado).";
     }
     return;
   }

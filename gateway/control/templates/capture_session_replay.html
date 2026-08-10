@@ -510,6 +510,12 @@ input[type="range"] {
       const key = String(ev?.event_id || ev?.id || ev?.seq_global || ev?.seq || idx);
       map.set(key, ev);
     });
+    // deterministic_input vive em timeline_items (refs det-N): sem este
+    // segundo registro, o filtro "Determinístico" nunca resolvia os refs.
+    (replayData?.timeline_items || []).forEach((ev, idx) => {
+      const key = String(ev?.event_id || ev?.id || ev?.seq_global || ev?.seq || `ti-${idx}`);
+      if (!map.has(key)) map.set(key, ev);
+    });
     return map;
   }
 

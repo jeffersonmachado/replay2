@@ -805,7 +805,30 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def _load_control_env() -> None:
+        """Carrega gateway/control.env (KEY=VALUE) para os.environ, se existir.
+
+        É o arquivo de configuração operacional persistente do servidor (ex.:
+        DAKOTA_SOURCE_ROOT no MIG24). Não vem no tarball e sobrevive a deploys.
+        Variáveis já presentes no ambiente têm precedência (setdefault).
+        """
+        env_file = Path(__file__).resolve().parents[1] / "control.env"
+        try:
+                lines = env_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+                return
+        for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                        continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key:
+                        os.environ.setdefault(key, value.strip())
+
+
 def main():
+        _load_control_env()
         ap = argparse.ArgumentParser()
         ap.add_argument("--listen", default="127.0.0.1:8090")
         ap.add_argument("--db", default="")

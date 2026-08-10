@@ -308,6 +308,7 @@ class Runner:
                 cols=term_opts["cols"],
                 term=term_opts["term"],
                 encoding=term_opts["encoding"],
+                term_override=str(params.get("term") or ""),
             )
 
             # Runner executes replay synchronously; pause/cancel are checked between coarse phases.

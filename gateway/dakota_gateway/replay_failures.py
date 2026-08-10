@@ -113,6 +113,20 @@ def evaluate_checkpoint_match(expected: str, observed: str, params: dict | None 
     }
 
 
+def _is_synthetic_send_anyway(params: dict | None) -> bool:
+    """True quando a run é replay sintético com envio forçado de inputs.
+
+    Nesse cenário a divergência de conteúdo de tela é esperada (dados
+    substituídos são ecoados nas telas) e não deve ser classificada como
+    timeout/high — ver análise da run 12 (captura 13).
+    """
+    raw = params if isinstance(params, dict) else {}
+    synthetic = raw.get("synthetic")
+    is_synthetic = synthetic is True or str(synthetic or "").strip().lower() in {"1", "true", "yes", "sim"}
+    mismatch = str(raw.get("on_deterministic_mismatch") or "").strip().lower()
+    return is_synthetic and mismatch == "send-anyway"
+
+
 def classify_checkpoint_failure(
     *,
     expected_sig: str,
@@ -124,6 +138,8 @@ def classify_checkpoint_failure(
     if timeout_reached and not str(observed_sig or "").strip():
         return "timeout", "critical", "checkpoint sem resposta observável dentro da janela"
     if timeout_reached:
+        if _is_synthetic_send_anyway(params):
+            return "screen_divergence", "medium", "checkpoint não estabilizou — divergência de conteúdo esperada em replay sintético (dados substituídos, envio forçado)"
         return "timeout", "high", "checkpoint não estabilizou dentro da janela esperada"
     observed_text = str(observed_sig or "").lower()
     expected_text = str(expected_sig or "").lower()

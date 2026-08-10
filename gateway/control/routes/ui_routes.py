@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from control.ui_templates import LOGIN_HTML, ROUTES_CONFIG, render_page
@@ -71,6 +72,14 @@ def _page_scripts(config: dict) -> list[str]:
 
 
 def render_ui_route(request, config: dict) -> str:
+    page_state = config.get("page_state")
+    if config.get("template") == "captures.html":
+        # Expõe o padrão do servidor para a UI pré-preencher o source_dir da
+        # síntese de dados (usuário leigo não precisa conhecer o caminho).
+        page_state = {
+            **(page_state or {}),
+            "default_source_dir": os.environ.get("DAKOTA_SOURCE_ROOT", "").strip(),
+        }
     return render_page(
         config["template"],
         title=config["title"],
@@ -80,7 +89,7 @@ def render_ui_route(request, config: dict) -> str:
         active_menu=config["menu"],
         active_submenu=config.get("submenu"),
         page_scripts=_page_scripts(config),
-        page_state=config.get("page_state"),
+        page_state=page_state,
     )
 
 

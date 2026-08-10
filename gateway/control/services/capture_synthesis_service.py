@@ -1,12 +1,14 @@
 """Serviço capture-to-synthetic para sessões gravadas pela UI."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 from pathlib import Path
 from typing import Any
 
 from dakota_gateway.synthetic.journey_synthesizer import JourneySynthesizer
+from dakota_gateway.synthetic.synthetic_trail import build_synthetic_trail
 
 from control.services.capture_service import get_capture
 
@@ -130,4 +132,178 @@ def synthesize_capture(
         "validation": validation,
         "stress": stress,
         "report": report,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Replay sintético em 1 clique (captura → dados sintéticos → run real)
+# ---------------------------------------------------------------------------
+
+def _format_synthetic_value(original: str, value: Any) -> str:
+    """Alinha o valor sintético ao formato esperado pelo campo na tela.
+
+    - float → decimal pt-BR com vírgula (o Recital usa vírgula: "229,9");
+    - int → string direta;
+    - string com máscara (original só dígitos, ex.: CPF) → só dígitos.
+    """
+    if isinstance(value, float):
+        return f"{value:.2f}".replace(".", ",")
+    if isinstance(value, int):
+        return str(value)
+    text = str(value)
+    if original.isdigit():
+        return re.sub(r"\D", "", text)
+    return text
+
+
+def _extract_substitutions(
+    screen_mappings: list[dict],
+    dataset_row: dict,
+    skip_fields: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Pares (original → sintético) na ordem da captura, a partir dos mappings.
+
+    ``skip_fields``: nomes de campos a manter com o valor original da captura
+    (ex.: chaves de consulta como ``cpf`` — um valor sintético novo desviaria
+    o fluxo para o cadastro em vez de seguir a jornada gravada).
+    """
+    skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
+    subs: list[tuple[str, str]] = []
+    for screen in screen_mappings or []:
+        for inp in screen.get("inputs") or []:
+            placeholder = str(inp.get("placeholder") or "")
+            original = str(inp.get("original") or "")
+            if not placeholder or not original or "{KEY:" in original:
+                continue
+            field = str(inp.get("field_name") or "").strip()
+            if not field:
+                m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
+                field = m.group(1) if m else ""
+            if not field or field not in dataset_row:
+                continue
+            if field.lower() in skip:
+                # Substituição identidade: mantém o valor original na trilha,
+                # mas avança o cursor posicional para a ocorrência certa —
+                # sem isso, uma substituição posterior de valor ambíguo
+                # (ex.: frete "1") casaria no menu ("1 - REDE LOJAS").
+                subs.append((original, original))
+                continue
+            value = _format_synthetic_value(original, dataset_row[field])
+            if value and value != original:
+                subs.append((original, value))
+    return subs
+
+
+def _capture_user_from_trail(capture_jsonl: str) -> str:
+    """Usuário operacional da sessão gravada (logname/actor do session_start)."""
+    try:
+        with open(capture_jsonl, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                ev = json.loads(line)
+                if ev.get("type") == "session_start":
+                    return str(ev.get("logname") or ev.get("actor") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def start_synthetic_replay(
+    con,
+    capture_id: int,
+    *,
+    created_by: int,
+    source_dir: str,
+    seed: int | None = None,
+    target_host: str = "",
+    target_user: str = "",
+    term: str = "",
+    skip_fields: list[str] | None = None,
+    runner,
+    hmac_key: bytes,
+) -> dict[str, Any]:
+    """Sintetiza dados a partir da captura e dispara um run real (1 clique).
+
+    Encadeia: síntese (template+dataset) → substituição dos inputs mapeados
+    na trilha real da captura (banner pré-sessão removido, cadeia HMAC
+    re-assinada) → run determinístico ``send-anyway`` via replay_control.
+    Retorna o payload da run criada + estatísticas da trilha.
+    """
+    from control.services.run_service import create_run_request_payload
+
+    synth = synthesize_capture(
+        con,
+        capture_id,
+        source_dir=source_dir,
+        samples=1,
+        seed=seed,
+        name=f"capture-{capture_id}-replay",
+        include_validation=False,
+    )
+
+    dataset_path = Path(synth["artifacts"]["dataset"])
+    dataset_lines = [l for l in dataset_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    dataset_row = json.loads(dataset_lines[0]) if dataset_lines else {}
+
+    substitutions = _extract_substitutions(
+        synth.get("screen_mappings"), dataset_row, skip_fields=set(skip_fields or [])
+    )
+    synth_warnings = list(synth.get("warnings") or [])
+    if not substitutions:
+        # Sem campo mapeado, o 1-clique ainda cumpre o replay (dados
+        # originais, banner removido) em vez de bloquear o usuário.
+        synth_warnings.append(
+            "nenhum campo mapeado para substituição — replay usará os dados originais da captura"
+        )
+
+    trail_dir = Path(synth["output_dir"]) / "trail"
+    trail = build_synthetic_trail(
+        synth["capture_jsonl"],
+        substitutions,
+        trail_dir,
+        hmac_key=hmac_key,
+    )
+
+    resolved_host = str(target_host or "").strip() or "127.0.0.1"
+    resolved_user = str(target_user or "").strip() or _capture_user_from_trail(synth["capture_jsonl"])
+    # TERM da captura é o do terminal do usuário (ex.: dk100 do TeraTerm) —
+    # termos com sequências de porta auxiliar (ESC[5i) travam a sessão de
+    # replay headless. O TerminalEngine emula xterm, então o default do
+    # replay é xterm (overridável pelo chamador).
+    resolved_term = str(term or "").strip() or "xterm"
+
+    run_body: dict[str, Any] = {
+        "log_dir": str(trail_dir),
+        "mode": "strict-global",
+        "target_host": resolved_host,
+        "target_user": resolved_user,
+        "params": {
+            "input_mode": "deterministic",
+            "on_deterministic_mismatch": "send-anyway",
+            "match_mode": "strict",
+            "match_threshold": 0.92,
+            "term": resolved_term,
+            "synthetic": True,
+            "source_capture_id": capture_id,
+            "journey_id": synth.get("journey_id") or "",
+        },
+    }
+    created = create_run_request_payload(con, created_by=created_by, body=run_body)
+    run_id = int(created["id"])
+    runner.start_run_async(run_id)
+
+    return {
+        "ok": True,
+        "capture_id": capture_id,
+        "run_id": run_id,
+        "status": "queued",
+        "target_host": resolved_host,
+        "target_user": resolved_user,
+        "substitutions": trail["applied"],
+        "substitutions_count": len(trail["applied"]),
+        "dropped_banner_events": trail["dropped_banner"],
+        "trail_events": trail["events"],
+        "trail_dir": str(trail_dir),
+        "warnings": trail["warnings"] + synth_warnings,
     }

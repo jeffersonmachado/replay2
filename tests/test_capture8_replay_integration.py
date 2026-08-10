@@ -204,6 +204,26 @@ def test_timeline_has_event_refs(capture8_data):
     assert len(timeline["event_refs"]) > 0
 
 
+def test_timeline_event_refs_include_deterministic_inputs(capture8_data):
+    """Refs da timeline cobrem os deterministic_input (filtro "Determinístico").
+
+    Regressão: os event_refs da timeline eram copiados do playback (só
+    eventos "bytes"); no contrato de referências (X6) o filtro
+    "Determinístico" da UI nunca listava nada. Playback segue só com bytes.
+    """
+    timeline = capture8_data.get("timeline", {})
+    refs = set(timeline.get("event_refs") or [])
+    det_ids = {
+        str(item.get("event_id"))
+        for item in capture8_data.get("timeline_items") or []
+        if item.get("type") == "deterministic_input"
+    }
+    assert det_ids, "fixture deveria ter deterministic_input na timeline"
+    assert det_ids <= refs, "refs da timeline devem incluir os det-*"
+    playback_refs = set(capture8_data.get("playback", {}).get("event_refs") or [])
+    assert not (det_ids & playback_refs), "playback continua só com bytes"
+
+
 def test_timeline_events_have_timestamp(capture8_data):
     """Every event must have ts_ms."""
     events = capture8_data.get("events", [])

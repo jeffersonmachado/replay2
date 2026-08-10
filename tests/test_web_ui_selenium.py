@@ -162,20 +162,23 @@ class TestWebUISelenium(unittest.TestCase):
         self.driver.find_element(By.TAG_NAME, "button").click()
         time.sleep(0.8)
 
-        self.driver.find_element(By.ID, "log_dir").send_keys("/tmp/test")
+        # O formulário de criação vive na página dedicada /runs/new.
+        self.driver.get(f"http://127.0.0.1:{self.port}/runs/new")
+        time.sleep(0.8)
+        self.driver.find_element(By.ID, "log_dir").send_keys(self.tmpdir.name)
         self.driver.find_element(By.ID, "target_host").send_keys("host")
         self.driver.find_element(By.ID, "target_user").send_keys("user")
         self.driver.find_element(By.ID, "target_cmd").send_keys("echo ok")
+        self.driver.find_element(By.ID, "create_run_btn").click()
 
-        buttons = self.driver.find_elements(By.TAG_NAME, "button")
-        # First action button in form is "Criar run".
-        for b in buttons:
-            if b.text.strip().lower().startswith("criar"):
-                b.click()
+        # Ao criar, a UI redireciona para o detalhe da run (/runs/{id}).
+        for _ in range(30):
+            url = self.driver.current_url
+            if "/runs/" in url and not url.endswith("/runs/new"):
                 break
-
-        time.sleep(0.8)
-        self.assertIn("runs:", self.driver.page_source)
+            time.sleep(0.2)
+        self.assertIn("/runs/", self.driver.current_url)
+        self.assertNotEqual(self.driver.current_url.rstrip("/"), f"http://127.0.0.1:{self.port}/runs/new")
 
 
 if __name__ == "__main__":

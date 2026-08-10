@@ -23,6 +23,7 @@ from .schema import FieldSchema, ScreenSchema, SyntheticSchema
 from .providers import ProviderRegistry, default_registry
 from .dataset_builder import DatasetBuilder
 from .template_engine import TemplateEngine
+from .screen_layout import extract_layout, layout_labels, field_at
 
 
 @dataclass
@@ -39,6 +40,7 @@ class MappedInput:
     confidence: float = 0.0
     evidence: list[str] = field(default_factory=list)
     method: str = ""  # by_semantic_type, by_screen_order, by_matched_fields, by_field_name, unmapped
+    picture: str = ""  # PICTURE literal do GET (quando mapeado por posição)
 
 
 @dataclass
@@ -81,10 +83,15 @@ class CaptureKnowledgeIntegrator:
     3. Sessoes parametrizadas com dados ficticios validos
     """
 
-    def __init__(self, registry: Optional[ProviderRegistry] = None):
+    def __init__(self, registry: Optional[ProviderRegistry] = None,
+                 source_root: Optional[str] = None):
         self.registry = registry or default_registry()
         self.dataset_builder = DatasetBuilder(self.registry)
         self.template_engine = TemplateEngine()
+        # Raiz dos fontes (.prg) para o mapeamento posicional cursor↔GET.
+        # Sem ela o passo by_cursor_position fica desligado.
+        self.source_root = source_root
+        self._layout_cache: dict[str, list] = {}
 
     # ── API principal ──
 
@@ -113,6 +120,7 @@ class CaptureKnowledgeIntegrator:
 
         for ctx in template.screen_contexts:
             screen_inputs = ctx.get("inputs", [])
+            screen_positions = ctx.get("input_positions") or []
             screen_sig = ctx.get("screen_sig", "")
             screen_sample = ctx.get("screen_sample", "")
 
@@ -120,6 +128,28 @@ class CaptureKnowledgeIntegrator:
             best_binding = self._find_binding_for_screen(
                 screen_sample, screen_sig, bindings_by_key, entity_index
             )
+
+            # ── Vínculo posicional (código de menu + labels do fonte) ──
+            # Telas cujo binding não é encontrado por título/programa (ex.:
+            # bindings com screen_title vazio e program_name interno) ainda
+            # podem ser vinculadas pelo layout posicional do fonte. O
+            # vínculo posicional também SUBSTITUI o fallback fraco ("nome
+            # da entidade aparece no texto da tela", conf 0.4): código de
+            # menu + labels posicionados são evidência mais forte.
+            screen_layout: list | None = None
+            is_weak_fallback = bool(
+                best_binding
+                and any("encontrada no screen_sample" in ev
+                        for ev in (best_binding.evidence or [])))
+            if best_binding is None or is_weak_fallback:
+                positional = self._find_positional_binding(
+                    screen_sample, bindings)
+                if positional:
+                    best_binding, screen_layout = positional
+            if screen_layout is None and self.source_root \
+                    and best_binding is not None \
+                    and getattr(best_binding, "source_file", ""):
+                screen_layout = self._load_layout(best_binding.source_file)
 
             entity_name = best_binding.entity_name if best_binding else ""
             binding_conf = best_binding.confidence if best_binding else 0.0
@@ -135,7 +165,31 @@ class CaptureKnowledgeIntegrator:
             if entity:
                 entity_fields = {f.name.upper(): f for f in entity.fields}
                 field_schemas = self._entity_to_field_schemas(entity)
-                matched_fields_list = best_binding.matched_fields if best_binding else []
+                if screen_layout:
+                    self._apply_picture_constraints(field_schemas,
+                                                    screen_layout)
+                # Labels visíveis no screen_sample ("Cliente:", "Produto:") são
+                # a evidência mais forte da ordem dos campos NAQUELA tela —
+                # essencial para entidades multi-tela, onde o matched_fields
+                # global do binding desalinha os índices por tela.
+                labels = self._screen_labels(screen_sample, entity_fields)
+                matched_fields_list = (
+                    labels
+                    or (best_binding.matched_fields if best_binding else [])
+                )
+                # Binding fraco (só o nome da entidade no texto da tela,
+                # conf 0.4) ou posicional (layout do fonte, sem vínculo de
+                # campos por tela): o matched_fields global do binding
+                # desalinha por tela e produzia substituições erradas em
+                # capturas reais ('g2511' → campo 'total'). Nesse modo só
+                # mapeia por tipo semântico forte, labels visíveis ou
+                # posição do cursor (evidência própria, independente do
+                # matched_fields); o resto permanece com o valor original.
+                fallback_only = bool(
+                    best_binding
+                    and any(("encontrada no screen_sample" in ev
+                             or "layout posicional:" in ev)
+                            for ev in (best_binding.evidence or [])))
                 used_fields: set[str] = set()
                 data_field_index = 0  # contador separado: so campos de dados
 
@@ -159,6 +213,10 @@ class CaptureKnowledgeIntegrator:
                         entity_fields=entity_fields,
                         matched_fields=matched_fields_list,
                         used_fields=used_fields,
+                        label_only=fallback_only,
+                        position=(screen_positions[idx]
+                                  if idx < len(screen_positions) else None),
+                        layout=screen_layout,
                     )
                     mapped.append(mi)
                     if mi.field_name and mi.confidence >= 0.5:
@@ -212,6 +270,117 @@ class CaptureKnowledgeIntegrator:
             entities_involved=sorted(entities_involved),
         )
 
+    @staticmethod
+    def _word_in(key: str, text: str) -> bool:
+        """Match por palavra inteira (case-insensitive).
+
+        Substring simples gerava falsos positivos em capturas reais: o
+        binding do programa "arq" casava com qualquer tela contendo
+        "ARQ" de "ARQUIVO" no cabeçalho (captura 13).
+        """
+        if not key or not text:
+            return False
+        return re.search(r"\b" + re.escape(key) + r"\b", text,
+                         re.IGNORECASE) is not None
+
+    # ── Mapeamento posicional (cursor ↔ layout do fonte) ──
+
+    def _load_layout(self, source_file: str) -> list:
+        """Layout posicional de um fonte .prg, com cache por arquivo.
+
+        O ``source_file`` gravado no binding é o caminho absoluto da
+        máquina que rodou o analyze-source; se não existir localmente,
+        tenta reconstruir a partir de ``source_root`` (trecho final do
+        caminho, depois só o basename).
+        """
+        from pathlib import Path
+
+        if source_file in self._layout_cache:
+            return self._layout_cache[source_file]
+
+        candidates = [Path(source_file)]
+        if self.source_root:
+            root = Path(self.source_root)
+            parts = Path(source_file).parts
+            if len(parts) >= 2:
+                candidates.append(root.joinpath(*parts[-2:]))
+            candidates.append(root / Path(source_file).name)
+
+        layout: list = []
+        for cand in candidates:
+            if cand.is_file():
+                layout = extract_layout(cand)
+                if layout:
+                    break
+        self._layout_cache[source_file] = layout
+        return layout
+
+    def _find_positional_binding(
+        self,
+        screen_sample: str,
+        bindings: list[ScreenEntityBinding],
+    ) -> tuple[ScreenEntityBinding, list] | None:
+        """Vincula uma tela ao fonte pelo código de menu + labels posicionados.
+
+        Telas do Recital exibem o código do menu no cabeçalho
+        (``3.6.1 PEDIDO E-COMMERCE``) e os programas seguem a convenção
+        ``<modulo><codigo>.prg`` (``est361.prg``). Entre os arquivos
+        candidatos, vence o que tiver mais labels posicionados (SAYs)
+        presentes no texto da tela — mínimo de 2 para evitar coincidências.
+
+        Retorna (binding, layout) ou None.
+        """
+        if not screen_sample or not self.source_root:
+            return None
+
+        codes = re.findall(r"\b\d{1,2}(?:\.\d{1,2}){1,2}\b", screen_sample)
+        digits = {c.replace(".", "") for c in codes if len(c.replace(".", "")) >= 3}
+        if not digits:
+            return None
+
+        # Arquivos candidatos: stem termina com os dígitos do código de menu
+        files: dict[str, list[ScreenEntityBinding]] = {}
+        for b in bindings:
+            src = getattr(b, "source_file", "") or ""
+            if not src:
+                continue
+            stem = src.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            if any(stem.endswith(d) for d in digits):
+                files.setdefault(src, []).append(b)
+
+        best = None  # (score, source_file, bindings, layout)
+        for src, bs in files.items():
+            layout = self._load_layout(src)
+            labels = layout_labels(layout)
+            score = sum(1 for lb in labels
+                        if self._word_in(lb, screen_sample))
+            if score >= 2 and (best is None or score > best[0]):
+                best = (score, src, bs, layout)
+
+        if best is None:
+            return None
+        score, src, bs, layout = best
+        binding = max(bs, key=lambda b: (len(b.matched_fields or []),
+                                         b.confidence or 0.0))
+        # Cópia rasa com evidência do vínculo posicional (não muta o binding
+        # compartilhado da KB). matched_fields vai VAZIO de propósito: a
+        # lista global do binding desalinha por tela — no modo posicional só
+        # valem labels visíveis da tela, tipo semântico e cursor.
+        binding = ScreenEntityBinding(
+            screen_title=binding.screen_title,
+            program_name=binding.program_name,
+            source_file=src,
+            source_lines=binding.source_lines,
+            entity_name=binding.entity_name,
+            operation=binding.operation,
+            matched_fields=[],
+            unmatched_screen_fields=list(binding.unmatched_screen_fields or []),
+            confidence=max(binding.confidence or 0.0, 0.7),
+            evidence=[f"layout posicional: menu {sorted(digits)} → "
+                      f"{src} ({score} labels)"],
+        )
+        return binding, layout
+
     def _find_binding_for_screen(
         self,
         screen_sample: str,
@@ -224,17 +393,19 @@ class CaptureKnowledgeIntegrator:
 
         # Match por screen_sample contra screen_title
         for key, binding in bindings_by_key.items():
-            if key and key in sample_upper:
+            if self._word_in(key, sample_upper):
                 return binding
 
         # Match por screen_sig
+        sig_upper = screen_sig.upper()
         for key, binding in bindings_by_key.items():
-            if key and (key in screen_sig.upper() or screen_sig.upper() in key):
+            if key and (self._word_in(key, sig_upper)
+                        or screen_sig.upper() in key):
                 return binding
 
         # Fallback: infere entidade por nome no screen_sample
         for ename in entity_index:
-            if ename in sample_upper:
+            if self._word_in(ename, sample_upper):
                 return ScreenEntityBinding(
                     entity_name=ename, confidence=0.4,
                     evidence=[f"entidade '{ename}' encontrada no screen_sample"],
@@ -421,8 +592,22 @@ class CaptureKnowledgeIntegrator:
         matched_fields: list[str] | None = None,
         used_fields: set[str] | None = None,
         data_index: int | None = None,
+        label_only: bool = False,
+        position: tuple[int, int] | None = None,
+        layout: list | None = None,
     ) -> MappedInput:
         """Mapeia input→campo.
+
+        ``label_only=True`` (binding de fallback): só aceita match semântico
+        forte (cpf, email, ...) ou pelas labels visíveis da tela
+        (matched_fields); ordem/nome de campo ficam desligados para não
+        inventar substituições sem vínculo tela↔entidade real.
+
+        ``position`` + ``layout`` (opcionais): posição do cursor no instante
+        da digitação e layout posicional do fonte (@ row,col GET). Ativa o
+        método ``by_cursor_position`` — inclusive para reclassificar valores
+        de 1-2 dígitos (cara de opção de menu) que foram digitados
+        exatamente na posição de um campo.
 
         Assinatura compativel com chamadas antigas e novas:
         - Chamada antiga: _map_input_to_field(input_index, value, entity, entity_fields, ...)
@@ -495,8 +680,31 @@ class CaptureKnowledgeIntegrator:
         # Classifica o tipo do valor
         val_type = self._classify_value(stripped)
 
-        # Menu options: manter como estao
+        # Menu options: manter como estao — exceto quando o cursor estava
+        # EXATAMENTE na posição de um GET do layout do fonte: aí o valor de
+        # 1-2 dígitos é dado de campo (ex.: Frete=1, Situacao=4 na captura
+        # 13), não opção de menu. O layout só existe com fonte vinculado,
+        # então o hook independe de label_only.
         if val_type == "menu_option":
+            if layout and position:
+                pf = field_at(layout, position[0], position[1], exact=True)
+                if pf is not None:
+                    target = entity_fields.get(pf.field.upper())
+                    if target is not None \
+                            and target.name.upper() not in used_fields:
+                        return MappedInput(
+                            input_index=input_index, original_value=value,
+                            original_type=val_type, entity_name=entity.name,
+                            field_name=target.name,
+                            field_datatype=target.datatype,
+                            semantic_type=self._infer_semantic_type(target.name),
+                            method="by_cursor_position",
+                            placeholder=f"{{{{{entity.name}.{target.name}}}}}",
+                            confidence=0.85,
+                            evidence=[f"by_cursor_position: "
+                                      f"({position[0]},{position[1]})→"
+                                      f"{pf.var}→{target.name}"],
+                            picture=pf.picture)
             return MappedInput(input_index=input_index, original_value=value,
                                original_type="menu_option")
 
@@ -516,8 +724,35 @@ class CaptureKnowledgeIntegrator:
                     placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.95,
                     evidence=[f"by_semantic_type: {val_type}→{field.name}"])
 
+        # 1.5: posição do cursor × layout posicional do fonte (@ row,col GET).
+        # Antes do matched_fields: a posição exata do cursor é evidência mais
+        # precisa que a ordem global de campos do binding. Não depende de
+        # label_only — o layout só existe quando há fonte vinculado à tela.
+        if layout and position:
+            pf = field_at(layout, position[0], position[1])
+            if pf is not None:
+                target = entity_fields.get(pf.field.upper())
+                if target is not None and target.name.upper() not in used_fields:
+                    return MappedInput(
+                        input_index=input_index, original_value=value,
+                        original_type=val_type, entity_name=entity.name,
+                        field_name=target.name, field_datatype=target.datatype,
+                        semantic_type=self._infer_semantic_type(target.name),
+                        method="by_cursor_position",
+                        placeholder=f"{{{{{entity.name}.{target.name}}}}}",
+                        confidence=0.85,
+                        evidence=[f"by_cursor_position: "
+                                  f"({position[0]},{position[1]})→"
+                                  f"{pf.var}→{target.name}"],
+                        picture=pf.picture)
+
         # 2: matched_fields por posicao de dados (data_index)
-        if matched_fields and data_index < len(matched_fields):
+        # Com binding fraco (fallback/posicional), a ordem dos labels só é
+        # usada quando NÃO há posição de cursor (trilhas legadas): se a
+        # posição existe e o passo de cursor não mapeou, a ordem dos labels
+        # vira especulação (captura 13: 'i' de Incluir → campo 'total').
+        if matched_fields and data_index < len(matched_fields) \
+                and not (label_only and position is not None):
             mf_name = matched_fields[data_index]
             mf_upper = mf_name.upper()
             if mf_upper not in used_fields:
@@ -531,9 +766,11 @@ class CaptureKnowledgeIntegrator:
                             placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.85,
                             evidence=[f"by_matched_fields[{data_index}]: {val_type}→{field.name}"])
 
+        # 2.5: (passo de cursor movido para 1.5, antes do matched_fields)
+
         # 3: Ordem da tela (by data_index, bloqueia ID/CODIGO, pula used)
         _TECH = {"ID", "CODIGO", "COD", "SEQ", "SEQUENCIA", "NUMERO", "NR", "STATUS", "TIPO", "FLAG"}
-        if data_index < len(entity_field_list):
+        if not label_only and data_index < len(entity_field_list):
             pos_field = entity_field_list[data_index]
             pos_upper = pos_field.name.upper()
             if pos_upper not in used_fields:
@@ -549,7 +786,7 @@ class CaptureKnowledgeIntegrator:
                         evidence=[f"by_screen_order[{data_index}]: {val_type}→{pos_field.name}"])
 
         # 4: Texto → primeiro campo textual nao-tecnico nao usado
-        if val_type in ("text", "text_long"):
+        if not label_only and val_type in ("text", "text_long"):
             for fname, field in entity_fields.items():
                 if fname.upper() in _TECH or fname.upper() in used_fields:
                     continue
@@ -565,26 +802,85 @@ class CaptureKnowledgeIntegrator:
                         evidence=[f"by_field_name(text): {val_type}→{field.name}"])
 
         # 4: Heuristica por nome (usa field.name, nao a chave uppercase)
-        for _fname, field in entity_fields.items():
-            fl = field.name.lower()
-            if val_type == "cpf" and "cpf" in fl:
-                return MappedInput(input_index=input_index, original_value=value,
-                    original_type=val_type, entity_name=entity.name,
-                    field_name=field.name, field_datatype=field.datatype,
-                    semantic_type="cpf", method="by_field_name",
-                    placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.80,
-                    evidence=[f"by_field_name: cpf→{field.name}"])
-            if val_type == "email" and ("email" in fl or "mail" in fl):
-                return MappedInput(input_index=input_index, original_value=value,
-                    original_type=val_type, entity_name=entity.name,
-                    field_name=field.name, field_datatype=field.datatype,
-                    semantic_type="email", method="by_field_name",
-                    placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.80,
-                    evidence=[f"by_field_name: email→{field.name}"])
+        if not label_only:
+            for _fname, field in entity_fields.items():
+                fl = field.name.lower()
+                if val_type == "cpf" and "cpf" in fl:
+                    return MappedInput(input_index=input_index, original_value=value,
+                        original_type=val_type, entity_name=entity.name,
+                        field_name=field.name, field_datatype=field.datatype,
+                        semantic_type="cpf", method="by_field_name",
+                        placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.80,
+                        evidence=[f"by_field_name: cpf→{field.name}"])
+                if val_type == "email" and ("email" in fl or "mail" in fl):
+                    return MappedInput(input_index=input_index, original_value=value,
+                        original_type=val_type, entity_name=entity.name,
+                        field_name=field.name, field_datatype=field.datatype,
+                        semantic_type="email", method="by_field_name",
+                        placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.80,
+                        evidence=[f"by_field_name: email→{field.name}"])
 
         return MappedInput(input_index=input_index, original_value=value,
             original_type=val_type, method="unmapped",
             evidence=[f"tipo: {val_type}, sem match confiavel"])
+
+    @staticmethod
+    def _screen_labels(screen_sample: str, entity_fields: dict) -> list[str]:
+        """Extrai campos da entidade visíveis como labels ("Nome:") na tela.
+
+        Retorna os nomes de campo na ordem em que aparecem no screen_sample.
+        Nomes curtos (<3 chars, ex.: ID) são ignorados para evitar ruído.
+        """
+        if not screen_sample:
+            return []
+        found: list[tuple[int, str]] = []
+        for fname in entity_fields:
+            if len(fname) < 3:
+                continue
+            m = re.search(r"\b" + re.escape(fname) + r"\s*:", screen_sample,
+                          re.IGNORECASE)
+            if m:
+                found.append((m.start(), entity_fields[fname].name))
+        return [name for _, name in sorted(found)]
+
+    @staticmethod
+    def _picture_to_constraints(fs: FieldSchema, pic: str) -> None:
+        """Aplica uma PICTURE literal como constraint de um FieldSchema."""
+        if not pic or pic.startswith("@"):
+            return
+        if fs.format or fs.min_value is not None or fs.max_value is not None:
+            return
+        if re.fullmatch(r"9+", pic):
+            fs.datatype = "number"
+            fs.min_value = 0
+            fs.max_value = 10 ** len(pic) - 1
+        elif re.fullmatch(r"[9.,]+", pic) and "9" in pic:
+            # formato BR: "999.999,99" — a vírgula separa os decimais
+            int_part = pic.split(",")[0]
+            fs.datatype = "decimal"
+            fs.min_value = 0
+            fs.max_value = float(10 ** int_part.count("9") - 1)
+
+    @staticmethod
+    def _apply_picture_constraints(field_schemas: list[FieldSchema],
+                                   layout: list) -> None:
+        """PICTURE literal do GET vira constraint de geração do campo.
+
+        Sem isso, campos de código curto (ex.: situacao com ``pict "99"``)
+        recebiam texto lorem de dezenas de caracteres — inválido num replay
+        real. Só anota campos sem formato semântico (cpf etc. têm prioridade)
+        e sem min/max já definidos. PICTURES com função (``@!``) ou variável
+        (``p_mascdoc``) não carregam largura e são ignoradas.
+        """
+        picts: dict[str, str] = {}
+        for pf in layout:
+            pic = getattr(pf, "picture", "") or ""
+            if pic:
+                picts.setdefault(pf.field.upper(), pic)
+
+        for fs in field_schemas:
+            CaptureKnowledgeIntegrator._picture_to_constraints(
+                fs, picts.get(fs.name.upper(), ""))
 
     @staticmethod
     def _is_command(value: str) -> bool:

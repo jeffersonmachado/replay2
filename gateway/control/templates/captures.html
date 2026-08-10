@@ -125,20 +125,31 @@
           <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Dados sinteticos</h3>
           <p class="text-xs text-stone-400">Gerar sessoes parametrizadas a partir da captura finalizada.</p>
         </div>
-        <button id="cap_synthesize_btn" class="r2ctl-btn-soft text-xs">Gerar</button>
+        <div class="flex items-center gap-2">
+          <button id="cap_synthesize_btn" class="r2ctl-btn-soft text-xs">Gerar</button>
+          <button id="cap_synth_replay_btn" class="r2ctl-btn-primary text-xs" title="Gera os dados e dispara o replay da captura com eles, em um clique">Replay sintético</button>
+        </div>
       </div>
       <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_120px_120px]">
         <label class="block">
-          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">source_dir</span>
-          <input id="cap_synth_source_dir" class="r2ctl-input w-full font-mono text-xs" placeholder="/caminho/para/fontes/dakota" />
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Pasta dos fontes Recital</span>
+          <input id="cap_synth_source_dir" class="r2ctl-input w-full font-mono text-xs" placeholder="Padrão do servidor (pré-preenchido)" />
+          <span class="mt-1 block text-[11px] text-stone-500">Já vem preenchida com o padrão do servidor — só altere se os fontes estiverem em outro lugar.</span>
         </label>
         <label class="block">
-          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">amostras</span>
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Nº de sessões</span>
           <input id="cap_synth_samples" type="number" min="1" max="10000" value="10" class="r2ctl-input w-full" />
+          <span class="mt-1 block text-[11px] text-stone-500">Quantas sessões sintéticas gerar.</span>
         </label>
         <label class="block">
-          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">seed</span>
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Semente</span>
           <input id="cap_synth_seed" type="number" value="42" class="r2ctl-input w-full" />
+          <span class="mt-1 block text-[11px] text-stone-500">Mesma semente = mesmos dados.</span>
+        </label>
+        <label class="block lg:col-span-3">
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Manter originais (replay)</span>
+          <input id="cap_synth_skip_fields" class="r2ctl-input w-full font-mono text-xs" placeholder="ex.: cpf — campos separados por vírgula" />
+          <span class="mt-1 block text-[11px] text-stone-500">Campos que o replay sintético NÃO substitui (chaves de consulta como cpf: um valor novo desviaria para o cadastro).</span>
         </label>
       </div>
       <div id="cap_synthesis_feedback" class="mt-3 text-sm text-stone-400"></div>

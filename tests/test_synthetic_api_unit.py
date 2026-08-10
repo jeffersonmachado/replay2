@@ -644,6 +644,9 @@ ENDDO
         self.assertEqual(params.get("source_capture_id"), capture_id)
         # default do replay headless: xterm (TERM da captura pode travar a sessão)
         self.assertEqual(params.get("term"), "xterm")
+        # rastreabilidade dos campos mantidos (âncoras + skip explícito)
+        self.assertIn("key_fields_suggested", data)
+        self.assertIn("skip_fields", data)
 
     def test_synthetic_replay_skip_fields_mantem_originais(self):
         """skip_fields mantém o valor original da captura (identidade posicional)."""

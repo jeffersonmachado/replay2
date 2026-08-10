@@ -127,6 +127,9 @@ def synthesize_capture(
             "report": result.report_path,
         },
         "screen_mappings": result.screen_mappings,
+        # Campos-âncora detectados na KB (chave de consulta) — mantidos com o
+        # valor original no replay sintético, sem intervenção do usuário.
+        "key_fields": suggest_key_fields(result.screen_mappings, entities),
         "warnings": result.warnings,
         "evidence": result.evidence,
         "validation": validation,
@@ -138,6 +141,48 @@ def synthesize_capture(
 # ---------------------------------------------------------------------------
 # Replay sintético em 1 clique (captura → dados sintéticos → run real)
 # ---------------------------------------------------------------------------
+
+# Operações de busca cujos campos funcionam como chave de consulta.
+_LOOKUP_OPS = {"seek", "locate", "dbseek", "find"}
+
+
+def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None) -> list[str]:
+    """Campos-âncora da navegação a manter com o valor original da captura.
+
+    Generalista — vale para qualquer captura/entidade: um campo mapeado é
+    âncora quando compõe índice da entidade, aparece em operação de busca
+    (seek/locate/dbseek/find) ou é único. Substituir uma âncora por um valor
+    sintético inexistente faz a consulta não encontrar o registro e desvia o
+    fluxo (ex.: cair no cadastro em vez de seguir a jornada gravada).
+    """
+    by_entity = {str(getattr(e, "name", "") or "").upper(): e for e in (entities or [])}
+    keys: list[str] = []
+    seen: set[str] = set()
+    for screen in screen_mappings or []:
+        entity = by_entity.get(str(screen.get("entity_name") or "").upper())
+        if entity is None:
+            continue
+        anchors: set[str] = set()
+        for idx in getattr(entity, "indexes", None) or []:
+            if isinstance(idx, dict) and str(idx.get("field") or "").strip():
+                anchors.add(str(idx["field"]).upper())
+        for op in getattr(entity, "operations", None) or []:
+            if str(getattr(op, "operation_type", "") or "").lower() in _LOOKUP_OPS:
+                anchors.update(
+                    str(f).upper() for f in (getattr(op, "fields", None) or []) if str(f or "").strip()
+                )
+        for fld in getattr(entity, "fields", None) or []:
+            if getattr(fld, "unique_flag", False) and str(getattr(fld, "name", "") or "").strip():
+                anchors.add(str(fld.name).upper())
+        if not anchors:
+            continue
+        for inp in screen.get("inputs") or []:
+            field = str(inp.get("field_name") or "").strip()
+            if field and field.upper() in anchors and field.lower() not in seen:
+                seen.add(field.lower())
+                keys.append(field)
+    return keys
+
 
 def _format_synthetic_value(original: str, value: Any) -> str:
     """Alinha o valor sintético ao formato esperado pelo campo na tela.
@@ -246,10 +291,22 @@ def start_synthetic_replay(
     dataset_lines = [l for l in dataset_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     dataset_row = json.loads(dataset_lines[0]) if dataset_lines else {}
 
+    # Campos-âncora (chave de consulta detectada na KB) são mantidos com o
+    # valor original automaticamente; o chamador pode adicionar outros via
+    # skip_fields explícito.
+    suggested_skip = [str(f) for f in (synth.get("key_fields") or [])]
+    explicit_skip = [str(f).strip() for f in (skip_fields or []) if str(f).strip()]
+    effective_skip = sorted({f.lower() for f in suggested_skip + explicit_skip})
+
     substitutions = _extract_substitutions(
-        synth.get("screen_mappings"), dataset_row, skip_fields=set(skip_fields or [])
+        synth.get("screen_mappings"), dataset_row, skip_fields=set(effective_skip)
     )
     synth_warnings = list(synth.get("warnings") or [])
+    auto_kept = [f for f in suggested_skip if f.lower() not in {e.lower() for e in explicit_skip}]
+    if auto_kept:
+        synth_warnings.append(
+            "campos-âncora mantidos com o valor original (chave de consulta): " + ", ".join(auto_kept)
+        )
     if not substitutions:
         # Sem campo mapeado, o 1-clique ainda cumpre o replay (dados
         # originais, banner removido) em vez de bloquear o usuário.
@@ -302,6 +359,8 @@ def start_synthetic_replay(
         "target_user": resolved_user,
         "substitutions": trail["applied"],
         "substitutions_count": len(trail["applied"]),
+        "key_fields_suggested": suggested_skip,
+        "skip_fields": effective_skip,
         "dropped_banner_events": trail["dropped_banner"],
         "trail_events": trail["events"],
         "trail_dir": str(trail_dir),

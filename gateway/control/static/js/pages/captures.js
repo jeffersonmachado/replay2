@@ -407,6 +407,7 @@ async function syntheticReplay(captureId) {
   }
 
   const data = response.data || {};
+  const kept = Array.isArray(data.skip_fields) ? data.skip_fields : [];
   if (feedback) {
     feedback.className = "mt-3 text-sm text-emerald-300";
     feedback.textContent = `Run ${data.run_id} disparada — ${formatCount(data.substitutions_count || 0)} campo(s) substituído(s).`;
@@ -417,6 +418,7 @@ async function syntheticReplay(captureId) {
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>run: <a class="font-mono text-emerald-50 underline" href="/runs/${escapeHtml(String(data.run_id))}">#${escapeHtml(String(data.run_id))}</a></span>
         <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
+        ${kept.length ? `<span class="md:col-span-2">mantidos (chave de consulta): <span class="font-mono text-emerald-50">${escapeHtml(kept.join(", "))}</span></span>` : ""}
         <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>
       </div>
     `;

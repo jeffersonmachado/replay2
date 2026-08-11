@@ -145,15 +145,22 @@ def synthesize_capture(
 # Operações de busca cujos campos funcionam como chave de consulta.
 _LOOKUP_OPS = {"seek", "locate", "dbseek", "find"}
 
+# Tipos semânticos que identificam um registro por natureza (documento
+# cadastral único). A KB persistida nem sempre popula unique_flag/índices,
+# mas o datatype semântico está sempre presente.
+_IDENTIFIER_DATATYPES = {"cpf", "cnpj"}
+
 
 def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None) -> list[str]:
     """Campos-âncora da navegação a manter com o valor original da captura.
 
     Generalista — vale para qualquer captura/entidade: um campo mapeado é
     âncora quando compõe índice da entidade, aparece em operação de busca
-    (seek/locate/dbseek/find) ou é único. Substituir uma âncora por um valor
-    sintético inexistente faz a consulta não encontrar o registro e desvia o
-    fluxo (ex.: cair no cadastro em vez de seguir a jornada gravada).
+    (seek/locate/dbseek/find), é único, ou tem tipo semântico identificador
+    (cpf/cnpj — documento que identifica o registro por natureza).
+    Substituir uma âncora por um valor sintético inexistente faz a consulta
+    não encontrar o registro e desvia o fluxo (ex.: cair no cadastro em vez
+    de seguir a jornada gravada).
     """
     by_entity = {str(getattr(e, "name", "") or "").upper(): e for e in (entities or [])}
     keys: list[str] = []
@@ -172,7 +179,11 @@ def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None
                     str(f).upper() for f in (getattr(op, "fields", None) or []) if str(f or "").strip()
                 )
         for fld in getattr(entity, "fields", None) or []:
-            if getattr(fld, "unique_flag", False) and str(getattr(fld, "name", "") or "").strip():
+            if not str(getattr(fld, "name", "") or "").strip():
+                continue
+            datatype = str(getattr(fld, "datatype", "") or "").strip().lower()
+            semantic = str(getattr(fld, "semantic_type", "") or "").strip().lower()
+            if getattr(fld, "unique_flag", False) or datatype in _IDENTIFIER_DATATYPES or semantic in _IDENTIFIER_DATATYPES:
                 anchors.add(str(fld.name).upper())
         if not anchors:
             continue

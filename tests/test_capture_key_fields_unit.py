@@ -75,6 +75,22 @@ class SuggestKeyFieldsTests(unittest.TestCase):
         }]
         self.assertEqual(suggest_key_fields(mappings, [entity]), ["numero"])
 
+    def test_campo_identificador_por_datatype_e_sugerido(self):
+        """cpf/cnpj identificam um registro por natureza — âncora mesmo sem
+        unique_flag (a KB persistida do AIX não popula unique nem índices)."""
+        entity = EntityDefinition(
+            name="arq",
+            fields=[
+                FieldDefinition(name="cpf", datatype="cpf", unique_flag=False),
+                FieldDefinition(name="nome", datatype="person_name"),
+            ],
+        )
+        mappings = [{
+            "entity_name": "arq",
+            "inputs": [{"original": "00109829069", "field_name": "cpf", "placeholder": "{{arq.cpf}}"}],
+        }]
+        self.assertEqual(suggest_key_fields(mappings, [entity]), ["cpf"])
+
     def test_campo_comum_nao_e_sugerido(self):
         mappings = [{
             "entity_name": "CLIENTES",

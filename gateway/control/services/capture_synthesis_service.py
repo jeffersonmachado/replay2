@@ -89,12 +89,12 @@ def synthesize_capture(
     # "qual campo é chave" — vale mesmo quando a KB não tem índices parseados
     # do fonte. Sem índice no diretório de dados, segue sem enriquecer.
     from dakota_gateway.source_analyzer.index_file_reader import (
-        discover_data_dir,
+        discover_data_dirs,
         enrich_entities_with_index_files,
     )
-    data_dir = discover_data_dir(source_path)
-    if data_dir and entities:
-        enrich_entities_with_index_files(entities, data_dir)
+    data_dirs = discover_data_dirs(source_path)
+    if data_dirs and entities:
+        enrich_entities_with_index_files(entities, data_dirs)
 
     synthesizer = JourneySynthesizer()
     template = synthesizer.from_capture(
@@ -122,7 +122,7 @@ def synthesize_capture(
         "capture_id": capture_id,
         "capture": capture,
         "source_dir": str(source_path),
-        "data_dir": data_dir,
+        "data_dirs": data_dirs,
         "capture_files": [str(path) for path in files],
         "capture_jsonl": str(capture_jsonl),
         "output_dir": str(output_dir),

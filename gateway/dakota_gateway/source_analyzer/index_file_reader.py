@@ -93,20 +93,25 @@ def scan_index_files(data_dir: str | Path) -> dict[str, list[list[str]]]:
     return keys
 
 
-def discover_data_dir(source_dir: str | Path, env: dict | None = None) -> str:
-    """Resolve o diretório de dados (onde ficam os índices).
+def discover_data_dirs(source_dir: str | Path, env: dict | None = None) -> list[str]:
+    """Resolve os diretórios de dados (onde ficam os índices).
 
-    Ordem: ``DAKOTA_DATA_ROOT`` explícito → varredura dos irmãos de
-    ``source_dir`` procurando quem tem arquivos de índice com tabela par
-    (no Dakota: ``/dakota11/prg`` → ``/dakota11/est``). Vazio se nada
-    for encontrado — o chamador segue sem o enriquecimento.
+    Ordem: ``DAKOTA_DATA_ROOT`` explícito (um ou mais diretórios separados
+    por ``:``/``;``) → todos os irmãos de ``source_dir`` que têm arquivos
+    de índice com tabela par (no Dakota: ``/dakota11/prg`` → ``cad``,
+    ``est``, ``fin``, ``loj``... — cada módulo tem seu diretório de dados).
+    Lista vazia se nada for encontrado — o chamador segue sem o
+    enriquecimento.
     """
     env = env if env is not None else os.environ
     explicit = str(env.get("DAKOTA_DATA_ROOT") or "").strip()
-    if explicit and Path(explicit).is_dir():
-        return explicit
+    if explicit:
+        dirs = [d for d in re.split(r"[:;]", explicit) if d.strip() and Path(d.strip()).is_dir()]
+        if dirs:
+            return [d.strip() for d in dirs]
     source = Path(str(source_dir or "").strip())
     parent = source.parent if source.is_dir() else None
+    found: list[str] = []
     if parent and parent.is_dir():
         try:
             siblings = sorted(p for p in parent.iterdir() if p.is_dir())
@@ -114,18 +119,25 @@ def discover_data_dir(source_dir: str | Path, env: dict | None = None) -> str:
             siblings = []
         for candidate in siblings:
             if scan_index_files(candidate):
-                return str(candidate)
-    return ""
+                found.append(str(candidate))
+    return found
 
 
-def enrich_entities_with_index_files(entities: list[Any], data_dir: str | Path) -> int:
+def enrich_entities_with_index_files(entities: list[Any], data_dirs: str | Path | list) -> int:
     """Acrescenta os índices lidos dos arquivos às entidades da KB.
 
     Casa pelo nome da entidade (``USE <tabela>``) com o stem do arquivo de
-    dados, em maiúsculas. Retorna quantas entidades foram enriquecidas.
-    Idempotente: índices já presentes (mesmo field) não são duplicados.
+    dados, em maiúsculas. Aceita um diretório ou uma lista — no legado cada
+    módulo tem seu diretório de dados (``cad``, ``est``, ``fin``...).
+    Retorna quantas entidades foram enriquecidas. Idempotente: índices já
+    presentes (mesmo field) não são duplicados.
     """
-    keys = scan_index_files(data_dir)
+    if isinstance(data_dirs, (str, Path)):
+        data_dirs = [data_dirs]
+    keys: dict[str, list[list[str]]] = {}
+    for data_dir in data_dirs:
+        for table, table_keys in scan_index_files(data_dir).items():
+            keys.setdefault(table, []).extend(table_keys)
     if not keys:
         return 0
     enriched = 0

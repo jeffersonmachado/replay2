@@ -197,8 +197,10 @@ replay2/
   consulta: compõe índice da entidade — parseado do fonte ou lido dos
   arquivos de índice Recital `i<TABELA>.00N` (`index_file_reader.py`: a
   expressão da chave fica em texto claro no primeiro bloco, ex. `rede +
-  loja + dtos(data)`; `discover_data_dir` resolve o diretório de dados via
-  `DAKOTA_DATA_ROOT` ou descobre o irmão de `source_dir` que tem índices),
+  loja + dtos(data)`; `discover_data_dirs` resolve os diretórios de dados
+  via `DAKOTA_DATA_ROOT` (lista separada por `:`/`;`) ou descobre todos os
+  irmãos de `source_dir` com índices — cada módulo do legado tem o seu:
+  `/dakota11/{cad,est,fin,loj,...}`),
   operação de busca seek/locate/dbseek,
   campo único, `lookup_table` (FK) ou tipo semântico identificador —
   `source_analyzer/semantic_types.py` centraliza `IDENTIFIER_TYPES`/

@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from dakota_gateway.source_analyzer.index_file_reader import (
-    discover_data_dir,
+    discover_data_dirs,
     enrich_entities_with_index_files,
     parse_key_expression,
     read_index_expression,
@@ -56,23 +56,33 @@ class ScanIndexFilesTests(unittest.TestCase):
         self.assertEqual(scan_index_files("/nao/existe"), {})
 
 
-class DiscoverDataDirTests(unittest.TestCase):
+class DiscoverDataDirsTests(unittest.TestCase):
     def test_env_tem_precedencia(self):
         with TemporaryDirectory() as tmp:
             self.assertEqual(
-                discover_data_dir("/qualquer", env={"DAKOTA_DATA_ROOT": tmp}), tmp
+                discover_data_dirs("/qualquer", env={"DAKOTA_DATA_ROOT": tmp}), [tmp]
             )
 
-    def test_irmao_com_indices_e_descoberto(self):
+    def test_env_aceita_lista_separada_por_dois_pontos(self):
+        with TemporaryDirectory() as a, TemporaryDirectory() as b:
+            self.assertEqual(
+                discover_data_dirs("/qualquer", env={"DAKOTA_DATA_ROOT": f"{a}:{b}"}),
+                [a, b],
+            )
+
+    def test_irmaos_com_indices_sao_descobertos(self):
         with TemporaryDirectory() as tmp:
             parent = Path(tmp)
             (parent / "prg").mkdir()
-            est = parent / "est"
-            est.mkdir()
-            (est / "est100.est").write_bytes(b"\x00" * 64)
-            _write_index(est / "iest100.001", "codigo")
+            for nome in ("cad", "est"):
+                d = parent / nome
+                d.mkdir()
+                (d / f"{nome}100.est").write_bytes(b"\x00" * 64)
+                _write_index(d / f"i{nome}100.001", "codigo")
+            (parent / "vazio").mkdir()
             self.assertEqual(
-                discover_data_dir(parent / "prg", env={}), str(est)
+                discover_data_dirs(parent / "prg", env={}),
+                [str(parent / "cad"), str(parent / "est")],
             )
 
     def test_sem_indice_retorna_vazio(self):
@@ -80,7 +90,7 @@ class DiscoverDataDirTests(unittest.TestCase):
             parent = Path(tmp)
             (parent / "prg").mkdir()
             (parent / "vazio").mkdir()
-            self.assertEqual(discover_data_dir(parent / "prg", env={}), "")
+            self.assertEqual(discover_data_dirs(parent / "prg", env={}), [])
 
 
 class EnrichEntitiesTests(unittest.TestCase):
@@ -114,6 +124,23 @@ class EnrichEntitiesTests(unittest.TestCase):
             enrich_entities_with_index_files([entity], base)
             enrich_entities_with_index_files([entity], base)
         self.assertEqual(len(entity.indexes), 1)
+
+    def test_multiplos_diretorios_de_dados(self):
+        """Cada módulo do legado tem seu diretório (cad, est, fin...)."""
+        with TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            cad = parent / "cad"
+            est = parent / "est"
+            for d, tabela, chave in ((cad, "cad100", "cpf_cnpj"), (est, "est100", "rede + loja")):
+                d.mkdir()
+                (d / f"{tabela}.est").write_bytes(b"\x00" * 64)
+                _write_index(d / f"i{tabela}.001", chave)
+            e_cad = EntityDefinition(name="CAD100", fields=[])
+            e_est = EntityDefinition(name="EST100", fields=[])
+            enriched = enrich_entities_with_index_files([e_cad, e_est], [str(cad), str(est)])
+        self.assertEqual(enriched, 2)
+        self.assertEqual({i["field"] for i in e_cad.indexes}, {"cpf_cnpj"})
+        self.assertEqual({i["field"] for i in e_est.indexes}, {"rede", "loja"})
 
 
 class IntegracaoSuggestKeyFieldsTests(unittest.TestCase):

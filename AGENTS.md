@@ -588,7 +588,10 @@ e faz health check.
 Configuração operacional persistente (v0.8.12): o start do control plane
 carrega `$PREFIX/gateway/control.env` se existir — é o lugar de variáveis do
 servidor como `DAKOTA_SOURCE_ROOT=/dakota11/prg` (sem ela os endpoints
-synthetic respondem 500 em produção). O arquivo é do servidor (não vem no
+synthetic respondem 500 em produção). Opcional: `DAKOTA_DATA_ROOT` aponta os
+diretórios de dados (lista separada por `:`) de onde o `index_file_reader`
+lê as chaves dos índices Recital — sem ela, os irmãos de `source_dir` com
+índices são descobertos automaticamente. O arquivo é do servidor (não vem no
 tarball, como `.local-secrets/`) e sobrevive a deploys.
 
 Manualmente (sem o deploy.sh), o fluxo equivalente é:

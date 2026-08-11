@@ -9,6 +9,7 @@ from typing import Any
 
 from dakota_gateway.synthetic.journey_synthesizer import JourneySynthesizer
 from dakota_gateway.synthetic.synthetic_trail import build_synthetic_trail
+from dakota_gateway.source_analyzer.semantic_types import identifies_record
 
 from control.services.capture_service import get_capture
 
@@ -145,19 +146,15 @@ def synthesize_capture(
 # Operações de busca cujos campos funcionam como chave de consulta.
 _LOOKUP_OPS = {"seek", "locate", "dbseek", "find"}
 
-# Tipos semânticos que identificam um registro por natureza (documento
-# cadastral único). A KB persistida nem sempre popula unique_flag/índices,
-# mas o datatype semântico está sempre presente.
-_IDENTIFIER_DATATYPES = {"cpf", "cnpj"}
-
 
 def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None) -> list[str]:
     """Campos-âncora da navegação a manter com o valor original da captura.
 
     Generalista — vale para qualquer captura/entidade: um campo mapeado é
     âncora quando compõe índice da entidade, aparece em operação de busca
-    (seek/locate/dbseek/find), é único, ou tem tipo semântico identificador
-    (cpf/cnpj — documento que identifica o registro por natureza).
+    (seek/locate/dbseek/find), é único, tem lookup_table (FK — o valor
+    precisa existir na entidade referenciada), ou tem tipo semântico
+    identificador de registro (`source_analyzer.semantic_types`).
     Substituir uma âncora por um valor sintético inexistente faz a consulta
     não encontrar o registro e desvia o fluxo (ex.: cair no cadastro em vez
     de seguir a jornada gravada).
@@ -183,7 +180,12 @@ def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None
                 continue
             datatype = str(getattr(fld, "datatype", "") or "").strip().lower()
             semantic = str(getattr(fld, "semantic_type", "") or "").strip().lower()
-            if getattr(fld, "unique_flag", False) or datatype in _IDENTIFIER_DATATYPES or semantic in _IDENTIFIER_DATATYPES:
+            if (
+                getattr(fld, "unique_flag", False)
+                or str(getattr(fld, "lookup_table", "") or "").strip()
+                or identifies_record(datatype)
+                or identifies_record(semantic)
+            ):
                 anchors.add(str(fld.name).upper())
         if not anchors:
             continue

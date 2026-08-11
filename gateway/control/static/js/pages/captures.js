@@ -486,6 +486,7 @@ async function synthesizeCapture(captureId) {
   const data = response.data || {};
   const artifacts = data.artifacts || {};
   const validation = data.validation || {};
+  const keyFields = Array.isArray(data.key_fields) ? data.key_fields : [];
   if (feedback) {
     feedback.className = "mt-3 text-sm text-emerald-300";
     feedback.textContent = `${formatCount(data.generated_sessions || 0)} sessão(ões) gerada(s).`;
@@ -496,6 +497,7 @@ async function synthesizeCapture(captureId) {
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>jornada: <span class="font-mono text-emerald-50">${escapeHtml(data.journey_id || "-")}</span></span>
         <span>validas: <span class="font-mono text-emerald-50">${formatCount(validation.valid_sessions || 0)}/${formatCount(validation.total_sessions || data.generated_sessions || 0)}</span></span>
+        <span class="md:col-span-2">chave desta captura: <span class="font-mono text-emerald-50">${keyFields.length ? escapeHtml(keyFields.join(", ")) : "nenhuma detectada"}</span> (mantida com o valor original no replay)</span>
         <span class="md:col-span-2">template: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.template || "-")}</span></span>
         <span class="md:col-span-2">dataset: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.dataset || "-")}</span></span>
         <span class="md:col-span-2">sessões: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.sessions_dir || "-")}</span></span>

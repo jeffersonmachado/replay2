@@ -194,8 +194,11 @@ replay2/
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira
   substituição identidade para preservar a posição do cursor), remove o
   banner pré-sessão e re-assina hash-chain + HMAC; campos-âncora (chave de
-  consulta: índice, operação seek/locate ou campo único na knowledge base)
-  são detectados automaticamente por `suggest_key_fields` e mantidos com o
+  consulta: compõe índice da entidade, operação de busca seek/locate/dbseek,
+  campo único, `lookup_table` (FK) ou tipo semântico identificador —
+  `source_analyzer/semantic_types.py` centraliza `IDENTIFIER_TYPES`/
+  `identifies_record`, hoje cpf/cnpj, extensível por declaração) são
+  detectados automaticamente por `suggest_key_fields` e mantidos com o
   valor original — o `skip_fields` manual é só para exceções; a rota
   `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
   detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)

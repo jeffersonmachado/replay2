@@ -76,7 +76,7 @@ class SuggestKeyFieldsTests(unittest.TestCase):
         self.assertEqual(suggest_key_fields(mappings, [entity]), ["numero"])
 
     def test_campo_identificador_por_datatype_e_sugerido(self):
-        """cpf/cnpj identificam um registro por natureza — âncora mesmo sem
+        """Tipo identificador de registro (cpf/cnpj/...) — âncora mesmo sem
         unique_flag (a KB persistida do AIX não popula unique nem índices)."""
         entity = EntityDefinition(
             name="arq",
@@ -90,6 +90,35 @@ class SuggestKeyFieldsTests(unittest.TestCase):
             "inputs": [{"original": "00109829069", "field_name": "cpf", "placeholder": "{{arq.cpf}}"}],
         }]
         self.assertEqual(suggest_key_fields(mappings, [entity]), ["cpf"])
+
+    def test_campo_com_lookup_table_e_sugerido(self):
+        """Campo com lookup_table é FK: o valor precisa existir na entidade
+        referenciada — substituir por inexistente desvia o fluxo."""
+        entity = EntityDefinition(
+            name="PEDIDOS",
+            fields=[
+                FieldDefinition(name="EAN_PRODUTO", datatype="text", lookup_table="PRODUTOS"),
+                FieldDefinition(name="QUANTIDADE", datatype="number"),
+            ],
+        )
+        mappings = [{
+            "entity_name": "PEDIDOS",
+            "inputs": [
+                {"original": "7909521971642", "field_name": "ean_produto", "placeholder": "{{pedidos.ean_produto}}"},
+                {"original": "1", "field_name": "quantidade", "placeholder": "{{pedidos.quantidade}}"},
+            ],
+        }]
+        self.assertEqual(suggest_key_fields(mappings, [entity]), ["ean_produto"])
+
+    def test_identifies_record_modulo_central(self):
+        """A propriedade 'identifica registro' é declarativa e centralizada."""
+        from dakota_gateway.source_analyzer.semantic_types import identifies_record
+
+        self.assertTrue(identifies_record("cpf"))
+        self.assertTrue(identifies_record("CNPJ"))
+        self.assertFalse(identifies_record("email"))
+        self.assertFalse(identifies_record(""))
+        self.assertFalse(identifies_record(None))
 
     def test_campo_comum_nao_e_sugerido(self):
         mappings = [{

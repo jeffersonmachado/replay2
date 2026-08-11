@@ -194,7 +194,12 @@ replay2/
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira
   substituição identidade para preservar a posição do cursor), remove o
   banner pré-sessão e re-assina hash-chain + HMAC; campos-âncora (chave de
-  consulta: compõe índice da entidade, operação de busca seek/locate/dbseek,
+  consulta: compõe índice da entidade — parseado do fonte ou lido dos
+  arquivos de índice Recital `i<TABELA>.00N` (`index_file_reader.py`: a
+  expressão da chave fica em texto claro no primeiro bloco, ex. `rede +
+  loja + dtos(data)`; `discover_data_dir` resolve o diretório de dados via
+  `DAKOTA_DATA_ROOT` ou descobre o irmão de `source_dir` que tem índices),
+  operação de busca seek/locate/dbseek,
   campo único, `lookup_table` (FK) ou tipo semântico identificador —
   `source_analyzer/semantic_types.py` centraliza `IDENTIFIER_TYPES`/
   `identifies_record`, hoje cpf/cnpj, extensível por declaração) são

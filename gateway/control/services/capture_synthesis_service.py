@@ -84,6 +84,18 @@ def synthesize_capture(
     bindings = engine.load_bindings()
     kb = {"entities": entities, "bindings": bindings} if entities and bindings else {}
 
+    # Enriquecimento por arquivos de índice (i<TABELA>.00N): a expressão da
+    # chave em texto claro no primeiro bloco é a fonte mais confiável de
+    # "qual campo é chave" — vale mesmo quando a KB não tem índices parseados
+    # do fonte. Sem índice no diretório de dados, segue sem enriquecer.
+    from dakota_gateway.source_analyzer.index_file_reader import (
+        discover_data_dir,
+        enrich_entities_with_index_files,
+    )
+    data_dir = discover_data_dir(source_path)
+    if data_dir and entities:
+        enrich_entities_with_index_files(entities, data_dir)
+
     synthesizer = JourneySynthesizer()
     template = synthesizer.from_capture(
         capture_jsonl, source_path, name=name or run_name, **kb)
@@ -110,6 +122,7 @@ def synthesize_capture(
         "capture_id": capture_id,
         "capture": capture,
         "source_dir": str(source_path),
+        "data_dir": data_dir,
         "capture_files": [str(path) for path in files],
         "capture_jsonl": str(capture_jsonl),
         "output_dir": str(output_dir),

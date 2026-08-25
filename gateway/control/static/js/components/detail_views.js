@@ -68,11 +68,11 @@ export function reprocessFailureCard(item) {
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.failure_type || "falha")}</div>
-          <div class="mt-1 text-xs text-stone-400">sessao=${escapeHtml(item.session_id || "-")} • seq=${escapeHtml(item.seq_global || 0)}</div>
+          <div class="mt-1 text-xs text-stone-400">sessão ${escapeHtml(item.session_id || "-")} • seq ${escapeHtml(item.seq_global || 0)}</div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button class="r2ctl-btn-soft" data-reprocess="${escapeHtml(item.id)}" data-scope="from-failure">Desta falha</button>
-          <button class="r2ctl-btn-soft" data-reprocess="${escapeHtml(item.id)}" data-scope="session-from-failure">Sessao desta falha</button>
+          <button class="r2ctl-btn-soft" data-reprocess="${escapeHtml(item.id)}" data-scope="from-failure" title="Cria uma nova run que reexecuta a trilha a partir do ponto desta falha (todas as sessões). A run original é preservada e a nova entra na fila.">↻ A partir desta falha</button>
+          <button class="r2ctl-btn-soft" data-reprocess="${escapeHtml(item.id)}" data-scope="session-from-failure" title="Cria uma nova run que reexecuta apenas a sessão desta falha, a partir do mesmo ponto. A run original é preservada e a nova entra na fila.">↻ Só esta sessão</button>
         </div>
       </div>
     </div>

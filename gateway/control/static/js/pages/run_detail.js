@@ -2,10 +2,22 @@ import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, html, text } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 
-async function reprocessFromFailure(runId, failureId, scope) {
+async function reprocessFromFailure(runId, failureId, scope, button) {
+  const originalLabel = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "criando…";
+  }
   const result = await apiJson(`/api/runs/${runId}/reprocess-from-failure`, jsonRequest("POST", { failure_id: Number(failureId), scope }));
-  if (result?.data?.id) {
+  if (result?.ok && result?.data?.id) {
     window.location = `/runs/${result.data.id}`;
+    return;
+  }
+  const detail = result?.data?.error || result?.data?.message || (result ? `HTTP ${result.status}` : "sem resposta do servidor");
+  alert(`Não foi possível criar o reprocessamento: ${detail}`);
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalLabel;
   }
 }
 
@@ -31,6 +43,7 @@ function renderDetail(run, report, comparison, failures) {
       </div>
       <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
         <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Reprocessamento por falha</div>
+        <p class="mt-1 text-xs text-stone-400">Cria uma <strong>nova run</strong> que reexecuta a trilha a partir do ponto da falha escolhida — a run original é preservada e a nova entra na fila (inicie quando quiser).${(failures || []).length > 8 ? ` Exibindo as 8 primeiras de ${(failures || []).length} falhas.` : ""}</p>
         <div class="mt-3 space-y-3">
           ${(failures || []).slice(0, 8).map((item) => reprocessFailureCard(item)).join("") || '<div class="text-sm text-stone-400">Sem falhas estruturadas para reprocessamento guiado.</div>'}
         </div>
@@ -39,7 +52,7 @@ function renderDetail(run, report, comparison, failures) {
   );
 
   document.querySelectorAll("[data-reprocess]").forEach((button) => {
-    button.addEventListener("click", () => reprocessFromFailure(run.id, button.dataset.reprocess, button.dataset.scope));
+    button.addEventListener("click", () => reprocessFromFailure(run.id, button.dataset.reprocess, button.dataset.scope, button));
   });
 }
 

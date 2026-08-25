@@ -14,6 +14,16 @@
       <p class="r2ctl-section-copy text-sm">Interação capturada: entrada do usuário e resposta do servidor.</p>
     </div>
 
+    <!-- Banner de trilha sintética (replay 1-clique) — visível só com log_dir na URL -->
+    <div id="synthetic-origin-banner" class="hidden mb-4 rounded-2xl px-4 py-3 bg-rose-900/30 border border-rose-700/40 flex flex-wrap items-center justify-between gap-3">
+      <div class="text-sm text-rose-100 flex flex-wrap items-center gap-2">
+        <span class="inline-flex items-center gap-1 rounded-full border border-rose-900/60 bg-rose-950/50 px-2 py-0.5 text-xs text-rose-200">sintético • captura #<span id="synthetic-origin-id"></span></span>
+        <span class="text-xs text-rose-100/90">Trilha gerada com dados sintéticos a partir da captura de referência.</span>
+        <a id="synthetic-origin-link" href="#" class="text-xs underline decoration-rose-400/60 underline-offset-2 hover:text-rose-100">ver replay de origem</a>
+      </div>
+      <button id="depara-open-btn" class="r2ctl-btn-soft text-xs">⇄ De→para por tela</button>
+    </div>
+
     <!-- Metadados -->
     <div class="grid gap-3 sm:grid-cols-3 mb-4">
       <div class="r2ctl-detail-surface rounded-2xl px-4 py-3">
@@ -157,6 +167,21 @@
       <div class="text-sm text-stone-400">Carregando eventos...</div>
     </div>
   </section>
+
+  <!-- Modal de→para dos dados sintéticos (replay 1-clique) -->
+  <div id="depara-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="r2ctl-card rounded-3xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-5 shadow-inner shadow-black/20">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <h3 class="text-lg font-semibold">⇄ De→para dos dados sintéticos</h3>
+        <button id="depara-close-btn" class="r2ctl-btn-soft text-xs">✕ Fechar</button>
+      </div>
+      <p class="mb-3 text-xs text-stone-400">Valor original da captura → valor usado na trilha sintética, por tela. Campos
+        <span class="text-amber-300">mantidos (chave)</span> conservam o valor original para a consulta encontrar o registro.</p>
+      <div id="depara-content" class="space-y-4 text-sm">
+        <div class="text-sm text-stone-400">Carregando de→para...</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <style>
@@ -310,6 +335,87 @@ input[type="range"] {
   // diretório da captura — validado server-side.
   const logDirParam = (params.get('log_dir') || '').trim();
   const logDirQuery = logDirParam ? `&log_dir=${encodeURIComponent(logDirParam)}` : '';
+
+  // --- Banner de trilha sintética + modal de→para (replay 1-clique) ---
+  let deparaLoaded = false;
+
+  function setupSyntheticBanner() {
+    if (!logDirParam || !captureId) return;
+    const banner = document.getElementById('synthetic-origin-banner');
+    if (!banner) return;
+    banner.classList.remove('hidden');
+    const originId = document.getElementById('synthetic-origin-id');
+    if (originId) originId.textContent = captureId;
+    const originLink = document.getElementById('synthetic-origin-link');
+    if (originLink) {
+      // Replay de origem: mesma página, mesma sessão, sem o override log_dir.
+      originLink.href = `/captures/${encodeURIComponent(captureId)}/replay?capture_id=${encodeURIComponent(captureId)}&session_id=${encodeURIComponent(sessionId || '')}`;
+    }
+    const openBtn = document.getElementById('depara-open-btn');
+    if (openBtn) openBtn.addEventListener('click', openDeparaModal);
+    const closeBtn = document.getElementById('depara-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', closeDeparaModal);
+    const modal = document.getElementById('depara-modal');
+    if (modal) modal.addEventListener('click', (ev) => { if (ev.target === modal) closeDeparaModal(); });
+  }
+
+  function openDeparaModal() {
+    const modal = document.getElementById('depara-modal');
+    if (modal) modal.classList.remove('hidden');
+    if (!deparaLoaded) loadDepara();
+  }
+
+  function closeDeparaModal() {
+    const modal = document.getElementById('depara-modal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function renderDepara(payload) {
+    const screens = payload.screens || [];
+    if (!screens.length) {
+      return '<div class="text-sm text-stone-400">Nenhum campo mapeado para substituição — a trilha usa os dados originais da captura.</div>';
+    }
+    return screens.map((sc) => {
+      const title = `Tela ${escapeHtml(sc.entity || '-')}${sc.operation ? ` (${escapeHtml(sc.operation)})` : ''}`;
+      const rows = (sc.fields || []).map((f) => {
+        const keptBadge = f.kept
+          ? `<span class="inline-flex items-center rounded-full border border-amber-900/60 bg-amber-950/50 px-2 py-0.5 text-xs text-amber-200">mantido${f.note === 'chave de consulta' ? ' (chave)' : ''}</span>`
+          : '';
+        const synthClass = f.kept ? 'text-stone-400' : 'text-emerald-300';
+        return `<tr class="border-b border-stone-800/60">
+          <td class="px-3 py-2 font-mono text-stone-200">${escapeHtml(f.field || '-')}</td>
+          <td class="px-3 py-2 font-mono text-stone-300 break-all">${escapeHtml(f.original || '')}</td>
+          <td class="px-1 py-2 text-stone-500">→</td>
+          <td class="px-3 py-2 font-mono ${synthClass} break-all">${escapeHtml(f.synthetic || '')}</td>
+          <td class="px-3 py-2">${keptBadge}</td>
+        </tr>`;
+      }).join('');
+      return `<div>
+        <h4 class="mb-2 text-sm font-semibold text-stone-200">${title}</h4>
+        <table class="w-full text-left text-xs">
+          <thead><tr class="border-b border-stone-700/60 text-stone-400">
+            <th class="px-3 py-1">campo</th><th class="px-3 py-1">original</th><th class="px-1 py-1"></th><th class="px-3 py-1">sintético</th><th class="px-3 py-1"></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }).join('');
+  }
+
+  async function loadDepara() {
+    const content = document.getElementById('depara-content');
+    try {
+      const resp = await fetch(`/api/captures/${captureId}/synthetic-substitutions?log_dir=${encodeURIComponent(logDirParam)}`);
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok || payload.ok === false) {
+        throw new Error((payload && payload.error) || `HTTP ${resp.status}`);
+      }
+      deparaLoaded = true;
+      content.innerHTML = renderDepara(payload);
+    } catch (err) {
+      content.innerHTML = `<div class="text-red-300 text-sm p-3 rounded bg-red-900/20 border border-red-700/40">Falha ao carregar o de→para: ${escapeHtml(err.message)}</div>`;
+    }
+  }
 
   let replayData = null;
   let termGeometry = { rows: 25, cols: 80, source: 'legacy_fallback' };
@@ -1248,6 +1354,7 @@ input[type="range"] {
   loadTimelinePrefs();
   updateViewButtons(eventsViewMode);
   updateFilterButtons(eventsFilterMode);
+  setupSyntheticBanner();
   // Inicia carregamento apos modulos carregarem
   _timelineReady.then(function() { loadReplayData(); });
 })();

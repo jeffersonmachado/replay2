@@ -7,11 +7,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dakota_gateway.state_db import now_ms
 from dakota_gateway.synthetic.journey_synthesizer import JourneySynthesizer
 from dakota_gateway.synthetic.synthetic_trail import build_synthetic_trail
 from dakota_gateway.source_analyzer.semantic_types import identifies_record
 
-from control.services.capture_service import get_capture
+from control.services.capture_service import get_capture, resolve_replay_log_dir
 
 
 def _slug(value: str, fallback: str = "capture") -> str:
@@ -280,6 +281,111 @@ def _capture_user_from_trail(capture_jsonl: str) -> str:
     return ""
 
 
+def _build_depara_screens(
+    screen_mappings: list[dict],
+    dataset_row: dict,
+    skip_fields: set[str] | list[str],
+) -> list[dict]:
+    """De→para por tela: campo, valor original da captura, valor na trilha
+    sintética e se foi mantido (chave de consulta ou igual ao original).
+
+    Espelha a seleção de ``_extract_substitutions``: só entram inputs com
+    placeholder resolvido para um campo presente no dataset.
+    """
+    skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
+    screens: list[dict] = []
+    for screen in screen_mappings or []:
+        fields: list[dict] = []
+        for inp in screen.get("inputs") or []:
+            placeholder = str(inp.get("placeholder") or "")
+            original = str(inp.get("original") or "")
+            if not placeholder or not original or "{KEY:" in original:
+                continue
+            field = str(inp.get("field_name") or "").strip()
+            if not field:
+                m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
+                field = m.group(1) if m else ""
+            if not field or field not in dataset_row:
+                continue
+            kept = False
+            note = ""
+            if field.lower() in skip:
+                kept, note, synthetic = True, "chave de consulta", original
+            else:
+                synthetic = _format_synthetic_value(original, dataset_row[field])
+                if synthetic == original:
+                    kept, note = True, "igual ao original"
+            fields.append({
+                "field": field,
+                "original": original,
+                "synthetic": synthetic,
+                "kept": kept,
+                "note": note,
+                "method": str(inp.get("method") or ""),
+            })
+        if fields:
+            screens.append({
+                "entity": str(screen.get("entity_name") or ""),
+                "operation": str(screen.get("operation") or ""),
+                "fields": fields,
+            })
+    return screens
+
+
+def synthetic_substitutions_payload(con, capture_id: int, *, log_dir: str) -> dict[str, Any]:
+    """De→para (original → sintético) da trilha sintética de uma captura.
+
+    Lê o manifest ``de-para.json`` gravado pelo replay 1-clique dentro do
+    trail_dir; trilhas antigas (sem manifest) são reconstruídas de
+    ``report.json`` + ``dataset.jsonl`` (irmãos do ``trail/``) recalculando
+    os campos-âncora na knowledge base. ``log_dir`` é validado por
+    ``resolve_replay_log_dir`` (só caminhos dentro do log_dir da captura).
+    """
+    capture = get_capture(con, capture_id)
+    if not capture:
+        raise FileNotFoundError("captura não encontrada")
+    base_log_dir = str(capture.get("log_dir") or "").strip()
+    trail_dir = Path(resolve_replay_log_dir(base_log_dir, log_dir))
+
+    manifest = trail_dir / "de-para.json"
+    if manifest.exists():
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        return {
+            "ok": True,
+            "source": "manifest",
+            "capture_id": capture_id,
+            "journey_id": str(data.get("journey_id") or ""),
+            "key_fields": list(data.get("key_fields") or []),
+            "screens": list(data.get("screens") or []),
+        }
+
+    work_dir = trail_dir.parent
+    report_path = work_dir / "report.json"
+    dataset_path = work_dir / "dataset.jsonl"
+    if not report_path.exists() or not dataset_path.exists():
+        raise FileNotFoundError(
+            "trilha sem de→para: não há manifest (de-para.json) nem artefatos "
+            "de síntese (report.json/dataset.jsonl) ao lado do trail/"
+        )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    dataset_lines = [l for l in dataset_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    dataset_row = json.loads(dataset_lines[0]) if dataset_lines else {}
+    screen_mappings = list(report.get("screen_mappings") or [])
+
+    from dakota_gateway.synthetic.engine import SyntheticEngine
+    entities = SyntheticEngine(db_connection=con).load_entities()
+    key_fields = suggest_key_fields(screen_mappings, entities)
+
+    return {
+        "ok": True,
+        "source": "rebuilt",
+        "capture_id": capture_id,
+        "journey_id": str(report.get("journey_id") or ""),
+        "key_fields": key_fields,
+        "screens": _build_depara_screens(screen_mappings, dataset_row, key_fields),
+    }
+
+
 def start_synthetic_replay(
     con,
     capture_id: int,
@@ -347,6 +453,24 @@ def start_synthetic_replay(
         trail_dir,
         hmac_key=hmac_key,
     )
+
+    # Manifest do de→para (original → sintético por tela) — alimenta o modal
+    # "De→para" da página de replay da sessão sintética sem reprocessar nada.
+    depara = {
+        "capture_id": capture_id,
+        "journey_id": synth.get("journey_id") or "",
+        "generated_at_ms": now_ms(),
+        "key_fields": effective_skip,
+        "screens": _build_depara_screens(
+            synth.get("screen_mappings"), dataset_row, effective_skip
+        ),
+    }
+    try:
+        (trail_dir / "de-para.json").write_text(
+            json.dumps(depara, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass  # o manifest é facilitador da UI; não derruba o replay
 
     resolved_host = str(target_host or "").strip() or "127.0.0.1"
     resolved_user = str(target_user or "").strip() or _capture_user_from_trail(synth["capture_jsonl"])

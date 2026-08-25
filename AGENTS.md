@@ -220,7 +220,15 @@ replay2/
   estabilizado com tela observada é classificado `screen_divergence`/
   `medium` (divergência de conteúdo esperada), não `timeout`/`high`, e a
   assinatura do grupo de falhas não inclui o `observed_value` (muda a cada
-  sessão) para a comparação entre runs reconhecer recorrência.
+  sessão) para a comparação entre runs reconhecer recorrência. A trilha
+  sintética grava o manifest `trail/de-para.json` (original → sintético por
+  tela, com os mantidos marcados); a página de replay da sessão exibe o
+  badge "sintético • captura #N" com link para o replay de origem e o botão
+  "De→para por tela" (modal alimentado por
+  `GET /api/captures/{id}/synthetic-substitutions?log_dir=...`,
+  `capture_synthesis_service.synthetic_substitutions_payload` — lê o
+  manifest ou reconstrói de `report.json` + `dataset.jsonl` recalculando
+  os campos-âncora na KB, para trilhas antigas).
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via

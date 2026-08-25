@@ -7,6 +7,7 @@ GET  /api/captures/{id}    — detalhe da captura
 GET  /api/captures/{id}/events — eventos da sessão via JSONL
 GET  /api/captures/{id}/replay — dados de replay/view de uma sessão
 GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
+GET  /api/captures/{id}/runs — runs sintéticas geradas desta captura
 """
 from __future__ import annotations
 
@@ -227,6 +228,25 @@ def handle_capture_get_route(
             return True
         status = _replay_status_code(replay_data)
         write_json(handler, status, {**replay_data, "capture_id": capture_id, "log_dir": log_dir, "capture": capture})
+        return True
+
+    # GET /api/captures/{id}/runs — runs sintéticas geradas desta captura
+    if path.startswith("/api/captures/") and path.endswith("/runs"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            return False
+        con = handler._db()
+        try:
+            from control.services.run_service import list_capture_runs_payload
+            payload = list_capture_runs_payload(con, capture_id)
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
         return True
 
     # GET /api/captures/{id}

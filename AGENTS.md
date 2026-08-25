@@ -212,7 +212,11 @@ replay2/
   encadeia síntese → trilha → run real determinística `send-anyway`. Runs
   sintéticas carregam `params.synthetic=true` + `source_capture_id` — a UI
   exibe o badge "sintético • captura #N" (lista e detalhe da run,
-  `run_views.runSyntheticBadgeHtml`). Nessas runs, checkpoint não
+  `run_views.runSyntheticBadgeHtml`), a lista de Execuções tem filtro de
+  origem (todas/sintéticas/reais) e o detalhe da captura lista as runs
+  geradas dela (`GET /api/captures/{id}/runs`,
+  `run_service.list_capture_runs_payload` — o params_json é parseado em
+  Python, a captura não tem FK para as runs). Nessas runs, checkpoint não
   estabilizado com tela observada é classificado `screen_divergence`/
   `medium` (divergência de conteúdo esperada), não `timeout`/`high`, e a
   assinatura do grupo de falhas não inclui o `observed_value` (muda a cada

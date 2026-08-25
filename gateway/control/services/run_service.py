@@ -42,6 +42,43 @@ def list_runs_payload(con, *, limit: int = 200, compliance_status: str = "") -> 
     return {"runs": runs}
 
 
+def list_capture_runs_payload(con, capture_id: int, *, limit: int = 100) -> dict:
+    """Runs sintéticas geradas a partir de uma captura (rastreabilidade inversa).
+
+    A run sintética grava ``synthetic=true`` + ``source_capture_id`` no
+    ``params_json`` — a captura não tem FK para as runs, então a seleção é
+    feita parseando os params das runs recentes.
+    """
+    rows = query_all(
+        con,
+        "SELECT id, status, mode, created_at_ms, finished_at_ms, target_user, target_host, params_json"
+        " FROM replay_runs ORDER BY id DESC LIMIT 2000",
+    )
+    runs: list[dict] = []
+    for row in rows:
+        try:
+            params = json.loads(row["params_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(params, dict) or not params.get("synthetic"):
+            continue
+        try:
+            source = int(params.get("source_capture_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if source != int(capture_id):
+            continue
+        item = dict(row)
+        item.pop("params_json", None)
+        item["synthetic"] = True
+        item["source_capture_id"] = source
+        item["journey_id"] = str(params.get("journey_id") or "")
+        runs.append(item)
+        if len(runs) >= max(1, int(limit or 100)):
+            break
+    return {"runs": runs, "capture_id": int(capture_id)}
+
+
 def get_run_detail_payload(con, run_id: int) -> dict | None:
     row = query_one(con, "SELECT * FROM replay_runs WHERE id=?", (int(run_id),))
     if not row:

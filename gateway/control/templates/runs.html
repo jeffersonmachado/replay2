@@ -19,6 +19,11 @@
         <div class="flex flex-col gap-3 sm:flex-row">
           <input id="runs_filter_status" placeholder="filtrar status" class="r2ctl-input" />
           <input id="runs_filter_compliance" placeholder="filtrar compliance" class="r2ctl-input" />
+          <select id="runs_filter_origin" class="r2ctl-input" title="Filtrar pela origem da run">
+            <option value="">origem: todas</option>
+            <option value="synthetic">sintéticas</option>
+            <option value="real">reais</option>
+          </select>
           <a href="/runs/new" class="r2ctl-btn-primary text-center">Nova run</a>
         </div>
       </div>

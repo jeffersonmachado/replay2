@@ -1,6 +1,6 @@
 import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, html, text } from "../core/dom.js";
-import { runTableRow } from "../components/run_views.js";
+import { runTableRow, runSyntheticOrigin } from "../components/run_views.js";
 import { emptyTableRow } from "../components/tables.js";
 import { activatePageSections } from "../components/page_sections.js";
 
@@ -29,10 +29,13 @@ async function loadSection() {
     if (!result?.data) return;
     const statusFilter = (document.getElementById("runs_filter_status")?.value || "").trim().toLowerCase();
     const complianceFilter = (document.getElementById("runs_filter_compliance")?.value || "").trim().toLowerCase();
+    const originFilter = (document.getElementById("runs_filter_origin")?.value || "").trim().toLowerCase();
     const runs = (result.data.runs || []).filter((run) => {
       const okStatus = !statusFilter || String(run.status || "").toLowerCase().includes(statusFilter);
       const okCompliance = !complianceFilter || String(run.compliance_status || "").toLowerCase().includes(complianceFilter);
-      return okStatus && okCompliance;
+      const isSynthetic = Boolean(runSyntheticOrigin(run));
+      const okOrigin = !originFilter || (originFilter === "synthetic" ? isSynthetic : !isSynthetic);
+      return okStatus && okCompliance && okOrigin;
     });
     text("#runs_visible_count", runs.length);
     text("#runs_failed_count", runs.filter((r) => FAILED_STATUSES.has(String(r.status || "").toLowerCase())).length);
@@ -109,6 +112,7 @@ window.addEventListener("DOMContentLoaded", () => {
   ["runs_filter_status", "runs_filter_compliance"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", loadSection);
   });
+  document.getElementById("runs_filter_origin")?.addEventListener("change", loadSection);
 
   document.getElementById("compare_btn")?.addEventListener("click", compareRuns);
 

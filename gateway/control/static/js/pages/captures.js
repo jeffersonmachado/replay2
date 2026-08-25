@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, formatCount, html, text } from "../core/dom.js";
+import { escapeHtml, formatCount, html, text, statusLabel, statusToneClass } from "../core/dom.js";
 import { activatePageSections } from "../components/page_sections.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -262,6 +262,7 @@ async function loadCaptureDetail(captureId) {
   text("#cap_detail_logdir", cap.log_dir || "-");
   window._currentCaptureLogDir = cap.log_dir || "";
   setupSynthesisPanel(captureId, cap);
+  loadCaptureRuns(captureId);
 
   // Botao de encerrar
   const stopBtn = document.getElementById("cap_stop_btn");
@@ -524,6 +525,36 @@ function renderCaptureSessions(captureId, capture, sessions, preferredSessionId)
   listEl.innerHTML = items
     .map((session) => renderCaptureSessionCard(captureId, session, preferredSessionId || ""))
     .join("");
+}
+
+function renderCaptureRunCard(run) {
+  const status = String(run.status || "-");
+  return `
+    <div class="r2ctl-detail-surface rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <a href="/runs/${escapeHtml(String(run.id))}" class="font-mono text-sm text-emerald-50 underline">#${escapeHtml(String(run.id))}</a>
+        <span class="r2ctl-status-pill ${statusToneClass(status)}">${escapeHtml(statusLabel(status))}</span>
+        <span class="rounded-full border border-rose-900/60 bg-rose-950/50 px-2 py-0.5 text-xs text-rose-200">sintético</span>
+      </div>
+      <div class="text-xs text-stone-400">
+        ${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")} • ${escapeHtml(fmt(run.created_at_ms))}
+      </div>
+    </div>
+  `;
+}
+
+async function loadCaptureRuns(captureId) {
+  const panel = document.getElementById("cap_runs_panel");
+  const listEl = document.getElementById("cap_runs_list");
+  const summaryEl = document.getElementById("cap_runs_summary");
+  if (!panel || !listEl) return;
+  const result = await apiJson(`/api/captures/${captureId}/runs`);
+  const runs = result?.data?.runs || [];
+  panel.classList.remove("hidden");
+  if (summaryEl) summaryEl.textContent = `${formatCount(runs.length)} run(s)`;
+  listEl.innerHTML = runs.length
+    ? runs.map(renderCaptureRunCard).join("")
+    : '<div class="text-sm text-stone-400">Nenhuma run sintética gerada desta captura ainda — use o botão "Replay sintético".</div>';
 }
 
 async function loadCaptureEvents(captureId) {

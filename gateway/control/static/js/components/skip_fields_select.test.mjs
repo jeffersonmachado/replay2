@@ -77,6 +77,16 @@ test('summarizeSelection sem exceções e sem campos', () => {
   assert.equal(summarizeSelection([]), 'Nenhum campo mapeado na trilha');
 });
 
+test('buildSkipFieldsModel colapsa título multilinha (amostra crua da tela)', () => {
+  const raw = ' DAKOTA S/A                    ESTOQUE\n  REDE DE LOJAS  | 3.6.1 PEDIDO E-COMMERCE\n*Pedido.....:D00011073  E-c: 0  Emissao..:27/07/26 Incluir Modificar Excluir';
+  const model = buildSkipFieldsModel([
+    { entity: 'arq', operation: 'read', screen_title: raw, fields: [{ field: 'cpf', original: '1' }] },
+  ], [], []);
+  assert.ok(!model[0].label.includes('\n'));
+  assert.ok(model[0].label.length <= 60);
+  assert.ok(model[0].label.startsWith('DAKOTA S/A ESTOQUE'));
+});
+
 test('parseStoredSelection tolera lixo e filtra vazios', () => {
   assert.deepEqual(parseStoredSelection('["cpf", " frete ", ""]'), ['cpf', 'frete']);
   assert.deepEqual(parseStoredSelection('não-json'), []);

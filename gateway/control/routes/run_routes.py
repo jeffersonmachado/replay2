@@ -271,7 +271,8 @@ def handle_run_delete_route(handler, parsed_path) -> bool:
         if row["status"] in ("running", "queued"):
             write_json(handler, 409, {"ok": False, "error": "nao e possivel excluir run em execucao ou na fila"})
             return True
-        con.execute("DELETE FROM journey_reports WHERE run_id=?", (run_id,))
+        # Eventos e falhas saem por ON DELETE CASCADE (FK de replay_run_events
+        # e replay_failures); journey_reports não tem vínculo com runs.
         con.execute("DELETE FROM replay_runs WHERE id=?", (run_id,))
         write_json(handler, 200, {"ok": True, "deleted_run_id": run_id})
     finally:

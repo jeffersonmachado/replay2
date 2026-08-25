@@ -30,9 +30,12 @@ export function buildSkipFieldsModel(screens, keyFields, selected) {
     if (fields.length) {
       const entity = String(screen.entity || "").trim();
       const operation = String(screen.operation || "").trim();
-      const title = String(screen.screen_title || "").trim();
+      // screen_title pode ser a amostra crua da tela (multi-linha): colapsa
+      // espaços e trunca para caber no cabeçalho do grupo.
+      const title = String(screen.screen_title || "").replace(/\s+/g, " ").trim();
       groups.push({
-        label: title || (entity ? `${entity}${operation ? " · " + operation : ""}` : "tela"),
+        label: title ? (title.length > 60 ? title.slice(0, 57) + "…" : title)
+          : (entity ? `${entity}${operation ? " · " + operation : ""}` : "tela"),
         entity,
         operation,
         fields,
@@ -164,7 +167,15 @@ export function initSkipFieldsSelect(wrapper, { load, storageKey } = {}) {
   }
 
   function refreshSummary() {
-    if (summary) summary.textContent = summarizeSelection(model);
+    if (!summary) return;
+    // O checkbox muda no DOM, não no modelo — sincroniza antes de resumir.
+    if (loaded) {
+      const checked = new Set(collectSelectedFields(body).map((f) => f.toLowerCase()));
+      for (const g of model) {
+        for (const f of g.fields) f.checked = f.key || checked.has(f.field.toLowerCase());
+      }
+    }
+    summary.textContent = summarizeSelection(model);
   }
 
   async function ensureLoaded() {

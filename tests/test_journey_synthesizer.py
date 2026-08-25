@@ -170,6 +170,62 @@ CREATE TABLE CLIENTES (
                         self.assertTrue(obj["value"].replace(".", "").replace("-", "").isdigit(),
                                         f"CPF invalido: {obj['value']}")
 
+    # ── 3.2b: variation equal — todas as sessões com os mesmos dados ──
+
+    def _session_inputs(self, session_file: Path) -> dict[str, str]:
+        """{field: value} dos inputs de uma sessão gerada."""
+        out: dict[str, str] = {}
+        for line in session_file.read_text().split("\n"):
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if obj.get("type") == "input" and obj.get("field"):
+                out[obj["field"]] = obj.get("value", "")
+        return out
+
+    def test_variation_equal_repete_os_mesmos_dados(self):
+        """variation="equal": 5 sessões com dados idênticos (1ª linha do dataset)."""
+        from dakota_gateway.synthetic.journey_synthesizer import JourneySynthesizer
+
+        capture_path = self._make_capture_jsonl(["123.456.789-09", "JOAO TESTE"])
+        source_dir = self._make_source_dir()
+        out_dir = self.d / "out_equal"
+        out_dir.mkdir()
+
+        syn = JourneySynthesizer()
+        template = syn.from_capture(capture_path, source_dir, name="teste_equal")
+        result = syn.synthesize(template, samples=5, out_dir=out_dir, seed=42, variation="equal")
+
+        self.assertEqual(result.generated_sessions, 5)
+        session_files = sorted((out_dir / "sessions").glob("session_*.jsonl"))
+        dados = [self._session_inputs(sf) for sf in session_files]
+        self.assertTrue(all(dados), "sessões não podem sair vazias")
+        for d in dados[1:]:
+            self.assertEqual(d, dados[0], "variation=equal deve repetir os mesmos dados")
+
+        report = json.loads((out_dir / "report.json").read_text())
+        self.assertEqual(report["variation"], "equal")
+
+    def test_variation_default_sessoes_diferentes(self):
+        """variation default (synthetic): sessões com dados diferentes entre si."""
+        from dakota_gateway.synthetic.journey_synthesizer import JourneySynthesizer
+
+        capture_path = self._make_capture_jsonl(["123.456.789-09", "JOAO TESTE"])
+        source_dir = self._make_source_dir()
+        out_dir = self.d / "out_synth"
+        out_dir.mkdir()
+
+        syn = JourneySynthesizer()
+        template = syn.from_capture(capture_path, source_dir, name="teste_synth")
+        result = syn.synthesize(template, samples=5, out_dir=out_dir, seed=42)
+
+        session_files = sorted((out_dir / "sessions").glob("session_*.jsonl"))
+        dados = {json.dumps(self._session_inputs(sf), sort_keys=True) for sf in session_files}
+        self.assertGreater(len(dados), 1, "sessões sintéticas devem variar os dados")
+
+        report = json.loads((out_dir / "report.json").read_text())
+        self.assertEqual(report["variation"], "synthetic")
+
     # ── 3.3: Jornada multi-tela/multi-entidade ──
 
     def test_multi_screen_multi_entity(self):

@@ -461,6 +461,7 @@ def handle_capture_post_route(
                 source_dir=source_dir,
                 samples=parse_int(body.get("samples", 10), 10, min_value=1),
                 seed=body.get("seed"),
+                variation=str(body.get("variation") or "").strip(),
                 name=str(body.get("name") or "").strip(),
                 out_dir=str(body.get("out_dir") or "").strip(),
                 include_validation=bool(body.get("validate", True)),

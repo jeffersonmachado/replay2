@@ -301,8 +301,15 @@ class JourneySynthesizer:
         samples: int,
         out_dir: Path,
         seed: int | None = None,
+        variation: str = "synthetic",
     ) -> SynthesisResult:
-        """Gera N sessoes sinteticas a partir do template."""
+        """Gera N sessoes sinteticas a partir do template.
+
+        ``variation``: "synthetic" (default) — cada sessão usa uma linha
+        diferente do dataset; "equal" — todas as sessões usam a primeira
+        linha (N pedidos com os mesmos dados, útil p/ carga repetitiva).
+        """
+        variation = "equal" if str(variation or "").strip().lower() == "equal" else "synthetic"
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         sessions_dir = out_dir / "sessions"
@@ -412,11 +419,13 @@ class JourneySynthesizer:
 
         for sess_idx in range(samples):
             session_data: dict[str, Any] = {}
-            # Coleta dados desta sessao do dataset
+            # Coleta dados desta sessao do dataset: modo "equal" repete a
+            # primeira linha em todas (mesmos dados); "synthetic" avança.
+            rec_idx = 0 if variation == "equal" else sess_idx
             for entity_name in template.entities_involved:
                 entity_records = [r for r in all_records if r.get("_entity") == entity_name]
-                if entity_records and sess_idx < len(entity_records):
-                    rec = entity_records[sess_idx]
+                if entity_records and rec_idx < len(entity_records):
+                    rec = entity_records[rec_idx]
                     for key, val in rec.items():
                         if key != "_entity":
                             session_data[f"{entity_name}.{key}"] = val
@@ -469,6 +478,7 @@ class JourneySynthesizer:
             "name": template.name,
             "capture_source": template.capture_source,
             "samples": samples,
+            "variation": variation,
             "entities_involved": template.entities_involved,
             "total_sessions": samples,
             "generated_sessions": generated,

@@ -54,8 +54,13 @@ def synthesize_capture(
     include_validation: bool = True,
     include_stress: bool = False,
     concurrency: int = 5,
+    variation: str = "synthetic",
 ) -> dict[str, Any]:
-    """Transforma uma captura registrada em template + dataset + sessões sintéticas."""
+    """Transforma uma captura registrada em template + dataset + sessões sintéticas.
+
+    ``variation``: "synthetic" (default) — sessões com dados diferentes;
+    "equal" — todas as sessões com os mesmos dados (1ª linha do dataset).
+    """
     capture = get_capture(con, capture_id)
     if not capture:
         raise ValueError("captura não encontrada")
@@ -101,7 +106,8 @@ def synthesize_capture(
     synthesizer = JourneySynthesizer()
     template = synthesizer.from_capture(
         capture_jsonl, source_path, name=name or run_name, **kb)
-    result = synthesizer.synthesize(template, samples=samples, out_dir=output_dir, seed=seed)
+    result = synthesizer.synthesize(
+        template, samples=samples, out_dir=output_dir, seed=seed, variation=variation)
 
     validation = None
     if include_validation:
@@ -143,6 +149,7 @@ def synthesize_capture(
             "report": result.report_path,
         },
         "screen_mappings": result.screen_mappings,
+        "variation": "equal" if str(variation or "").strip().lower() == "equal" else "synthetic",
         # Campos-âncora detectados na KB (chave de consulta) — mantidos com o
         # valor original no replay sintético, sem intervenção do usuário.
         "key_fields": suggest_key_fields(result.screen_mappings, entities),

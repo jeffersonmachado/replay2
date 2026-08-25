@@ -234,7 +234,11 @@ replay2/
   por `GET /api/captures/{id}/synthetic-fields?source_dir=...`
   (`capture_synthesis_service.synthetic_fields_payload` — reusa o
   `report.json` da síntese mais recente ou parametriza a captura na hora com
-  KB + índices; chaves de consulta vêm marcadas e desabilitadas).
+  KB + índices; chaves de consulta vêm marcadas e desabilitadas). O painel
+  não tem mais "semente": o select "Dados das sessões" escolhe
+  `variation=synthetic` (cada sessão com dados diferentes — default) ou
+  `variation=equal` (todas com os mesmos dados, 1ª linha do dataset —
+  `journey_synthesizer.synthesize`).
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via

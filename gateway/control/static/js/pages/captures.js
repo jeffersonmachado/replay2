@@ -341,10 +341,10 @@ function setupSynthesisPanel(captureId, capture) {
   const defaultSourceDir = String(pageState.default_source_dir || "").trim();
   const sourceInput = document.getElementById("cap_synth_source_dir");
   const samplesInput = document.getElementById("cap_synth_samples");
-  const seedInput = document.getElementById("cap_synth_seed");
+  const variationInput = document.getElementById("cap_synth_variation");
   if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || defaultSourceDir;
   if (samplesInput && !samplesInput.value) samplesInput.value = localStorage.getItem("replay2.captureSynth.samples") || "10";
-  if (seedInput && !seedInput.value) seedInput.value = localStorage.getItem("replay2.captureSynth.seed") || "42";
+  if (variationInput) variationInput.value = localStorage.getItem("replay2.captureSynth.variation") || "synthetic";
 
   const btn = document.getElementById("cap_synthesize_btn");
   if (btn) btn.onclick = () => synthesizeCapture(captureId);
@@ -370,7 +370,6 @@ function setupSynthesisPanel(captureId, capture) {
 async function syntheticReplay(captureId) {
   const btn = document.getElementById("cap_synth_replay_btn");
   const sourceInput = document.getElementById("cap_synth_source_dir");
-  const seedInput = document.getElementById("cap_synth_seed");
   const feedback = document.getElementById("cap_synthesis_feedback");
   const resultEl = document.getElementById("cap_synthesis_result");
 
@@ -380,7 +379,6 @@ async function syntheticReplay(captureId) {
     sourceDir = String(pageState.default_source_dir || "").trim();
     if (sourceDir && sourceInput) sourceInput.value = sourceDir;
   }
-  const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
   const skipFields = document.getElementById("cap_synth_skip_fields")?._skipFields?.getSelected() || [];
 
   if (!sourceDir) {
@@ -392,7 +390,6 @@ async function syntheticReplay(captureId) {
   }
 
   localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
-  localStorage.setItem("replay2.captureSynth.seed", String(seed));
 
   if (btn) { btn.disabled = true; btn.textContent = "Gerando replay..."; }
   if (feedback) {
@@ -406,7 +403,6 @@ async function syntheticReplay(captureId) {
 
   const response = await apiJson(`/api/captures/${captureId}/synthetic-replay`, jsonRequest("POST", {
     source_dir: sourceDir,
-    seed,
     skip_fields: skipFields,
   }));
 
@@ -448,7 +444,7 @@ async function synthesizeCapture(captureId) {
   const btn = document.getElementById("cap_synthesize_btn");
   const sourceInput = document.getElementById("cap_synth_source_dir");
   const samplesInput = document.getElementById("cap_synth_samples");
-  const seedInput = document.getElementById("cap_synth_seed");
+  const variationInput = document.getElementById("cap_synth_variation");
   const feedback = document.getElementById("cap_synthesis_feedback");
   const resultEl = document.getElementById("cap_synthesis_result");
 
@@ -460,7 +456,7 @@ async function synthesizeCapture(captureId) {
     if (sourceDir && sourceInput) sourceInput.value = sourceDir;
   }
   const samples = normalizeNumber(samplesInput?.value, 10, 1, 10000);
-  const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
+  const variation = String(variationInput?.value || "synthetic");
 
   if (!sourceDir) {
     if (feedback) {
@@ -472,7 +468,7 @@ async function synthesizeCapture(captureId) {
 
   localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
   localStorage.setItem("replay2.captureSynth.samples", String(samples));
-  localStorage.setItem("replay2.captureSynth.seed", String(seed));
+  localStorage.setItem("replay2.captureSynth.variation", variation);
 
   if (btn) { btn.disabled = true; btn.textContent = "Gerando..."; }
   if (feedback) {
@@ -487,8 +483,8 @@ async function synthesizeCapture(captureId) {
   const response = await apiJson(`/api/captures/${captureId}/synthesize`, jsonRequest("POST", {
     source_dir: sourceDir,
     samples,
-    seed,
-    name: `capture_${captureId}_seed_${seed}`,
+    variation,
+    name: `capture_${captureId}_${variation}`,
     validate: true,
   }));
 
@@ -515,6 +511,7 @@ async function synthesizeCapture(captureId) {
     resultEl.innerHTML = `
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>jornada: <span class="font-mono text-emerald-50">${escapeHtml(data.journey_id || "-")}</span></span>
+        <span>dados: <span class="font-mono text-emerald-50">${data.variation === "equal" ? "iguais (mesmos dados em todas)" : "sintetizados (diferentes por sessão)"}</span></span>
         <span>validas: <span class="font-mono text-emerald-50">${formatCount(validation.valid_sessions || 0)}/${formatCount(validation.total_sessions || data.generated_sessions || 0)}</span></span>
         <span class="md:col-span-2">chave desta captura: <span class="font-mono text-emerald-50">${keyFields.length ? escapeHtml(keyFields.join(", ")) : "nenhuma detectada"}</span> (mantida com o valor original no replay)</span>
         <span class="md:col-span-2">template: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.template || "-")}</span></span>

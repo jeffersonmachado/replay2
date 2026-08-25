@@ -306,6 +306,10 @@ input[type="range"] {
   const params = new URLSearchParams(window.location.search);
   const captureId = params.get('capture_id');
   const sessionId = params.get('session_id');
+  // Trilha sintética (replay 1-clique): log_dir alternativo dentro do
+  // diretório da captura — validado server-side.
+  const logDirParam = (params.get('log_dir') || '').trim();
+  const logDirQuery = logDirParam ? `&log_dir=${encodeURIComponent(logDirParam)}` : '';
 
   let replayData = null;
   let termGeometry = { rows: 25, cols: 80, source: 'legacy_fallback' };
@@ -376,7 +380,7 @@ input[type="range"] {
     }
 
     try {
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}`);
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -565,7 +569,7 @@ input[type="range"] {
     windowFetchInFlight = true;
     try {
       const limit = Number(replayData.window.limit || 1000);
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}`);
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.error) return false;
       _mergeReplayWindow(replayData, payload);

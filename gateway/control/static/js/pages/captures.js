@@ -261,6 +261,7 @@ async function loadCaptureDetail(captureId) {
   text("#cap_detail_profile", cap.connection_profile_name || "nenhum");
   text("#cap_detail_logdir", cap.log_dir || "-");
   window._currentCaptureLogDir = cap.log_dir || "";
+  window._currentCaptureSessionUuid = cap.session_uuid || "";
   setupSynthesisPanel(captureId, cap);
   loadCaptureRuns(captureId);
 
@@ -409,6 +410,10 @@ async function syntheticReplay(captureId) {
 
   const data = response.data || {};
   const kept = Array.isArray(data.skip_fields) ? data.skip_fields : [];
+  const sessionUuid = String(window._currentCaptureSessionUuid || "").trim();
+  const viewHref = data.trail_dir && sessionUuid
+    ? `/captures/${captureId}/replay?capture_id=${encodeURIComponent(String(captureId))}&session_id=${encodeURIComponent(sessionUuid)}&log_dir=${encodeURIComponent(String(data.trail_dir))}`
+    : "";
   if (feedback) {
     feedback.className = "mt-3 text-sm text-emerald-300";
     feedback.textContent = `Run ${data.run_id} disparada — ${formatCount(data.substitutions_count || 0)} campo(s) substituído(s).`;
@@ -421,6 +426,7 @@ async function syntheticReplay(captureId) {
         <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
         ${kept.length ? `<span class="md:col-span-2">mantidos (chave de consulta): <span class="font-mono text-emerald-50">${escapeHtml(kept.join(", "))}</span></span>` : ""}
         <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>
+        ${viewHref ? `<span class="md:col-span-2"><a class="underline decoration-emerald-400/60 underline-offset-2 hover:text-emerald-100" href="${viewHref}">Ver sessão sintética no terminal virtual</a></span>` : ""}
       </div>
     `;
   }

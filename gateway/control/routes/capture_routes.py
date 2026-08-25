@@ -209,6 +209,16 @@ def handle_capture_get_route(
             write_json(handler, 400, {"error": "session_id obrigatório"})
             return True
         log_dir = capture.get("log_dir") or ""
+        # Trilha sintética (replay 1-clique): log_dir alternativo dentro do
+        # diretório da própria captura (<log_dir>/synthetic/<nome>/trail).
+        log_dir_override = str((qs.get("log_dir") or [""])[0] or "").strip()
+        if log_dir_override:
+            try:
+                from control.services.capture_service import resolve_replay_log_dir
+                log_dir = resolve_replay_log_dir(log_dir, log_dir_override)
+            except ValueError as exc:
+                write_json(handler, 400, {"error": str(exc)})
+                return True
         # Janela de replay (X6): offset/limit restringem a fatia de eventos
         # materializada; sem eles, sessões enormes retornam truncadas.
         replay_kwargs: dict = {}

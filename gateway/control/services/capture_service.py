@@ -38,6 +38,24 @@ def _count_audit_lines(fpath: str) -> int:
     return count
 
 
+def resolve_replay_log_dir(capture_log_dir: str, override: str) -> str:
+    """log_dir alternativo para o replay da sessão (ex.: trilha sintética).
+
+    A trilha sintética gerada pelo replay 1-clique fica em
+    ``<log_dir>/synthetic/<nome>/trail`` — dentro do diretório da própria
+    captura. O override só é aceito se o caminho resolvido estiver sob o
+    log_dir da captura; qualquer outro caminho é rejeitado (o endpoint lê
+    arquivos do disco do servidor).
+    """
+    base = os.path.realpath(str(capture_log_dir or "").strip())
+    if not str(override or "").strip():
+        return base
+    candidate = os.path.realpath(str(override).strip())
+    if candidate == base or candidate.startswith(base.rstrip(os.sep) + os.sep):
+        return candidate
+    raise ValueError("log_dir fora do diretório da captura")
+
+
 def count_audit_sessions_events(log_dir: str) -> tuple[int, int]:
     """Conta (sessões, eventos) dos audit-*.jsonl sob log_dir.
 

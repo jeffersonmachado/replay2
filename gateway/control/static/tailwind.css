@@ -1827,6 +1827,10 @@ video {
   text-decoration-line: none;
 }
 
+.decoration-emerald-400\/60 {
+  text-decoration-color: rgb(52 211 153 / 0.6);
+}
+
 .decoration-rose-400\/60 {
   text-decoration-color: rgb(251 113 133 / 0.6);
 }
@@ -1920,6 +1924,11 @@ video {
 
 .hover\:bg-stone-900\/50:hover {
   background-color: rgb(28 25 23 / 0.5);
+}
+
+.hover\:text-emerald-100:hover {
+  --tw-text-opacity: 1;
+  color: rgb(209 250 229 / var(--tw-text-opacity, 1));
 }
 
 .hover\:text-rose-100:hover {

@@ -1,6 +1,7 @@
 import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, formatCount, html, text, statusLabel, statusToneClass } from "../core/dom.js";
 import { activatePageSections } from "../components/page_sections.js";
+import { initSkipFieldsSelect } from "../components/skip_fields_select.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -350,6 +351,20 @@ function setupSynthesisPanel(captureId, capture) {
 
   const replayBtn = document.getElementById("cap_synth_replay_btn");
   if (replayBtn) replayBtn.onclick = () => syntheticReplay(captureId);
+
+  const skipWrapper = document.getElementById("cap_synth_skip_fields");
+  if (skipWrapper) {
+    initSkipFieldsSelect(skipWrapper, {
+      storageKey: "replay2.captureSynth.skipFields",
+      load: async () => {
+        const srcDir = String(document.getElementById("cap_synth_source_dir")?.value || "").trim();
+        const qs = srcDir ? `?source_dir=${encodeURIComponent(srcDir)}` : "";
+        const resp = await apiJson(`/api/captures/${captureId}/synthetic-fields${qs}`);
+        if (!resp?.ok) throw new Error(resp?.data?.error || "falha ao consultar os campos da trilha");
+        return resp.data;
+      },
+    });
+  }
 }
 
 async function syntheticReplay(captureId) {
@@ -366,10 +381,7 @@ async function syntheticReplay(captureId) {
     if (sourceDir && sourceInput) sourceInput.value = sourceDir;
   }
   const seed = normalizeNumber(seedInput?.value, 42, -2147483648, 2147483647);
-  const skipFields = String(document.getElementById("cap_synth_skip_fields")?.value || "")
-    .split(",")
-    .map((f) => f.trim())
-    .filter(Boolean);
+  const skipFields = document.getElementById("cap_synth_skip_fields")?._skipFields?.getSelected() || [];
 
   if (!sourceDir) {
     if (feedback) {

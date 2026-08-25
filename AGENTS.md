@@ -228,7 +228,13 @@ replay2/
   `GET /api/captures/{id}/synthetic-substitutions?log_dir=...`,
   `capture_synthesis_service.synthetic_substitutions_payload` — lê o
   manifest ou reconstrói de `report.json` + `dataset.jsonl` recalculando
-  os campos-âncora na KB, para trilhas antigas).
+  os campos-âncora na KB, para trilhas antigas). O "Manter originais
+  (replay)" do detalhe da captura é um dropdown multi-select dos campos da
+  trilha agrupados por tela (componente `skip_fields_select.js`), alimentado
+  por `GET /api/captures/{id}/synthetic-fields?source_dir=...`
+  (`capture_synthesis_service.synthetic_fields_payload` — reusa o
+  `report.json` da síntese mais recente ou parametriza a captura na hora com
+  KB + índices; chaves de consulta vêm marcadas e desabilitadas).
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via

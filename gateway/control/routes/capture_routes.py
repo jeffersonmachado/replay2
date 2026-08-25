@@ -9,6 +9,7 @@ GET  /api/captures/{id}/replay — dados de replay/view de uma sessão
 GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 GET  /api/captures/{id}/runs — runs sintéticas geradas desta captura
 GET  /api/captures/{id}/synthetic-substitutions — de→para da trilha sintética
+GET  /api/captures/{id}/synthetic-fields — campos da trilha p/ "Manter originais"
 """
 from __future__ import annotations
 
@@ -260,6 +261,36 @@ def handle_capture_get_route(
         try:
             from control.services.capture_synthesis_service import synthetic_substitutions_payload
             payload = synthetic_substitutions_payload(con, capture_id, log_dir=log_dir_override)
+        except ValueError as exc:
+            write_json(handler, 400, {"ok": False, "error": str(exc)})
+            return True
+        except FileNotFoundError as exc:
+            write_json(handler, 404, {"ok": False, "error": str(exc)})
+            return True
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
+        return True
+
+    # GET /api/captures/{id}/synthetic-fields?source_dir=... — campos da trilha
+    # (telas/campos) para o multi-select "Manter originais (replay)"
+    if path.startswith("/api/captures/") and path.endswith("/synthetic-fields"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            return False
+        qs = parse_qs(parsed_path.query or "")
+        source_dir = str((qs.get("source_dir") or [""])[0] or "").strip()
+        if not source_dir:
+            source_dir = str(os.environ.get("DAKOTA_SOURCE_ROOT") or "").strip()
+        con = handler._db()
+        try:
+            from control.services.capture_synthesis_service import synthetic_fields_payload
+            payload = synthetic_fields_payload(con, capture_id, source_dir=source_dir)
         except ValueError as exc:
             write_json(handler, 400, {"ok": False, "error": str(exc)})
             return True

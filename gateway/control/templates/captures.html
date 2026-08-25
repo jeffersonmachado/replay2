@@ -146,11 +146,19 @@
           <input id="cap_synth_seed" type="number" value="42" class="r2ctl-input w-full" />
           <span class="mt-1 block text-[11px] text-stone-500">Mesma semente = mesmos dados.</span>
         </label>
-        <label class="block lg:col-span-3">
+        <div class="block lg:col-span-3">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Manter originais (replay)</span>
-          <input id="cap_synth_skip_fields" class="r2ctl-input w-full font-mono text-xs" placeholder="ex.: cpf — campos separados por vírgula" />
-          <span class="mt-1 block text-[11px] text-stone-500">Campos que o replay sintético NÃO substitui. Chaves de consulta (índice/seek/único na base de conhecimento) já são mantidas automaticamente — use este campo só para exceções.</span>
-        </label>
+          <div id="cap_synth_skip_fields" class="relative">
+            <button type="button" data-skip-toggle class="r2ctl-input flex w-full items-center justify-between gap-2 text-left text-xs">
+              <span data-skip-summary class="truncate text-stone-300">Selecionar campos da trilha…</span>
+              <span class="text-stone-500">▾</span>
+            </button>
+            <div data-skip-panel class="absolute z-30 mt-1 hidden max-h-72 w-full overflow-auto rounded-xl border border-stone-700 bg-stone-900 p-2 shadow-xl">
+              <div data-skip-body class="space-y-1"></div>
+            </div>
+          </div>
+          <span class="mt-1 block text-[11px] text-stone-500">Campos que o replay sintético NÃO substitui, agrupados por tela da trilha. Chaves de consulta (índice/seek/único na base de conhecimento) já vêm marcadas e não podem ser desmarcadas — marque aqui só as exceções.</span>
+        </div>
       </div>
       <div id="cap_synthesis_feedback" class="mt-3 text-sm text-stone-400"></div>
       <div id="cap_synthesis_result" class="mt-3 hidden rounded-2xl border border-emerald-800/50 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-100"></div>

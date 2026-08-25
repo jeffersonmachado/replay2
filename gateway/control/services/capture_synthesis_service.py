@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -383,6 +384,146 @@ def synthetic_substitutions_payload(con, capture_id: int, *, log_dir: str) -> di
         "journey_id": str(report.get("journey_id") or ""),
         "key_fields": key_fields,
         "screens": _build_depara_screens(screen_mappings, dataset_row, key_fields),
+    }
+
+
+def _latest_synthesis_report(log_dir: str) -> Path | None:
+    """report.json mais recente de uma síntese anterior desta captura."""
+    base = Path(str(log_dir or "").strip()) / "synthetic"
+    if not base.is_dir():
+        return None
+    reports = [p for p in base.glob("*/report.json") if p.is_file()]
+    if not reports:
+        return None
+    return max(reports, key=lambda p: p.stat().st_mtime)
+
+
+def _screen_mappings_from_template(template) -> list[dict]:
+    """Mesmo shape do ``screen_mappings`` do report.json, a partir do template."""
+    return [
+        {
+            "screen_title": step.screen_title,
+            "screen_signature": step.screen_signature,
+            "entity_name": step.entity_name,
+            "operation": step.operation,
+            "inputs": [
+                {
+                    "original": i.original,
+                    "placeholder": i.placeholder,
+                    "field_name": i.field_name,
+                    "method": i.method,
+                }
+                for i in step.inputs
+            ],
+        }
+        for step in template.steps
+    ]
+
+
+def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[str, Any]:
+    """Campos da trilha para o multi-select "Manter originais (replay)".
+
+    Agrupa os inputs mapeados por tela (entidade/operação), marcando os
+    campos-âncora (chave de consulta) detectados na knowledge base — esses já
+    são mantidos automaticamente e vêm desabilitados no seletor. Reusa o
+    ``report.json`` da síntese mais recente quando existe (``source=report``);
+    senão parametriza a captura na hora com a KB persistida + índices
+    (``source=computed``), sem re-parsear o fonte.
+    """
+    capture = get_capture(con, capture_id)
+    if not capture:
+        raise FileNotFoundError("captura não encontrada")
+
+    from dakota_gateway.synthetic.engine import SyntheticEngine
+    engine = SyntheticEngine(db_connection=con)
+    entities = engine.load_entities()
+
+    log_dir = str(capture.get("log_dir") or "").strip()
+    screen_mappings: list[dict] = []
+    source = ""
+    report_path = _latest_synthesis_report(log_dir)
+    if report_path is not None:
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            screen_mappings = list(report.get("screen_mappings") or [])
+        except Exception:
+            screen_mappings = []
+        if screen_mappings:
+            source = "report"
+
+    if not screen_mappings:
+        source_dir_clean = str(source_dir or "").strip()
+        source_path = Path(source_dir_clean) if source_dir_clean else None
+        if source_path is None or not source_path.exists() or not source_path.is_dir():
+            raise ValueError(
+                "source_dir inválido ou inexistente — informe a pasta dos fontes "
+                "Recital para mapear os campos da trilha"
+            )
+        files = _find_capture_jsonl(log_dir)
+        if not files:
+            raise ValueError("nenhum arquivo .jsonl encontrado na captura")
+        bindings = engine.load_bindings()
+        kb = {"entities": entities, "bindings": bindings} if entities and bindings else {}
+        from dakota_gateway.source_analyzer.index_file_reader import (
+            discover_data_dirs,
+            enrich_entities_with_index_files,
+        )
+        data_dirs = discover_data_dirs(source_path)
+        if data_dirs and entities:
+            enrich_entities_with_index_files(entities, data_dirs)
+        capture_jsonl = files[0] if len(files) == 1 else _combine_jsonl(
+            files, Path(log_dir) / "synthetic" / "capture_combined.jsonl")
+        template = JourneySynthesizer().from_capture(
+            capture_jsonl, source_path, name=f"capture-{capture_id}-fields", **kb)
+        screen_mappings = _screen_mappings_from_template(template)
+        source = "computed"
+
+    key_fields = suggest_key_fields(screen_mappings, entities)
+    key_set = {f.lower() for f in key_fields}
+    screens: list[dict] = []
+    all_fields: list[str] = []
+    seen_all: set[str] = set()
+    for screen in screen_mappings:
+        fields: list[dict] = []
+        seen: set[str] = set()
+        for inp in screen.get("inputs") or []:
+            if str(inp.get("method") or "") == "command":
+                continue  # teclas de navegação/menu não são dados substituíveis
+            original = str(inp.get("original") or "")
+            if not original or "{KEY:" in original:
+                continue
+            field = str(inp.get("field_name") or "").strip()
+            if not field:
+                placeholder = str(inp.get("placeholder") or "")
+                m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
+                field = m.group(1) if m else ""
+            if not field or field.lower() in seen:
+                continue
+            seen.add(field.lower())
+            if field.lower() not in seen_all:
+                seen_all.add(field.lower())
+                all_fields.append(field)
+            fields.append({
+                "field": field,
+                "original": original,
+                "method": str(inp.get("method") or ""),
+                "key": field.lower() in key_set,
+            })
+        if fields:
+            screens.append({
+                "entity": str(screen.get("entity_name") or ""),
+                "operation": str(screen.get("operation") or ""),
+                "screen_title": str(screen.get("screen_title") or ""),
+                "fields": fields,
+            })
+
+    return {
+        "ok": True,
+        "source": source,
+        "capture_id": capture_id,
+        "screens": screens,
+        "fields": all_fields,
+        "key_fields": key_fields,
     }
 
 

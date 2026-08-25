@@ -14,7 +14,8 @@ async function reprocessFromFailure(runId, failureId, scope, button) {
     return;
   }
   const detail = result?.data?.error || result?.data?.message || (result ? `HTTP ${result.status}` : "sem resposta do servidor");
-  alert(`Não foi possível criar o reprocessamento: ${detail}`);
+  const extra = result?.data?.detail && result.data.detail !== detail ? ` (${result.data.detail})` : "";
+  alert(`Não foi possível criar o reprocessamento: ${detail}${extra}`);
   if (button) {
     button.disabled = false;
     button.textContent = originalLabel;

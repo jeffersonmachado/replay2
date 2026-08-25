@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from dakota_gateway.compliance import (
     compliance_blocks_execution,
@@ -275,13 +276,33 @@ def apply_run_action(con, *, run_id: int, action: str, body: dict, actor: dict) 
         return {"status_code": 200, "payload": {"id": nid}}
 
     if clean_action == "reprocess-from-failure":
-        nid = create_reprocess_run_from_failure(
-            con,
-            int(run_id),
-            int(body.get("failure_id") or 0),
-            str(body.get("scope") or "from-failure"),
-            created_by=int(actor["id"]),
-        )
+        try:
+            nid = create_reprocess_run_from_failure(
+                con,
+                int(run_id),
+                int(body.get("failure_id") or 0),
+                str(body.get("scope") or "from-failure"),
+                created_by=int(actor["id"]),
+            )
+        except sqlite3.IntegrityError:
+            # Índice único parcial: só uma run viva (queued/running/paused) por
+            # trilha+alvo. O reprocessamento filho herda o mesmo fingerprint,
+            # então colide com uma run filha anterior ainda viva.
+            conflict = query_one(
+                con,
+                "SELECT id, status FROM replay_runs WHERE run_fingerprint="
+                "(SELECT run_fingerprint FROM replay_runs WHERE id=?) "
+                "AND status IN ('queued','running','paused')",
+                (int(run_id),),
+            )
+            suffix = f" (run #{conflict['id']}, {conflict['status']})" if conflict else ""
+            return {
+                "status_code": 409,
+                "payload": {
+                    "ok": False,
+                    "error": f"já existe uma run na fila ou em execução com a mesma trilha e alvo{suffix} — execute-a ou cancele-a antes de reprocessar de novo",
+                },
+            }
         return {"status_code": 200, "payload": {"id": nid}}
 
     return {"status_code": 404, "payload": None}

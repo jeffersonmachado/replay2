@@ -29,6 +29,7 @@ from control.services.report_run_service import (
     build_run_comparison,
     build_run_family,
     build_run_report,
+    create_reprocess_run_from_failure,
 )
 from control.services.environment_service import resolve_run_target_request
 

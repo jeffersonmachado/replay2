@@ -163,6 +163,63 @@ class GatewayStatusUnitTests(unittest.TestCase):
         self.assertEqual(params_c["replay_from_checkpoint_sig"], "SIG:PAGAMENTO")
         self.assertNotIn("replay_from_seq_global", params_c)
 
+    def test_apply_run_action_reprocess_from_failure_cria_run_filha(self):
+        """Regressão: a rota POST /api/runs/{id}/reprocess-from-failure quebra-
+        va com NameError (import ausente em run_service) — o caminho real via
+        apply_run_action não era coberto, só o service direto."""
+        from control.services.run_service import apply_run_action
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "replay.db"
+            con = connect(str(db_path))
+            init_db(con)
+            ph = auth.pbkdf2_hash_password("admin123")
+            con.execute(
+                "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,'admin',?)",
+                ("admin", ph, now_ms()),
+            )
+            user = con.execute("SELECT id, username FROM users WHERE username='admin'").fetchone()
+            actor = {"id": int(user["id"]), "username": user["username"]}
+            run_id = create_run(con, actor["id"], tmpdir, "legacy.example", "recital", "", "strict-global")
+            con.execute("UPDATE replay_runs SET status='failed' WHERE id=?", (run_id,))
+            failure_id = add_run_failure(
+                con,
+                run_id,
+                build_failure_record(
+                    session_id="sess-77",
+                    seq_global=88,
+                    seq_session=9,
+                    flow_name="pagamento",
+                    event_type="checkpoint",
+                    failure_type="checkpoint_mismatch",
+                    severity="high",
+                    expected_value="SIG:PAGAMENTO",
+                    observed_value="SIG:ERRO",
+                    message="checkpoint falhou",
+                    evidence={},
+                ),
+            )
+            result = apply_run_action(
+                con,
+                run_id=run_id,
+                action="reprocess-from-failure",
+                body={"failure_id": failure_id, "scope": "session-from-failure"},
+                actor=actor,
+            )
+            child_id = int((result.get("payload") or {})["id"])
+            row = con.execute(
+                "SELECT status, parent_run_id, params_json FROM replay_runs WHERE id=?",
+                (child_id,),
+            ).fetchone()
+            con.close()
+
+        self.assertEqual(result["status_code"], 200)
+        self.assertEqual(row["status"], "queued")
+        self.assertEqual(int(row["parent_run_id"]), run_id)
+        params = json.loads(row["params_json"])
+        self.assertEqual(params["replay_from_seq_global"], 88)
+        self.assertEqual(params["replay_session_id"], "sess-77")
+
     def test_run_family_and_reprocess_trace_show_origin_and_outcome(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "replay.db"

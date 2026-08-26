@@ -149,8 +149,19 @@
     <p class="text-xs text-stone-400 mt-1">Dica: Use a barra de velocidade para acelerar/desacelerar a reprodução, ou use os botões de pausa/parar.</p>
   </section>
 
-  <!-- Timeline de eventos -->
-  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+  <!-- Carregamento lazy da timeline (custo alto em sessões longas) -->
+  <section id="events-load-card" class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="text-sm text-stone-300">
+        <strong>📊 Timeline de Eventos</strong> (OUT / IN / DET)
+        <div class="text-xs text-stone-400 mt-1">Não é montada automaticamente — em sessões longas a renderização tem custo alto. Carrega só quando você pedir.</div>
+      </div>
+      <button id="events-load-btn" class="r2ctl-btn-soft text-xs opacity-50 cursor-not-allowed" disabled>⏳ Carregando dados...</button>
+    </div>
+  </section>
+
+  <!-- Timeline de eventos (oculta até o clique em "Mostrar eventos") -->
+  <section id="events-section" class="hidden r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="mb-4 flex items-center justify-between gap-3">
       <h3 class="text-lg font-semibold">📊 Timeline de Eventos</h3>
       <div class="flex flex-wrap gap-2">
@@ -537,11 +548,13 @@ input[type="range"] {
       // Aguarda módulos de timeline antes de renderizar
       await _timelineReady;
       renderSessionInfo();
-      renderEventsList(eventsFilterMode);
+      setupTimelineLazy();
     } catch (err) {
       console.error('Erro ao carregar dados de replay:', err);
       const startBtn = document.getElementById('playback-start-btn');
       if (startBtn) startBtn.textContent = '⚠ Falha ao carregar dados';
+      const loadBtn = document.getElementById('events-load-btn');
+      if (loadBtn) loadBtn.textContent = '⚠ Falha ao carregar eventos';
       document.getElementById('events-list').innerHTML = `
         <div class="text-red-300 text-sm p-4 rounded bg-red-900/20 border border-red-700/40">
           Erro ao carregar dados: ${escapeHtml(err.message)}
@@ -693,6 +706,37 @@ input[type="range"] {
     } finally {
       windowFetchInFlight = false;
     }
+  }
+
+  // Timeline lazy: a seção OUT/IN/DET só é montada quando o usuário pede —
+  // decorar/renderizar centenas de eventos (snapshots de terminal em HTML)
+  // no carregamento da página tinha custo alto. O player usa os mesmos dados
+  // já carregados e não depende da timeline.
+  let timelineRevealed = false;
+
+  function setupTimelineLazy() {
+    const btn = document.getElementById('events-load-btn');
+    if (!btn) return;
+    const total = Number(replayData?.playback?.event_count || 0)
+      || (replayData?.timeline_items || replayData?.events || []).length;
+    btn.disabled = false;
+    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    btn.textContent = total
+      ? `📊 Mostrar eventos (${total})`
+      : '📊 Mostrar eventos';
+    btn.addEventListener('click', revealTimeline);
+  }
+
+  function revealTimeline() {
+    if (timelineRevealed) return;
+    timelineRevealed = true;
+    document.getElementById('events-load-card')?.classList.add('hidden');
+    const section = document.getElementById('events-section');
+    if (section) {
+      section.classList.remove('hidden');
+      section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    renderEventsList(eventsFilterMode);
   }
 
   function renderEventsList(filter = 'all') {

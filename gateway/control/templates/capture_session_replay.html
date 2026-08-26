@@ -497,7 +497,11 @@ input[type="range"] {
     }
 
     try {
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}${logDirQuery}`);
+      // Modo "só player": a carga inicial traz apenas metadados/geometria/
+      // totais (offset=0&limit=1) — medido ~20s→~1s em sessões de 400+
+      // eventos. Os eventos em si são buscados sob demanda por
+      // ensureAllPlaybackEvents() (playback ou timeline).
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=0&limit=1${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -708,6 +712,49 @@ input[type="range"] {
     }
   }
 
+  // Carga sob demanda de TODOS os eventos (modo "só player"): o fetch
+  // inicial veio com limit=1, então antes de reproduzir ou montar a
+  // timeline é preciso varrer as janelas restantes (limit=1000) e fundir
+  // no replayData. Idempotente e compartilhada entre player e timeline —
+  // chamadas concorrentes reutilizam a mesma promise.
+  let allEventsLoaded = false;
+  let allEventsPromise = null;
+
+  async function ensureAllPlaybackEvents(onProgress) {
+    if (allEventsLoaded) return true;
+    if (typeof _nextWindowOffset !== 'function' || typeof _mergeReplayWindow !== 'function') return false;
+    if (!replayData || _nextWindowOffset(replayData.window) == null) {
+      allEventsLoaded = true;
+      return true;
+    }
+    if (allEventsPromise) return allEventsPromise;
+    const total = Number(replayData?.playback?.event_count || 0);
+    allEventsPromise = (async () => {
+      while (true) {
+        const offset = _nextWindowOffset(replayData.window);
+        if (offset == null) break;
+        // limit=1000 explícito: replayData.window.limit veio como 1 da
+        // carga inicial — sem isso seriam centenas de requests.
+        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=1000${logDirQuery}`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.error) {
+          throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
+        }
+        _mergeReplayWindow(replayData, payload);
+        if (typeof onProgress === 'function') onProgress(offset, total);
+      }
+      allEventsLoaded = true;
+      return true;
+    })();
+    try {
+      return await allEventsPromise;
+    } catch (err) {
+      // Falha não é terminal: próxima tentativa recomeça da janela atual.
+      allEventsPromise = null;
+      throw err;
+    }
+  }
+
   // Timeline lazy: a seção OUT/IN/DET só é montada quando o usuário pede —
   // decorar/renderizar centenas de eventos (snapshots de terminal em HTML)
   // no carregamento da página tinha custo alto. O player usa os mesmos dados
@@ -727,9 +774,35 @@ input[type="range"] {
     btn.addEventListener('click', revealTimeline);
   }
 
-  function revealTimeline() {
+  async function revealTimeline() {
     if (timelineRevealed) return;
     timelineRevealed = true;
+    const btn = document.getElementById('events-load-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'cursor-not-allowed');
+      btn.textContent = '⏳ Carregando eventos...';
+    }
+    // Garante a trilha completa antes de renderizar (carga inicial veio
+    // com limit=1 — sem isso a timeline exibiria um único evento).
+    try {
+      await ensureAllPlaybackEvents((loaded, total) => {
+        if (btn) {
+          btn.textContent = total
+            ? `⏳ Carregando... ${Math.min(loaded, total)}/${total}`
+            : '⏳ Carregando eventos...';
+        }
+      });
+    } catch (err) {
+      console.error('Falha ao carregar eventos da timeline:', err);
+      timelineRevealed = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        btn.textContent = '⚠ Falha ao carregar — tentar de novo';
+      }
+      return;
+    }
     document.getElementById('events-load-card')?.classList.add('hidden');
     const section = document.getElementById('events-section');
     if (section) {
@@ -901,9 +974,28 @@ input[type="range"] {
     persistPlaybackPrefs({});
   }
 
-  document.getElementById('playback-start-btn')?.addEventListener('click', () => {
+  document.getElementById('playback-start-btn')?.addEventListener('click', async () => {
     if (!replayData) {
       alert('Dados de replay não carregados');
+      return;
+    }
+    const startBtn = document.getElementById('playback-start-btn');
+    // Modo "só player": garante todos os eventos antes de reproduzir
+    // (a carga inicial trouxe só metadados — offset=0&limit=1).
+    try {
+      startBtn.disabled = true;
+      startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      startBtn.textContent = '⏳ Carregando eventos...';
+      await ensureAllPlaybackEvents((loaded, total) => {
+        startBtn.textContent = total
+          ? `⏳ Carregando eventos... ${Math.min(loaded, total)}/${total}`
+          : '⏳ Carregando eventos...';
+      });
+    } catch (err) {
+      console.error('Falha ao carregar eventos para playback:', err);
+      startBtn.disabled = false;
+      startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      startBtn.textContent = '⚠ Falha — tentar de novo';
       return;
     }
     playbackState.isRunning = true;

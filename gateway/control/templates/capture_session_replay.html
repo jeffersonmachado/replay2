@@ -553,6 +553,13 @@ input[type="range"] {
       await _timelineReady;
       renderSessionInfo();
       setupTimelineLazy();
+      // Prefetch streaming em background: quem abre a página de replay
+      // normalmente pede o playback em seguida — carregar agora torna o
+      // clique quase instantâneo. Falhas não bloqueiam: o clique retenta
+      // (a promise é resetada no catch de ensureAllPlaybackEvents).
+      ensureAllPlaybackEvents().catch((err) => {
+        console.warn('Prefetch de eventos falhou (será retentado sob demanda):', err);
+      });
     } catch (err) {
       console.error('Erro ao carregar dados de replay:', err);
       const startBtn = document.getElementById('playback-start-btn');
@@ -713,12 +720,18 @@ input[type="range"] {
   }
 
   // Carga sob demanda de TODOS os eventos (modo "só player"): o fetch
-  // inicial veio com limit=1, então antes de reproduzir ou montar a
-  // timeline é preciso varrer as janelas restantes (limit=1000) e fundir
-  // no replayData. Idempotente e compartilhada entre player e timeline —
+  // inicial veio com limit=1, então o playback e a timeline dependem de
+  // varrer as janelas restantes e fundir no replayData. Feito em streaming:
+  // a 1ª janela é pequena (REPLAY_STREAM_FIRST_CHUNK) para o playback
+  // começar rápido; as seguintes são maiores. O player NÃO bloqueia —
+  // playNextEvent espera pela próxima janela quando alcança o fim do que
+  // já chegou. Idempotente e compartilhada entre player e timeline —
   // chamadas concorrentes reutilizam a mesma promise.
   let allEventsLoaded = false;
   let allEventsPromise = null;
+  let streamLoadFailed = null;
+  const REPLAY_STREAM_FIRST_CHUNK = 60;
+  const REPLAY_STREAM_CHUNK = 200;
 
   async function ensureAllPlaybackEvents(onProgress) {
     if (allEventsLoaded) return true;
@@ -733,9 +746,12 @@ input[type="range"] {
       while (true) {
         const offset = _nextWindowOffset(replayData.window);
         if (offset == null) break;
-        // limit=1000 explícito: replayData.window.limit veio como 1 da
-        // carga inicial — sem isso seriam centenas de requests.
-        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=1000${logDirQuery}`);
+        // Sem cache de estado (sessões < 20000 eventos), cada janela
+        // reprocessa do evento 0 — a 1ª é pequena para destravar o player,
+        // as demais equilibram custo total × nº de requests. Sem o limit
+        // explícito, replayData.window.limit=1 faria centenas de requests.
+        const limit = offset <= 1 ? REPLAY_STREAM_FIRST_CHUNK : REPLAY_STREAM_CHUNK;
+        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}${logDirQuery}`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.error) {
           throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -974,28 +990,9 @@ input[type="range"] {
     persistPlaybackPrefs({});
   }
 
-  document.getElementById('playback-start-btn')?.addEventListener('click', async () => {
+  document.getElementById('playback-start-btn')?.addEventListener('click', () => {
     if (!replayData) {
       alert('Dados de replay não carregados');
-      return;
-    }
-    const startBtn = document.getElementById('playback-start-btn');
-    // Modo "só player": garante todos os eventos antes de reproduzir
-    // (a carga inicial trouxe só metadados — offset=0&limit=1).
-    try {
-      startBtn.disabled = true;
-      startBtn.classList.add('opacity-50', 'cursor-not-allowed');
-      startBtn.textContent = '⏳ Carregando eventos...';
-      await ensureAllPlaybackEvents((loaded, total) => {
-        startBtn.textContent = total
-          ? `⏳ Carregando eventos... ${Math.min(loaded, total)}/${total}`
-          : '⏳ Carregando eventos...';
-      });
-    } catch (err) {
-      console.error('Falha ao carregar eventos para playback:', err);
-      startBtn.disabled = false;
-      startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      startBtn.textContent = '⚠ Falha — tentar de novo';
       return;
     }
     playbackState.isRunning = true;
@@ -1007,6 +1004,13 @@ input[type="range"] {
     document.getElementById('playback-status-message')?.classList.add('hidden');
     persistPlaybackPrefs({});
     startPlayback();
+    // Streaming em background: o player já começa com o que chegou na
+    // carga inicial e espera pelas próximas janelas só se alcançar o fim
+    // do que já foi fundido no replayData.
+    ensureAllPlaybackEvents().catch((err) => {
+      console.error('Falha ao carregar eventos durante o playback:', err);
+      streamLoadFailed = err;
+    });
   });
 
   document.getElementById('playback-pause-btn')?.addEventListener('click', () => {
@@ -1029,6 +1033,17 @@ input[type="range"] {
     playbackState.speed = parseFloat(e.target.value);
     document.getElementById('playback-speed-label').textContent = playbackState.speed.toFixed(2) + 'x';
     persistPlaybackPrefs({ speed: playbackState.speed });
+    // Aplica em tempo real: reagenda o timeout pendente com o novo delay
+    // (antes, a velocidade só valia a partir do PRÓXIMO evento agendado).
+    if (playbackState.isRunning && !playbackState.isPaused
+        && playbackTimeout && playbackState._pendingPair) {
+      clearTimeout(playbackTimeout);
+      const pair = playbackState._pendingPair;
+      const delay = pair.nextEvent
+        ? calcDelay(pair.event, pair.nextEvent, playbackState.speed)
+        : 50;
+      playbackTimeout = setTimeout(playNextEvent, delay);
+    }
   });
 
   // ── feedReplayEvent: somente snapshot/diff (TerminalEngine Python) ──
@@ -1425,17 +1440,31 @@ input[type="range"] {
     playbackState.displayedEventIndex = -1;
     playbackState.nextEventIndex = 0;
     document.getElementById('playback-output').innerHTML = '';
-    document.getElementById('playback-event-counter').textContent = '0 / ' + events.length;
+    document.getElementById('playback-event-counter').textContent = '0 / ' + playbackDisplayTotal(events);
     document.getElementById('playback-pause-btn').textContent = '\u23F8 Pausar';
     playNextEvent();
+  }
+
+  function playbackDisplayTotal(events) {
+    return Number(replayData?.playback?.event_count || 0) || events.length;
   }
 
   function playNextEvent() {
     if (!playbackState.isRunning || playbackState.isPaused) return;
 
     var events = playbackEvents();
+    var total = playbackDisplayTotal(events);
     var idx = playbackState.nextEventIndex ?? 0;
     if (idx >= events.length) {
+      if (!allEventsLoaded && !streamLoadFailed) {
+        // Streaming: ainda há janelas a caminho — aguarda a próxima fusão
+        // em vez de encerrar o playback no fim do que já chegou.
+        var waitCounter = document.getElementById('playback-event-counter');
+        if (waitCounter) waitCounter.textContent = idx + ' / ' + total + ' (carregando...)';
+        playbackState._pendingPair = null;
+        playbackTimeout = setTimeout(playNextEvent, 250);
+        return;
+      }
       finalizePlaybackUi();
       return;
     }
@@ -1457,9 +1486,9 @@ input[type="range"] {
     var terminal = document.getElementById('playback-terminal');
     if (terminal) terminal.scrollTop = terminal.scrollHeight;
 
-    var progress = ((idx + 1) / events.length) * 100;
+    var progress = ((idx + 1) / total) * 100;
     progressBar.style.width = progress + '%';
-    counter.textContent = (idx + 1) + ' / ' + events.length;
+    counter.textContent = (idx + 1) + ' / ' + total;
     document.getElementById('playback-seq-current').textContent = 'seq: ' + (event?.seq ?? '-');
     document.getElementById('playback-geometry-info').textContent =
       'geom: ' + termGeometry.rows + '\u00D7' + termGeometry.cols + ' (' + termGeometry.source + ')';
@@ -1474,10 +1503,11 @@ input[type="range"] {
     playbackState.nextEventIndex = idx + 1;
 
     var nextIdx = playbackState.nextEventIndex;
-    var delay = 50;
-    if (nextIdx < events.length) {
-      delay = calcDelay(event, events[nextIdx], playbackState.speed);
-    }
+    var nextEvent = nextIdx < events.length ? events[nextIdx] : null;
+    var delay = nextEvent ? calcDelay(event, nextEvent, playbackState.speed) : 50;
+    // Guarda o par de eventos do timeout pendente para o slider de
+    // velocidade poder reagendar com o novo delay sem esperar o ciclo.
+    playbackState._pendingPair = { event: event, nextEvent: nextEvent };
     playbackTimeout = setTimeout(playNextEvent, delay);
   }
 

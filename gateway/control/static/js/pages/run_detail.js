@@ -2,8 +2,11 @@ import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, html, text } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 import { failureHasScreenDiff, renderFailureDivergenceHtml } from "../components/failure_diff.js";
+import { runSyntheticOrigin } from "../components/run_views.js";
+import { renderRunDeparaHtml } from "../components/synthetic_depara.js";
 
 let currentFailures = [];
+let currentRun = null;
 
 function openFailureDiffModal(idx) {
   const failure = currentFailures[Number(idx)];
@@ -14,6 +17,30 @@ function openFailureDiffModal(idx) {
 
 function closeFailureDiffModal() {
   document.getElementById("failure_diff_modal")?.classList.add("hidden");
+}
+
+function closeRunDeparaModal() {
+  document.getElementById("run_depara_modal")?.classList.add("hidden");
+}
+
+async function openRunDeparaModal() {
+  const origin = runSyntheticOrigin(currentRun);
+  if (!origin || !origin.captureId || !currentRun?.log_dir) return;
+  const modal = document.getElementById("run_depara_modal");
+  modal?.classList.remove("hidden");
+  html("#run_depara_content", '<div class="text-sm text-stone-400">Carregando de→para...</div>');
+  const result = await apiJson(
+    `/api/captures/${origin.captureId}/synthetic-substitutions?log_dir=${encodeURIComponent(currentRun.log_dir)}`,
+  );
+  if (result?.ok && result?.data) {
+    html("#run_depara_content", renderRunDeparaHtml(result.data));
+    return;
+  }
+  const detail = result?.data?.error || (result ? `HTTP ${result.status}` : "sem resposta do servidor");
+  html(
+    "#run_depara_content",
+    `<div class="rounded-2xl border border-red-700/40 bg-red-900/20 p-3 text-sm text-red-300">Falha ao carregar o de→para: ${escapeHtml(detail)}</div>`,
+  );
 }
 
 async function reprocessFromFailure(runId, failureId, scope, button) {
@@ -39,6 +66,17 @@ async function reprocessFromFailure(runId, failureId, scope, button) {
 function renderDetail(run, report, comparison, failures) {
   const summary = comparison.summary || {};
   const failureRows = Object.entries((report.summary || {}).by_type || {});
+  const syntheticOrigin = runSyntheticOrigin(run);
+  const deparaCard = syntheticOrigin
+    ? `
+      <div class="rounded-2xl border border-rose-900/50 bg-rose-950/20 p-4">
+        <div class="text-xs uppercase tracking-[0.14em] text-rose-300">Dados sintéticos</div>
+        <p class="mt-1 text-xs text-stone-400">Esta run usou dados sintetizados a partir da
+          <a href="/captures/${syntheticOrigin.captureId}" class="underline decoration-rose-400/60 underline-offset-2 hover:text-rose-100">captura #${syntheticOrigin.captureId}</a>.
+          Veja o que foi substituído em cada tela.</p>
+        <div class="mt-3"><button id="run_depara_btn" type="button" class="r2ctl-btn-soft text-xs">⇄ Ver dados substituídos</button></div>
+      </div>`
+    : "";
   html(
     "#detail",
     `
@@ -46,6 +84,7 @@ function renderDetail(run, report, comparison, failures) {
         ${runIdentityCard(run)}
         ${comparisonSummaryCard(summary)}
       </div>
+      ${deparaCard}
       <div class="grid gap-4 lg:grid-cols-2">
         <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
           <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Falhas por tipo</div>
@@ -69,6 +108,7 @@ function renderDetail(run, report, comparison, failures) {
   document.querySelectorAll("[data-reprocess]").forEach((button) => {
     button.addEventListener("click", () => reprocessFromFailure(run.id, button.dataset.reprocess, button.dataset.scope, button));
   });
+  document.getElementById("run_depara_btn")?.addEventListener("click", () => openRunDeparaModal());
 }
 
 async function loadDetail(id) {
@@ -87,6 +127,7 @@ async function loadDetail(id) {
   const failureList = failures?.data?.failures || [];
   const eventList = events?.data?.events || [];
   currentFailures = failureList;
+  currentRun = detail.data.run;
 
   let eventsHtml = "";
   if (!failureList.length && !eventList.length) {
@@ -144,6 +185,10 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("failure_diff_close_btn")?.addEventListener("click", () => closeFailureDiffModal());
   document.getElementById("failure_diff_modal")?.addEventListener("click", (ev) => {
     if (ev.target === ev.currentTarget) closeFailureDiffModal();
+  });
+  document.getElementById("run_depara_close_btn")?.addEventListener("click", () => closeRunDeparaModal());
+  document.getElementById("run_depara_modal")?.addEventListener("click", (ev) => {
+    if (ev.target === ev.currentTarget) closeRunDeparaModal();
   });
   document.getElementById("events")?.addEventListener("click", (ev) => {
     const button = ev.target.closest("[data-failure-idx]");

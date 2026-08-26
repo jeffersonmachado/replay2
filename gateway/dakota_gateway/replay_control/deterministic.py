@@ -28,6 +28,8 @@ def _deterministic_failure(
     mode_label: str,
     concurrent_mode: bool,
     match: dict | None = None,
+    expected_screen: str = "",
+    observed_screen: str = "",
 ) -> dict:
     match = match or {
         "comparison_mode_requested": _comparison_mode_from_params(params),
@@ -50,6 +52,19 @@ def _deterministic_failure(
         action = "skipped"
     elif mismatch_mode == "send-anyway":
         action = "sent_anyway"
+    evidence = {
+        "checkpoint_timeout_ms": checkpoint_timeout_ms,
+        "checkpoint_quiet_ms": checkpoint_quiet_ms,
+        "mode": mode_label,
+        "match": match,
+        "action": action,
+        "mismatch_mode": mismatch_mode,
+    }
+    # Telas do momento da falha — permitem à UI mostrar O QUE divergiu.
+    if expected_screen:
+        evidence["expected_screen"] = expected_screen
+    if observed_screen:
+        evidence["observed_screen"] = observed_screen
     return build_failure_record(
         session_id=sid,
         seq_global=seq_global,
@@ -60,14 +75,7 @@ def _deterministic_failure(
         expected_value=expected_sig,
         observed_value=observed_sig,
         message=f"{reason} session={sid}: expected={expected_sig!r} got={observed_sig!r} action={action}",
-        evidence={
-            "checkpoint_timeout_ms": checkpoint_timeout_ms,
-            "checkpoint_quiet_ms": checkpoint_quiet_ms,
-            "mode": mode_label,
-            "match": match,
-            "action": action,
-            "mismatch_mode": mismatch_mode,
-        },
+        evidence=evidence,
     )
 
 

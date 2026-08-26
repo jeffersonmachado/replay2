@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import base64
 import time
+
+from .screen import TerminalScreenState
+
+# Teto de caracteres por tela gravada na evidência da falha (tela 58x80 ~4,6k).
+MAX_SCREEN_EVIDENCE_CHARS = 12000
 
 
 def expected_snapshot_from_event(ev: dict, *, legacy_sig: str = "") -> dict:
@@ -40,6 +46,46 @@ def observed_snapshot_from_session(session) -> dict:
     if hasattr(session, "canonical_snapshot_now"):
         return session.canonical_snapshot_now()
     return {"text_sig": "", "visual_sig": "", "semantic_sig": "", "screen_sig": ""}
+
+
+def observed_screen_text_from_session(session, *, max_chars: int = MAX_SCREEN_EVIDENCE_CHARS) -> str:
+    """Texto atual da tela da sessão de replay (ou "" quando indisponível)."""
+    screen = getattr(session, "screen_state", None)
+    text_fn = getattr(screen, "text", None)
+    if not callable(text_fn):
+        return ""
+    try:
+        value = str(text_fn() or "")
+    except Exception:
+        return ""
+    return value[:max_chars]
+
+
+def expected_screen_text_from_event(
+    ev: dict,
+    config=None,
+    *,
+    max_chars: int = MAX_SCREEN_EVIDENCE_CHARS,
+) -> str:
+    """Tela esperada a partir do evento da trilha, para evidência de falha.
+
+    Renderiza ``screen_raw_b64`` (bytes brutos da tela estável da captura) na
+    geometria/encoding da configuração quando presente; cai para
+    ``screen_sample`` (preview das linhas não-vazias) quando não há bytes.
+    """
+    raw_b64 = str(ev.get("screen_raw_b64") or "")
+    if raw_b64:
+        rows = int(getattr(config, "rows", 25) or 25)
+        cols = int(getattr(config, "cols", 80) or 80)
+        encoding = str(getattr(config, "encoding", "utf-8") or "utf-8")
+        try:
+            raw = base64.b64decode(raw_b64.encode("ascii"), validate=False)
+            state = TerminalScreenState(rows=rows, cols=cols, encoding=encoding)
+            state.feed_bytes(raw)
+            return str(state.text() or "")[:max_chars]
+        except Exception:
+            pass
+    return str(ev.get("screen_sample") or "")[:max_chars]
 
 
 def wait_for_signature_match(

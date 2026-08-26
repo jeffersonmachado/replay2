@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from threading import Lock, Semaphore, Thread
 
 from ..replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _decode_replay_input  # type: ignore
-from ..replay_compare import wait_for_signature_match
+from ..replay_compare import (
+    expected_screen_text_from_event,
+    observed_screen_text_from_session,
+    wait_for_signature_match,
+)
 from ..replay_failures import (
     build_failure_record,
     classify_checkpoint_failure,
@@ -115,6 +119,8 @@ def replay_strict_global_controlled(
                     "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                     "mode": "strict-global",
                     "match": match,
+                    "expected_screen": expected_screen_text_from_event(expected_event, session_configs.get(sid) or cfg),
+                    "observed_screen": observed_screen_text_from_session(s),
                 },
             )
         )
@@ -155,6 +161,8 @@ def replay_strict_global_controlled(
                             mode_label="strict-global-deterministic",
                             concurrent_mode=False,
                             match=match,
+                            expected_screen=expected_screen_text_from_event(ev, session_configs.get(sid) or cfg),
+                            observed_screen=observed_screen_text_from_session(get_sess(sid, ev)),
                         )
                         if not _should_apply_deterministic_input(on_failure, failure, params=params):
                             on_progress(seq_global, None)
@@ -241,6 +249,8 @@ def replay_parallel_sessions_controlled(
                                 mode_label="parallel-sessions-deterministic",
                                 concurrent_mode=False,
                                 match=match,
+                                expected_screen=expected_screen_text_from_event(ev, state.config),
+                                observed_screen=observed_screen_text_from_session(s),
                             )
                             if not _should_apply_deterministic_input(on_failure, failure, params=params):
                                 on_progress(seq_global, None)
@@ -289,6 +299,8 @@ def replay_parallel_sessions_controlled(
                                         "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                                         "mode": "parallel-sessions",
                                         "match": match,
+                                        "expected_screen": expected_screen_text_from_event(ev, state.config),
+                                        "observed_screen": observed_screen_text_from_session(s),
                                     },
                                 )
                             )
@@ -450,6 +462,8 @@ def replay_parallel_sessions_concurrent_controlled(
                                     mode_label="parallel-sessions-concurrent-deterministic",
                                     concurrent_mode=True,
                                     match=match,
+                                    expected_screen=expected_screen_text_from_event(ev, state.config),
+                                    observed_screen=observed_screen_text_from_session(s),
                                 )
                                 msg = str(failure.get("message") or "")
                                 try:
@@ -520,6 +534,8 @@ def replay_parallel_sessions_concurrent_controlled(
                                             "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                                             "mode": "parallel-sessions-concurrent",
                                             "match": match,
+                                            "expected_screen": expected_screen_text_from_event(ev, state.config),
+                                            "observed_screen": observed_screen_text_from_session(s),
                                         },
                                     )
                                 )

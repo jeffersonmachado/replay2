@@ -1,6 +1,20 @@
 import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, html, text } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
+import { failureHasScreenDiff, renderFailureDivergenceHtml } from "../components/failure_diff.js";
+
+let currentFailures = [];
+
+function openFailureDiffModal(idx) {
+  const failure = currentFailures[Number(idx)];
+  if (!failure) return;
+  html("#failure_diff_content", renderFailureDivergenceHtml(failure));
+  document.getElementById("failure_diff_modal")?.classList.remove("hidden");
+}
+
+function closeFailureDiffModal() {
+  document.getElementById("failure_diff_modal")?.classList.add("hidden");
+}
 
 async function reprocessFromFailure(runId, failureId, scope, button) {
   const originalLabel = button ? button.textContent : "";
@@ -72,6 +86,7 @@ async function loadDetail(id) {
   renderDetail(detail.data.run, report?.data?.report || {}, comparison?.data?.comparison || {}, failures?.data?.failures || []);
   const failureList = failures?.data?.failures || [];
   const eventList = events?.data?.events || [];
+  currentFailures = failureList;
 
   let eventsHtml = "";
   if (!failureList.length && !eventList.length) {
@@ -82,16 +97,18 @@ async function loadDetail(id) {
     if (failureList.length) {
       eventsHtml += '<div><div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Falhas (' + failureList.length + ')</div>';
       eventsHtml += '<div class="r2ctl-table-scroll"><table class="w-full text-sm"><thead><tr class="text-left text-stone-400 border-b border-stone-700/40">'
-        + '<th class="py-1 pr-2">Tipo</th><th class="py-1 pr-2">Gravidade</th><th class="py-1 pr-2">Sessão</th><th class="py-1 pr-2">Seq</th><th class="py-1">Data/Hora</th></tr></thead><tbody>';
-      eventsHtml += failureList.map(f => {
+        + '<th class="py-1 pr-2">Tipo</th><th class="py-1 pr-2">Gravidade</th><th class="py-1 pr-2">Sessão</th><th class="py-1 pr-2">Seq</th><th class="py-1 pr-2">Data/Hora</th><th class="py-1">Divergência</th></tr></thead><tbody>';
+      eventsHtml += failureList.map((f, idx) => {
         const sev = String(f.severity || "—");
         const ts = f.ts_ms ? new Date(f.ts_ms).toLocaleString("pt-BR") : "—";
+        const diffLabel = failureHasScreenDiff(f) ? "Ver telas" : "Detalhes";
         return '<tr class="border-b border-stone-800/40">'
           + '<td class="py-1 pr-2 text-stone-200">' + escapeHtml(f.failure_type || "—") + '</td>'
           + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs">' + escapeHtml(sev) + '</span></td>'
           + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(f.session_id || "—")) + '</td>'
           + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(f.seq_global ?? "—")) + '</td>'
-          + '<td class="py-1 text-xs text-stone-400">' + escapeHtml(ts) + '</td></tr>';
+          + '<td class="py-1 pr-2 text-xs text-stone-400">' + escapeHtml(ts) + '</td>'
+          + '<td class="py-1"><button type="button" class="r2ctl-btn-soft text-xs" data-failure-idx="' + idx + '">' + diffLabel + '</button></td></tr>';
       }).join("");
       eventsHtml += '</tbody></table></div></div>';
     }
@@ -124,4 +141,12 @@ window.addEventListener("DOMContentLoaded", () => {
     loadDetail(runId);
   }
   document.getElementById("load_detail_btn")?.addEventListener("click", () => loadDetail());
+  document.getElementById("failure_diff_close_btn")?.addEventListener("click", () => closeFailureDiffModal());
+  document.getElementById("failure_diff_modal")?.addEventListener("click", (ev) => {
+    if (ev.target === ev.currentTarget) closeFailureDiffModal();
+  });
+  document.getElementById("events")?.addEventListener("click", (ev) => {
+    const button = ev.target.closest("[data-failure-idx]");
+    if (button) openFailureDiffModal(button.dataset.failureIdx);
+  });
 });

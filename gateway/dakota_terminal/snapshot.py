@@ -218,12 +218,21 @@ def encode_snapshot_compact(snapshot: dict) -> dict:
     rows = snapshot.get("rows", 25)
     cols = snapshot.get("cols", 80)
 
-    # Constrói tabela de atributos
-    attr_index: dict[str, int] = {}
-    attr_table: list[dict] = []
-
-    def _attr_key(cell: dict) -> str:
-        return f"{cell.get('fg')}|{cell.get('bg')}|{int(cell.get('bold',False))}|{int(cell.get('dim',False))}|{int(cell.get('underline',False))}|{int(cell.get('blink',False))}|{int(cell.get('reverse',False))}|{int(cell.get('hidden',False))}"
+    # Chave de atributos como tupla (sem f-string por célula) e calculada uma
+    # única vez por célula — a versão anterior recomputava a chave até 3x por
+    # célula (tabela + varredura de runs) e dominava o custo do endpoint de
+    # replay. Saída JSON permanece idêntica.
+    def _cell_attr_key(cell: dict) -> tuple:
+        return (
+            cell.get("fg"),
+            cell.get("bg"),
+            bool(cell.get("bold")),
+            bool(cell.get("dim")),
+            bool(cell.get("underline")),
+            bool(cell.get("blink")),
+            bool(cell.get("reverse")),
+            bool(cell.get("hidden")),
+        )
 
     def _attr_dict(cell: dict) -> dict:
         return {
@@ -237,33 +246,56 @@ def encode_snapshot_compact(snapshot: dict) -> dict:
             "hidden": bool(cell.get("hidden")),
         }
 
-    for cell in cells:
-        key = _attr_key(cell)
+    # Constrói tabela de atributos (ordem de primeira ocorrência, como antes)
+    attr_index: dict[tuple, int] = {}
+    attr_table: list[dict] = []
+
+    n_cells = len(cells)
+    cell_keys: list[tuple] = [None] * n_cells  # type: ignore[list-item]
+    for i in range(n_cells):
+        cell = cells[i]
+        key = _cell_attr_key(cell)
+        cell_keys[i] = key
         if key not in attr_index:
             attr_index[key] = len(attr_table)
             attr_table.append(_attr_dict(cell))
 
+    # Célula ausente (idx >= len(cells)): chave com todos os atributos vazios.
+    # Antes isso estourava KeyError se a tela não tivesse rows*cols células;
+    # agora registra a entrada de fallback (superset do comportamento antigo).
+    missing_key: tuple = (None, None, False, False, False, False, False, False)
+    missing_attr = -1
+    if rows * cols > n_cells:
+        if missing_key not in attr_index:
+            attr_index[missing_key] = len(attr_table)
+            attr_table.append(_attr_dict({"ch": " "}))
+        missing_attr = attr_index[missing_key]
+
     runs = []
-    r = 0
-    while r < rows:
+    append_run = runs.append
+    for r in range(rows):
         c = 0
+        base = r * cols
         while c < cols:
-            idx = r * cols + c
-            cell = cells[idx] if idx < len(cells) else {"ch": " "}
-            attr = attr_index[_attr_key(cell)]
+            idx = base + c
+            attr = attr_index[cell_keys[idx]] if idx < n_cells else missing_attr
 
             # Encontra run com mesmo atributo
             run_text = []
             run_len = 0
             while c + run_len < cols:
-                cidx = r * cols + c + run_len
-                cc = cells[cidx] if cidx < len(cells) else {"ch": " "}
-                if attr_index[_attr_key(cc)] != attr:
-                    break
-                run_text.append(cc.get("ch", " "))
+                cidx = base + c + run_len
+                if cidx < n_cells:
+                    if attr_index[cell_keys[cidx]] != attr:
+                        break
+                    run_text.append(cells[cidx].get("ch", " "))
+                else:
+                    if missing_attr != attr:
+                        break
+                    run_text.append(" ")
                 run_len += 1
 
-            runs.append({
+            append_run({
                 "row": r,
                 "col": c,
                 "length": run_len,
@@ -271,7 +303,6 @@ def encode_snapshot_compact(snapshot: dict) -> dict:
                 "attr": attr,
             })
             c += run_len
-        r += 1
 
     return {
         "version": 1,

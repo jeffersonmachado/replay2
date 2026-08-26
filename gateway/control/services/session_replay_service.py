@@ -642,6 +642,25 @@ def prepare_session_replay_data(
     timeline = []
     decoders: dict[str, codecs.IncrementalDecoder] = {}
 
+    # Cache do encoding compacto por snapshot (dívida de performance do
+    # replay): o mesmo snapshot é anexado ao checkpoint + event_item +
+    # timeline_item e o encode_snapshot_compact (rows*cols células) era
+    # refeito 3x — era o custo dominante do endpoint em sessões com muitos
+    # checkpoints. A referência ao snapshot é mantida no valor para que o
+    # id() não seja reutilizado por outro dict enquanto o cache vive.
+    compact_cache: dict[int, tuple[dict, dict]] = {}
+
+    def _compact_cached(snapshot: dict) -> dict:
+        key = id(snapshot)
+        entry = compact_cache.get(key)
+        if entry is None or entry[0] is not snapshot:
+            entry = (snapshot, _render_snapshot_payload(snapshot))
+            compact_cache[key] = entry
+        return entry[1]
+
+    def _attach_cached(target: dict, snapshot: dict) -> None:
+        target["snapshot_compact"] = _compact_cached(snapshot)
+
     # ── Snapshots, diffs, checkpoints ───────────────────────────────────
     initial_snapshot = snapshot_from_engine(engine)
     checkpoints: list[dict] = []
@@ -673,7 +692,7 @@ def prepare_session_replay_data(
         "engine_version": engine.engine_version,
         "reason": "session_start",
     }
-    _attach_render_snapshot(initial_checkpoint, initial_snapshot)
+    _attach_cached(initial_checkpoint, initial_snapshot)
     checkpoints.append(initial_checkpoint)
 
     # ── Cache de estado em disco (X6): aplicação da retomada ────────────
@@ -758,7 +777,7 @@ def prepare_session_replay_data(
                 "engine_version": engine.engine_version,
                 "reason": "session_start",
             }
-            _attach_render_snapshot(checkpoint, initial_snapshot)
+            _attach_cached(checkpoint, initial_snapshot)
             checkpoints.append(checkpoint)
 
     # No caminho indexado, a materialização já começa no ponto de retomada
@@ -812,7 +831,7 @@ def prepare_session_replay_data(
                 "engine_version": engine.engine_version,
                 "reason": "session_start",
             }
-            _attach_render_snapshot(checkpoint, current_snapshot)
+            _attach_cached(checkpoint, current_snapshot)
             checkpoints.append(checkpoint)
         elif ev_type == "session_end":
             session_end = ev
@@ -832,7 +851,7 @@ def prepare_session_replay_data(
                 "engine_version": engine.engine_version,
                 "reason": "session_end",
             }
-            _attach_render_snapshot(checkpoint, final_snapshot)
+            _attach_cached(checkpoint, final_snapshot)
             checkpoints.append(checkpoint)
         elif ev_type == "bytes":
             data_b64 = str(ev.get("data_b64") or "").strip()
@@ -941,7 +960,7 @@ def prepare_session_replay_data(
                         "engine_version": engine.engine_version,
                         "reason": reason,
                     }
-                    _attach_render_snapshot(checkpoint, current_snapshot)
+                    _attach_cached(checkpoint, current_snapshot)
                     checkpoints.append(checkpoint)
 
                 # Gera diff apenas para eventos materializados (janela)
@@ -1028,7 +1047,7 @@ def prepare_session_replay_data(
                     event_item["visual_sig"] = current_snapshot.get("visual_sig", "")
                 # Snapshot completo apenas em checkpoints
                 if generate_checkpoint:
-                    _attach_render_snapshot(event_item, current_snapshot)
+                    _attach_cached(event_item, current_snapshot)
                     event_item["is_checkpoint"] = True
             event_items.append(event_item)
 
@@ -1046,7 +1065,7 @@ def prepare_session_replay_data(
                 timeline_item["engine_version"] = engine.engine_version
                 # snapshot_compact apenas em checkpoint (evita duplicacao)
                 if generate_checkpoint:
-                    _attach_render_snapshot(timeline_item, current_snapshot)
+                    _attach_cached(timeline_item, current_snapshot)
                     timeline_item["checkpoint_seq"] = True
             if integrity_warning:
                 timeline_item["integrity_warning"] = integrity_warning
@@ -1065,7 +1084,14 @@ def prepare_session_replay_data(
             ts_ms = int(ev.get("ts_ms") or 0)
             # Com a janela, current_snapshot pode estar defasado
             # (snapshots fora da janela são pulados); recalcula fresco.
-            current_snapshot = snapshot_from_engine(engine)
+            # No modo completo (win_end=None) o último snapshot já reflete o
+            # estado atual — deterministic_input não alimenta a engine — e
+            # recalcular (snapshot_from_engine + 3 assinaturas) era custo
+            # puro por evento.
+            if win_end is None and last_snapshot is not None:
+                current_snapshot = last_snapshot
+            else:
+                current_snapshot = snapshot_from_engine(engine)
             deterministic_item = {
                 "event_id": f"det-{seq_global}",
                 "seq_global": seq_global, "ts_ms": ts_ms,
@@ -1141,10 +1167,10 @@ def prepare_session_replay_data(
 
     sorted_timeline = sorted(timeline, key=lambda item: (int(item.get("seq_global") or 0), int(item.get("ts_ms") or 0)))
     reference_payload = build_reference_payload(
-        initial_snapshot=_render_snapshot_payload(initial_snapshot),
+        initial_snapshot=_compact_cached(initial_snapshot),
         events=event_items,
         checkpoints=checkpoints,
-        final_snapshot=_render_snapshot_payload(final_snapshot),
+        final_snapshot=_compact_cached(final_snapshot),
     )
     playback_meta = {
         # Totais de bytes decodificados reais da sessão inteira —

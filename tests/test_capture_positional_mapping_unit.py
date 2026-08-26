@@ -134,6 +134,95 @@ class TestPositionalBinding:
         assert mi.original_value == "xyz"
 
 
+PRG_GRID = """\
+@ 04,00 say [*] + fTraduz(p_idioma,"Pedido","P",12,.t.,"")
+@ 07,01 say fTraduz(p_idioma,"Frete","P",12,.t.,"")
+@ 04,13 get cPedido pict p_mascdoc
+@ 07,13 get cFrete  pict "@!"
+clear gets
+dbedit(16,00,21,69,vCamTmp,"fTabela",vPictTmp,vColTmp)
+release vCamTmp
+public vCamTmp[03]
+vCamTmp[01] = "right(item,2)"
+vCamTmp[02] = "modelo"
+vCamTmp[03] = "qtd"
+vPictTmp[01] = "99"
+vPictTmp[02] = "@"
+vPictTmp[03] = "9999"
+vColTmp[01] = fTraduz(p_idioma,"Item","P",2,.f.,"")
+vColTmp[02] = fTraduz(p_idioma,"Modelo","P",6,.f.,"")
+vColTmp[03] = fTraduz(p_idioma,"Qtd","P",3,.f.,"")
+"""
+
+
+class TestGridMapping:
+    """Grade dbedit: inputs digitados em células da grade (sem @ GET) são
+    mapeados pela coluna — caso da captura 13 (itens do pedido)."""
+
+    @pytest.fixture
+    def prg_grid(self, tmp_path):
+        prg = tmp_path / "xx361.prg"
+        prg.write_text(PRG_GRID, encoding="utf-8")
+        return prg
+
+    @pytest.fixture
+    def entity_grid(self):
+        return EntityDefinition(
+            name="PED", storage_type="sql",
+            fields=[FieldDefinition(name="pedido", datatype="text"),
+                    FieldDefinition(name="modelo", datatype="text"),
+                    FieldDefinition(name="qtd", datatype="integer")])
+
+    @pytest.fixture
+    def binding_grid(self, prg_grid):
+        return ScreenEntityBinding(
+            program_name="pXx361", source_file=str(prg_grid),
+            entity_name="PED", operation="read", confidence=0.6,
+            matched_fields=["pedido"])
+
+    def test_input_em_celula_de_grade_mapeia_coluna(
+            self, prg_grid, entity_grid, binding_grid, tmp_path):
+        """'g2511' digitado na célula modelo da grade (19,4)."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["g2511"], [(19, 4)])
+        enr = integ.enrich_template(tmpl, [entity_grid], [binding_grid])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert mi.method == "by_grid_column"
+        assert mi.field_name == "modelo"
+        assert mi.placeholder == "{{PED.modelo}}"
+
+    def test_menu_option_em_celula_numerica_vira_dado(
+            self, prg_grid, entity_grid, binding_grid, tmp_path):
+        """'1' na célula qtd (10-13, PICTURE 9999) é quantidade, não menu."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["1"], [(17, 12)])
+        enr = integ.enrich_template(tmpl, [entity_grid], [binding_grid])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert mi.method == "by_grid_column"
+        assert mi.field_name == "qtd"
+
+    def test_tecla_mais_e_comando_mesmo_sobre_grade(
+            self, prg_grid, entity_grid, binding_grid, tmp_path):
+        """'+' confirma o registro no dbedit ("<+> Confirma") — nunca é
+        dado da célula sob o cursor."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["+"], [(19, 4)])
+        enr = integ.enrich_template(tmpl, [entity_grid], [binding_grid])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert mi.method == "command"
+        assert not mi.field_name
+
+    def test_texto_sobre_celula_numerica_nao_mapeia(
+            self, prg_grid, entity_grid, binding_grid, tmp_path):
+        """Valor incompatível com a PICTURE da célula (texto em célula
+        numérica) não é dado dela — cursor estava só de passagem."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["i"], [(17, 12)])  # qtd é 9999
+        enr = integ.enrich_template(tmpl, [entity_grid], [binding_grid])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert not mi.field_name
+
+
 class TestPictureConstraints:
     def test_pict_numerica_limita_geracao(self):
         from dakota_gateway.synthetic.schema import FieldSchema

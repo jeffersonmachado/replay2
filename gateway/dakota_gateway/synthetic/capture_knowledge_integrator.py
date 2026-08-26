@@ -687,21 +687,24 @@ class CaptureKnowledgeIntegrator:
         # então o hook independe de label_only.
         if val_type == "menu_option":
             if layout and position:
-                pf = field_at(layout, position[0], position[1], exact=True)
+                pf = field_at(layout, position[0], position[1],
+                              exact=True, value=stripped)
                 if pf is not None:
                     target = entity_fields.get(pf.field.upper())
                     if target is not None \
                             and target.name.upper() not in used_fields:
+                        method = "by_grid_column" if getattr(pf, "is_grid_cell", False) \
+                            else "by_cursor_position"
                         return MappedInput(
                             input_index=input_index, original_value=value,
                             original_type=val_type, entity_name=entity.name,
                             field_name=target.name,
                             field_datatype=target.datatype,
                             semantic_type=self._infer_semantic_type(target.name),
-                            method="by_cursor_position",
+                            method=method,
                             placeholder=f"{{{{{entity.name}.{target.name}}}}}",
                             confidence=0.85,
-                            evidence=[f"by_cursor_position: "
+                            evidence=[f"{method}: "
                                       f"({position[0]},{position[1]})→"
                                       f"{pf.var}→{target.name}"],
                             picture=pf.picture)
@@ -729,19 +732,21 @@ class CaptureKnowledgeIntegrator:
         # precisa que a ordem global de campos do binding. Não depende de
         # label_only — o layout só existe quando há fonte vinculado à tela.
         if layout and position:
-            pf = field_at(layout, position[0], position[1])
+            pf = field_at(layout, position[0], position[1], value=stripped)
             if pf is not None:
                 target = entity_fields.get(pf.field.upper())
                 if target is not None and target.name.upper() not in used_fields:
+                    method = "by_grid_column" if getattr(pf, "is_grid_cell", False) \
+                        else "by_cursor_position"
                     return MappedInput(
                         input_index=input_index, original_value=value,
                         original_type=val_type, entity_name=entity.name,
                         field_name=target.name, field_datatype=target.datatype,
                         semantic_type=self._infer_semantic_type(target.name),
-                        method="by_cursor_position",
+                        method=method,
                         placeholder=f"{{{{{entity.name}.{target.name}}}}}",
                         confidence=0.85,
-                        evidence=[f"by_cursor_position: "
+                        evidence=[f"{method}: "
                                   f"({position[0]},{position[1]})→"
                                   f"{pf.var}→{target.name}"],
                         picture=pf.picture)
@@ -894,6 +899,10 @@ class CaptureKnowledgeIntegrator:
         if v.startswith("{KEY:"):
             return True
         if v in ("\t", "\x1b"):
+            return True
+        # Tecla de ação de grade/browser xbase ('+' confirma o registro no
+        # dbedit — gmens22 "<+> Confirma"); nunca é dado de campo.
+        if v == "+":
             return True
         if re.match(r"^F\d{1,2}$", v, re.IGNORECASE):
             return True

@@ -54,6 +54,38 @@ _RE_PICT_LITERAL = re.compile(
 # Distância máxima label→GET na mesma linha para associar (colunas).
 _MAX_LABEL_GAP = 40
 
+# dbedit(16,00,21,69, vCamTmp, "fEst360Tabela", vPictTmp, vColTmp) — grade
+# xbase: os dados de item/pagamento da tela são digitados em células da
+# grade, não em `@ row,col GET`; sem este parser, inputs de grade ficam
+# sem mapeamento (captura 13: produto/qtd/valor do pedido).
+# top/left precisam ser numéricos; bottom/right podem ser expressão
+# (ex.: lLin) — aí a grade assume o limite inferior da tela.
+_RE_DBEDIT = re.compile(
+    r"dbedit\(\s*(\d+)\s*,\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*,"
+    r"\s*(\w+)\s*(?:,\s*[\"'](\w+)[\"']\s*)?(?:,\s*(\w+)\s*)?(?:,\s*(\w+)\s*)?\)",
+    re.IGNORECASE,
+)
+
+# vCamTmp[02] = "modelo" — coluna da grade (string literal)
+_RE_ARR_STR = re.compile(
+    r"(\w+)\s*\[\s*(\d+)\s*\]\s*=\s*\"([^\"]*)\"",
+)
+
+# vColTmp[02] = fTraduz(p_idioma,"Modelo","P",6,.f.,"") — cabeçalho da
+# coluna: o 4º argumento do fTraduz é a largura reservada ao título.
+_RE_ARR_FTRADUZ = re.compile(
+    r"(\w+)\s*\[\s*(\d+)\s*\]\s*=\s*(?:\[\*\]\s*\+\s*)?"
+    r"fTraduz\(\s*\w+\s*,\s*\"([^\"]+)\"\s*,\s*\"?\w+\"?\s*,\s*(\d+)",
+    re.IGNORECASE,
+)
+
+# Largura padrão de coluna de grade quando nem PICTURE nem cabeçalho
+# informam tamanho (mantém o alinhamento das colunas seguintes).
+_GRID_DEFAULT_WIDTH = 8
+
+# Separador entre colunas do dbedit (1 coluna em branco).
+_GRID_COL_SEP = 1
+
 
 @dataclass
 class PositionedField:
@@ -64,6 +96,14 @@ class PositionedField:
     field: str = ""    # nome normalizado (ex.: pedido)
     label: str = ""    # label associado por proximidade (ex.: "Pedido")
     picture: str = ""  # PICTURE literal do GET (ex.: "99", "999.999,99")
+    # Célula de grade dbedit: row_end/col_end delimitam o span da célula
+    # (row..row_end × col..col_end). None em GETs clássicos.
+    row_end: int | None = None
+    col_end: int | None = None
+
+    @property
+    def is_grid_cell(self) -> bool:
+        return self.row_end is not None and self.col_end is not None
 
 
 def extract_layout(
@@ -122,7 +162,105 @@ def extract_layout(
             field=_normalize_field_name(var), label=label,
             picture=picture,
         ))
+    fields.extend(_extract_grids(lines))
     return fields
+
+
+def _picture_width(picture: str) -> int:
+    """Largura de exibição de uma PICTURE literal.
+
+    ``@...`` (cláusulas de função, ex.: ``@!``, ``@R``) não carrega largura
+    em si — retorna 0 e quem chama usa o cabeçalho da coluna.
+    """
+    pic = (picture or "").strip()
+    if not pic or pic.startswith("@"):
+        return 0
+    return len(pic)
+
+
+def _extract_grids(lines: list[str]) -> list[PositionedField]:
+    """Extrai células de grades ``dbedit`` como PositionedField com span.
+
+    Cada coluna vira uma célula ``row..row_end × col..col_end``: top/left
+    vêm da chamada ``dbedit``; a largura da coluna é
+    ``max(largura do cabeçalho, largura da PICTURE)`` e as colunas são
+    separadas por 1 posição — geometria conferida contra capturas reais
+    (est361.prg: grade de itens e grade de pagamento).
+
+    Os arrays de coluna (``vCam*``/``vPict*``/``vCol*``) são ``public`` e
+    definidos em outra função do mesmo arquivo; a associação chamada↔bloco
+    é por proximidade de linha (a definição mais perto da chamada).
+    """
+    # 1. Coleta atribuições de arrays: nome → índice → [(linha, ...)]
+    # Guarda TODAS as redefinições — arrays public são reutilizados em
+    # rotinas diferentes do mesmo arquivo (est361.prg redefine vCamTmp
+    # para a grade de histórico); a chamada dbedit usa a definição mais
+    # próxima da sua linha.
+    arr_str: dict[str, dict[int, list[tuple[int, str]]]] = {}
+    arr_hdr: dict[str, dict[int, list[tuple[int, str, int]]]] = {}
+    for lineno, line in enumerate(lines, 1):
+        m = _RE_ARR_STR.search(line)
+        if m:
+            arr_str.setdefault(m.group(1), {}).setdefault(
+                int(m.group(2)), []).append((lineno, m.group(3)))
+        h = _RE_ARR_FTRADUZ.search(line)
+        if h:
+            arr_hdr.setdefault(h.group(1), {}).setdefault(
+                int(h.group(2)), []).append((lineno, h.group(3), int(h.group(4))))
+
+    def nearest(table: dict[int, list[tuple]], idx: int, call_line: int):
+        """Definição mais próxima da linha da chamada dbedit."""
+        entries = table.get(idx) or []
+        if not entries:
+            return None
+        entry_line, *rest = min(entries,
+                                key=lambda e: abs(e[0] - call_line))
+        return (entry_line, *rest)
+
+    cells: list[PositionedField] = []
+    for lineno, line in enumerate(lines, 1):
+        d = _RE_DBEDIT.search(line)
+        if not d:
+            continue
+        top, left = int(d.group(1)), int(d.group(2))
+        try:
+            bottom = int(str(d.group(3)).strip())
+        except ValueError:
+            bottom = 24  # limite inferior da tela quando bottom é expressão
+        cam_name = d.group(5)
+        pict_name = d.group(7) or ""
+        col_name = d.group(8) or ""
+        cam = arr_str.get(cam_name) or {}
+        if not cam:
+            continue
+        picts = arr_str.get(pict_name) or {}
+        hdrs = arr_hdr.get(col_name) or {}
+
+        start = left
+        for idx in sorted(cam):
+            cam_entry = nearest(cam, idx, lineno)
+            if cam_entry is None:
+                continue
+            expr = cam_entry[1].strip()
+            pict_entry = nearest(picts, idx, lineno)
+            hdr_entry = nearest(hdrs, idx, lineno)
+            picture = pict_entry[1].strip() if pict_entry else ""
+            label = hdr_entry[1].strip() if hdr_entry else ""
+            hdr_w = hdr_entry[2] if hdr_entry else 0
+            width = max(_picture_width(picture), hdr_w)
+            if width <= 0:
+                width = _GRID_DEFAULT_WIDTH
+            # Coluna com expressão (ex.: "right(item,2)") é só exibição —
+            # não vira campo, mas ocupa sua largura para alinhar as próximas.
+            if re.match(r"^\w+$", expr):
+                cells.append(PositionedField(
+                    row=top, col=start, var=expr,
+                    field=_normalize_field_name(expr), label=label,
+                    picture=picture,
+                    row_end=bottom, col_end=start + width - 1,
+                ))
+            start += width + _GRID_COL_SEP
+    return cells
 
 
 def layout_labels(fields: list[PositionedField]) -> list[str]:
@@ -140,23 +278,78 @@ def field_at(
     col: int,
     *,
     exact: bool = False,
+    value: str | None = None,
 ) -> PositionedField | None:
     """Campo na posição (row, col) do cursor.
 
-    ``exact=True`` exige coluna idêntica à do GET (usado para valores de
-    1-2 dígitos, que também podem ser opção de menu — só a posição exata
-    do campo é evidência forte o bastante para reclassificá-los). Caso
-    contrário vale o GET mais próximo à esquerda na mesma linha (o cursor
-    avança enquanto o usuário digita), limitado a ``_MAX_LABEL_GAP``.
+    Ordem de prioridade:
+    1. GET clássico na posição exata (mesma linha e coluna);
+    2. célula de grade ``dbedit`` cujo span contém a posição — a posição
+       gravada é a do cursor APÓS o eco da tecla, então cai dentro do
+       span, não necessariamente no início da célula. Grades de rotinas
+       diferentes se sobrepõem na mesma região da tela (est361.prg tem 8+
+       dbedits sobrepostos); o desempate é:
+       a. valor decimal (``229,9``) → só células com PICTURE decimal;
+       b. célula mais estreita (a grade ativa tende a ter a célula mais
+          justa para o dado);
+       c. primeira na ordem do arquivo;
+    3. (só ``exact=False``) GET mais próximo à esquerda na mesma linha,
+       limitado a ``_MAX_LABEL_GAP`` — o cursor avança enquanto o usuário
+       digita.
+
+    ``exact=True`` é usado para valores de 1-2 dígitos, que também podem
+    ser opção de menu: só posição exata de GET ou célula de grade é
+    evidência forte o bastante para reclassificá-los.
     """
-    best: PositionedField | None = None
+    left_best: PositionedField | None = None
+    grid_hits: list[PositionedField] = []
     for pf in fields:
+        if pf.is_grid_cell:
+            if pf.row <= row <= (pf.row_end or pf.row) \
+                    and pf.col <= col <= (pf.col_end or pf.col):
+                grid_hits.append(pf)
+            continue
         if pf.row != row or pf.col > col:
             continue
-        if exact and pf.col != col:
+        if pf.col == col:
+            return pf  # GET exato vence qualquer aproximação
+        if exact:
             continue
         if col - pf.col > _MAX_LABEL_GAP:
             continue
-        if best is None or pf.col > best.col:
-            best = pf
-    return best
+        if left_best is None or pf.col > left_best.col:
+            left_best = pf
+    if grid_hits:
+        hits = grid_hits
+        stripped = (value or "").strip()
+        if stripped:
+            # Célula numérica (PICTURE com 9) rejeita valor não numérico —
+            # cursor parado sobre a grade ao digitar tecla de ação não é
+            # dado daquela célula.
+            compat = [
+                pf for pf in hits
+                if "9" not in (pf.picture or "") or "@" in (pf.picture or "")
+                or re.match(r"^[+-]?\d+([,.]\d+)?$", stripped)
+            ]
+            if compat:
+                hits = compat
+            elif any("9" in (pf.picture or "") and "@" not in (pf.picture or "")
+                     for pf in hits):
+                # Todas as células candidatas são numéricas e o valor não é:
+                # o cursor estava só parado sobre a grade (ex.: tecla de
+                # ação, opção de menu) — não há célula para este valor.
+                return left_best
+        if re.match(r"^\d+[,.]\d+$", stripped):
+            # Decimal (229,9) → só células com PICTURE decimal
+            decimal = [pf for pf in hits if "," in (pf.picture or "")]
+            if decimal:
+                hits = decimal
+        elif stripped.isdigit():
+            # Dígitos → prefere PICTURE numérica, se houver (códigos de
+            # grade tipo comb/tam podem ser textuais — aí nada é filtrado)
+            numeric = [pf for pf in hits if "9" in (pf.picture or "")]
+            if numeric:
+                hits = numeric
+        hits.sort(key=lambda pf: (pf.col_end or pf.col) - pf.col)
+        return hits[0]
+    return left_best

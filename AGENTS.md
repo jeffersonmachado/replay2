@@ -185,9 +185,15 @@ replay2/
   da tela estável estaciona o cursor no canto — não serve), funde teclas em
   campos e quebra o campo quando o cursor "teleporta" (auto-avanço sem
   ENTER); `screen_layout.py` extrai os `@ row,col GET` do .prg (inclusive
-  labels `SAY fTraduz(...)`) e `capture_knowledge_integrator.py` vincula a
+  labels `SAY fTraduz(...)`) e as grades `dbedit(top,left,...)` (colunas
+  `vCam*[n]="campo"` + PICTURE `vPict*` + cabeçalho `vCol*` fTraduz — a
+  largura da coluna é max(cabeçalho, PICTURE), separador 1; desempate
+  entre grades sobrepostas por compatibilidade valor×PICTURE e célula mais
+  estreita; '+' é tecla de confirmação de grade, nunca dado) e
+  `capture_knowledge_integrator.py` vincula a
   tela ao fonte pelo código de menu (3.6.1 → est361.prg) + labels
-  posicionados e mapeia input→campo por `by_cursor_position` (PICTURE do
+  posicionados e mapeia input→campo por `by_cursor_position` e
+  `by_grid_column` (célula de dbedit; PICTURE do
   GET vira constraint de geração do dado sintético).
   Replay sintético em 1 clique (v0.8.15): `synthetic_trail.py`
   (`build_synthetic_trail`) regrava a trilha da captura com os valores

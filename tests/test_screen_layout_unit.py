@@ -85,3 +85,81 @@ def test_picture_literal_extraida(tmp_path):
     assert by_var["cCPF"].picture == "@R 999.999.999-99"
     # pict por variável (p_mascdoc) não é literal → vazio
     assert by_var["cPedido"].picture == ""
+
+
+SAMPLE_GRID_PRG = """\
+* grade de itens (dbedit) + GETs clássicos
+@ 07,13 get cFrete  pict "@!"
+clear gets
+dbedit(16,00,21,69,vCamTmp,"fTabela",vPictTmp,vColTmp)
+release vCamTmp
+public vCamTmp[03]
+vCamTmp[01] = "right(item,2)"
+vCamTmp[02] = "modelo"
+vCamTmp[03] = "qtd"
+vPictTmp[01] = "99"
+vPictTmp[02] = "@"
+vPictTmp[03] = "9999"
+vColTmp[01] = fTraduz(p_idioma,"Item","P",2,.f.,"")
+vColTmp[02] = fTraduz(p_idioma,"Modelo","P",6,.f.,"")
+vColTmp[03] = fTraduz(p_idioma,"Qtd","P",3,.f.,"")
+"""
+
+
+def test_extract_layout_grade_dbedit(tmp_path):
+    """dbedit vira células com span: largura = max(cabeçalho, PICTURE),
+    separador de 1 coluna; coluna com expressão (right(item,2)) só ocupa
+    largura, não vira campo."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_GRID_PRG, encoding="utf-8")
+    layout = extract_layout(prg)
+    grids = [pf for pf in layout if pf.is_grid_cell]
+    by_var = {pf.var: pf for pf in grids}
+    assert set(by_var) == {"modelo", "qtd"}  # right(item,2) não vira campo
+    # item: 0-1 (w=2), sep, modelo: 3-8 (w=6), sep, qtd: 10-13 (w=4)
+    assert (by_var["modelo"].row, by_var["modelo"].row_end) == (16, 21)
+    assert (by_var["modelo"].col, by_var["modelo"].col_end) == (3, 8)
+    assert (by_var["qtd"].col, by_var["qtd"].col_end) == (10, 13)
+    assert by_var["qtd"].label == "Qtd" and by_var["qtd"].picture == "9999"
+
+
+def test_field_at_grade_por_span(tmp_path):
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_GRID_PRG, encoding="utf-8")
+    layout = extract_layout(prg)
+    # cursor dentro do span da célula (posição pós-eco), em qualquer linha
+    assert field_at(layout, 19, 4, value="g2511").var == "modelo"
+    assert field_at(layout, 19, 8, value="g2511").var == "modelo"
+    assert field_at(layout, 17, 12, value="3").var == "qtd"
+    # fora do span da grade
+    assert field_at(layout, 19, 9, value="x") is None
+    assert field_at(layout, 22, 4, value="x") is None
+    # GET clássico continua valendo (fora da região da grade)
+    assert field_at(layout, 7, 13, value="1").var == "cFrete"
+
+
+def test_field_at_grade_desempate(tmp_path):
+    """Grades sobrepostas (comum em fontes reais): decimal → PICTURE com
+    vírgula; dígitos → prefere PICTURE numérica; texto em célula numérica
+    é rejeitado; resto → célula mais estreita."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(
+        SAMPLE_GRID_PRG
+        # grades sobrepostas cobrindo a coluna 12: tam(11-13, texto) e
+        # valor(12-21, decimal) — junto com qtd(10-13, numérica) da 1ª grade
+        + 'dbedit(15,11,21,40,vCam2,"fOutra",vPict2,vCol2)\n'
+        + 'vCam2[01] = "tam"\n'
+        + 'vPict2[01] = "@"\n'
+        + 'vCol2[01] = fTraduz(p_idioma,"Tam","P",3,.f.,"")\n'
+        + 'dbedit(15,12,21,40,vCam3,"fOutra2",vPict3,vCol3)\n'
+        + 'vCam3[01] = "valor"\n'
+        + 'vPict3[01] = "999.999,99"\n'
+        + 'vCol3[01] = fTraduz(p_idioma,"Valor","P",10,.f.,"")\n',
+        encoding="utf-8")
+    layout = extract_layout(prg)
+    # dígitos → prefere PICTURE numérica (qtd 9999)
+    assert field_at(layout, 19, 12, value="1").var == "qtd"
+    # decimal → célula com vírgula na PICTURE
+    assert field_at(layout, 19, 12, value="229,9").var == "valor"
+    # texto → célula textual (numéricas rejeitam valor não numérico)
+    assert field_at(layout, 19, 12, value="abc").var == "tam"

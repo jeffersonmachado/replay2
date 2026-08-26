@@ -194,7 +194,12 @@ replay2/
   tela ao fonte pelo código de menu (3.6.1 → est361.prg) + labels
   posicionados e mapeia input→campo por `by_cursor_position` e
   `by_grid_column` (célula de dbedit; PICTURE do
-  GET vira constraint de geração do dado sintético).
+  GET vira constraint de geração do dado sintético e **vence o range
+  heurístico** — `journey_synthesizer.synthesize` aplica a PICTURE antes de
+  `_value_range_for_field`; original inteiro puro gera `number`, não
+  `decimal`; célula com PICTURE de função `@` e original alfanumérico curto
+  gera `format="pattern:<original>"`, que o `DatasetBuilder` resolve
+  preservando o shape — letra→letra, dígito→dígito).
   Replay sintético em 1 clique (v0.8.15): `synthetic_trail.py`
   (`build_synthetic_trail`) regrava a trilha da captura com os valores
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira

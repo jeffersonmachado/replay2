@@ -100,6 +100,22 @@ class DatasetBuilder:
         seed: int,
         lookup_values: dict[str, list[Any]],
     ) -> Any:
+        # Formato "pattern:<molde>" — preserva o formato do valor original
+        # (letra→letra aleatória, dígito→dígito, demais chars intactos). Usado
+        # em células de grade com PICTURE de função ("@"), onde o provider por
+        # nome geraria texto livre fora da largura real da coluna.
+        fmt = field.format or ""
+        if fmt.startswith("pattern:"):
+            molde = fmt[len("pattern:"):]
+            rng = random.Random(f"{seed}:{index}:{field.name}")
+            return "".join(
+                rng.choice("0123456789") if c.isdigit()
+                else rng.choice("abcdefghijklmnopqrstuvwxyz") if c.islower()
+                else rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") if c.isupper()
+                else c
+                for c in molde
+            )
+
         provider_name = field.inferred_provider_name()
         provider = self.registry.get(provider_name)
 

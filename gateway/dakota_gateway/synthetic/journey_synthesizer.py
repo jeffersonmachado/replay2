@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -364,23 +365,43 @@ class JourneySynthesizer:
                             elif fu in _DESC_NAMES:
                                 dtype = "text"
                             elif inp.original_type == "number":
-                                dtype = "decimal"
+                                # inteiro puro no original → inteiro; com
+                                # separador decimal → decimal (senão campos
+                                # PICTURE 9999 recebiam "554,50")
+                                dtype = ("number" if re.fullmatch(
+                                    r"\d+", inp.original.strip()) else "decimal")
                             elif inp.original_type in ("text", "text_long"):
                                 dtype = "person_name"
+
+                            # Célula de grade com PICTURE de função ("@"): o
+                            # provider por nome geraria texto livre ("Gabriela
+                            # Duarte") num campo de 4-6 colunas. Preserva o
+                            # formato do original (letra→letra, dígito→dígito).
+                            pic = (getattr(inp, "picture", "") or "").strip()
+                            if (not fmt and pic.startswith("@")
+                                    and re.fullmatch(r"[A-Za-z0-9]{1,20}",
+                                                     inp.original.strip())):
+                                fmt = f"pattern:{inp.original.strip()}"
+                                dtype = "text"
 
                             fs = FieldSchema(
                                 name=inp.field_name,
                                 datatype=dtype,
                                 format=fmt if fmt else None,
                                 required=True,
-                                min_value=_value_range_for_field(inp.field_name)[0],
-                                max_value=_value_range_for_field(inp.field_name)[1],
                             )
                             # PICTURE do GET (inputs mapeados por posição de
-                            # cursor) limita a geração à largura real do campo
-                            if getattr(inp, "picture", ""):
+                            # cursor) limita a geração à largura real do campo.
+                            # Aplicada ANTES do range heurístico: a PICTURE é
+                            # a verdade física do campo e vence a heurística
+                            # (ex.: qtd com PICTURE 9999 vira inteiro 0-9999,
+                            # não decimal 1-999).
+                            if pic:
                                 CaptureKnowledgeIntegrator._picture_to_constraints(
-                                    fs, inp.picture)
+                                    fs, pic)
+                            if fs.min_value is None and fs.max_value is None:
+                                fs.min_value, fs.max_value = _value_range_for_field(
+                                    inp.field_name)
                             fields_for_entity.append(fs)
                             entity_field_map.setdefault(entity_name, {})[inp.field_name.lower()] = inp.field_name
 

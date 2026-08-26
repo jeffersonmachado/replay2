@@ -125,6 +125,21 @@ def synthesize_capture(
         except Exception:
             report = {}
 
+    key_fields = suggest_key_fields(result.screen_mappings, entities)
+
+    # De→para (original → sintético) da 1ª sessão gerada — exibido no modal
+    # do detalhe da captura após o "Gerar". Em variation=equal todas as
+    # sessões usam esta linha; em synthetic ela representa a sessão 1.
+    depara_screens: list[dict] = []
+    try:
+        with open(result.dataset_path, encoding="utf-8") as fh:
+            first_line = fh.readline().strip()
+        dataset_row = json.loads(first_line) if first_line else {}
+    except Exception:
+        dataset_row = {}
+    if dataset_row:
+        depara_screens = _build_depara_screens(result.screen_mappings, dataset_row, key_fields)
+
     return {
         "ok": True,
         "capture_id": capture_id,
@@ -152,7 +167,12 @@ def synthesize_capture(
         "variation": "equal" if str(variation or "").strip().lower() == "equal" else "synthetic",
         # Campos-âncora detectados na KB (chave de consulta) — mantidos com o
         # valor original no replay sintético, sem intervenção do usuário.
-        "key_fields": suggest_key_fields(result.screen_mappings, entities),
+        "key_fields": key_fields,
+        "depara": {
+            "session_index": 1,
+            "sessions": result.generated_sessions,
+            "screens": depara_screens,
+        },
         "warnings": result.warnings,
         "evidence": result.evidence,
         "validation": validation,

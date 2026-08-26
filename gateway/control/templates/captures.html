@@ -167,6 +167,21 @@
       <div id="cap_synthesis_result" class="mt-3 hidden rounded-2xl border border-emerald-800/50 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-100"></div>
     </div>
 
+    <!-- Modal de→para dos dados gerados pelo "Gerar" -->
+    <div id="cap_depara_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+      <div class="r2ctl-card rounded-3xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-5 shadow-inner shadow-black/20">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h3 class="text-lg font-semibold">⇄ De→para dos dados sintéticos</h3>
+          <button id="cap_depara_close_btn" class="r2ctl-btn-soft text-xs">✕ Fechar</button>
+        </div>
+        <p id="cap_depara_hint" class="mb-3 text-xs text-stone-400">Valor original da captura → valor gerado, por tela. Campos
+          <span class="text-amber-300">mantidos (chave)</span> conservam o valor original para a consulta encontrar o registro.</p>
+        <div id="cap_depara_content" class="space-y-4 text-sm">
+          <div class="text-sm text-stone-400">Carregando de→para...</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Runs sintéticas geradas desta captura -->
     <div id="cap_runs_panel" class="mb-4 hidden r2ctl-detail-surface rounded-2xl px-4 py-4">
       <div class="mb-3 flex items-center justify-between gap-3">

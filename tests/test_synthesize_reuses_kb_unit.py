@@ -129,6 +129,47 @@ class SynthesizeReusesKnowledgeBaseTests(unittest.TestCase):
             "com a base do banco, inputs devem mapear para entidade.campo")
         self.assertEqual(resultado["unmapped_inputs"], 0)
 
+    def test_synthesize_retorna_depara_da_primeira_sessao(self):
+        """O "Gerar" da UI abre o modal de→para com o retorno do synthesize."""
+        plan_svc.analyze_source_payload(self.con, str(self.source_dir))
+        self._make_capture(1)
+
+        resultado = synth_svc.synthesize_capture(
+            self.con, 1, source_dir=str(self.source_dir),
+            samples=2, seed=42, name="cap-depara")
+
+        self.assertTrue(resultado["ok"])
+        depara = resultado.get("depara") or {}
+        self.assertEqual(depara.get("session_index"), 1)
+        self.assertEqual(depara.get("sessions"), 2)
+        screens = depara.get("screens") or []
+        self.assertTrue(screens, "depara deve trazer as telas com campos da trilha")
+
+        campos = {f["field"]: f for sc in screens for f in sc["fields"]}
+        self.assertIn("nome", campos)
+        # original é o valor digitado na captura
+        self.assertEqual(campos["nome"]["original"], "JOSE DA SILVA")
+        for f in campos.values():
+            self.assertIn("synthetic", f)
+            self.assertIn("kept", f)
+
+        # campos-âncora (chave de consulta) mantêm o valor original
+        key_fields = set(resultado.get("key_fields") or [])
+        for f in campos.values():
+            if f["field"] in key_fields:
+                self.assertTrue(f["kept"], f"{f['field']} é chave e deve ser mantido")
+                self.assertEqual(f["synthetic"], f["original"])
+
+        # valor sintético exibido bate com a 1ª linha do dataset gerado
+        dataset_path = Path(resultado["artifacts"]["dataset"])
+        row = json.loads(
+            dataset_path.read_text(encoding="utf-8").splitlines()[0])
+        for f in campos.values():
+            if not f["kept"] and f["field"] in row:
+                self.assertEqual(
+                    f["synthetic"], str(row[f["field"]]),
+                    f"de→para de {f['field']} deve refletir o dataset")
+
 
 if __name__ == "__main__":
     unittest.main()

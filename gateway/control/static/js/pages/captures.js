@@ -352,6 +352,15 @@ function setupSynthesisPanel(captureId, capture) {
   const replayBtn = document.getElementById("cap_synth_replay_btn");
   if (replayBtn) replayBtn.onclick = () => syntheticReplay(captureId);
 
+  const deparaClose = document.getElementById("cap_depara_close_btn");
+  if (deparaClose) deparaClose.onclick = () => closeSynthDeparaModal();
+  const deparaModal = document.getElementById("cap_depara_modal");
+  if (deparaModal) {
+    deparaModal.addEventListener("click", (ev) => {
+      if (ev.target === deparaModal) closeSynthDeparaModal();
+    });
+  }
+
   const skipWrapper = document.getElementById("cap_synth_skip_fields");
   if (skipWrapper) {
     initSkipFieldsSelect(skipWrapper, {
@@ -440,8 +449,54 @@ async function syntheticReplay(captureId) {
   }
 }
 
-async function synthesizeCapture(captureId) {
-  const btn = document.getElementById("cap_synthesize_btn");
+function openSynthDeparaModal() {
+  const modal = document.getElementById("cap_depara_modal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeSynthDeparaModal() {
+  const modal = document.getElementById("cap_depara_modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function renderSynthDepara(depara, variation) {
+  const screens = Array.isArray(depara?.screens) ? depara.screens : [];
+  const sessions = Number(depara?.sessions || 0);
+  if (!screens.length) {
+    return '<div class="text-sm text-stone-400">Nenhum campo mapeado para substituição — as sessões usam os dados originais da captura.</div>';
+  }
+  const nota = variation === "equal"
+    ? `Dados iguais: as ${formatCount(sessions)} sessões usam estes mesmos valores.`
+    : `Valores da sessão 1 de ${formatCount(sessions)} — com dados sintetizados, cada sessão tem valores diferentes.`;
+  const corpos = screens.map((sc) => {
+    const title = `Tela ${escapeHtml(sc.entity || "-")}${sc.operation ? ` (${escapeHtml(sc.operation)})` : ""}`;
+    const rows = (sc.fields || []).map((f) => {
+      const keptBadge = f.kept
+        ? `<span class="inline-flex items-center rounded-full border border-amber-900/60 bg-amber-950/50 px-2 py-0.5 text-xs text-amber-200">mantido${f.note === "chave de consulta" ? " (chave)" : ""}</span>`
+        : "";
+      const synthClass = f.kept ? "text-stone-400" : "text-emerald-300";
+      return `<tr class="border-b border-stone-800/60">
+        <td class="px-3 py-2 font-mono text-stone-200">${escapeHtml(f.field || "-")}</td>
+        <td class="px-3 py-2 font-mono text-stone-300 break-all">${escapeHtml(f.original || "")}</td>
+        <td class="px-1 py-2 text-stone-500">→</td>
+        <td class="px-3 py-2 font-mono ${synthClass} break-all">${escapeHtml(f.synthetic || "")}</td>
+        <td class="px-3 py-2">${keptBadge}</td>
+      </tr>`;
+    }).join("");
+    return `<div>
+      <h4 class="mb-2 text-sm font-semibold text-stone-200">${title}</h4>
+      <table class="w-full text-left text-xs">
+        <thead><tr class="border-b border-stone-700/60 text-stone-400">
+          <th class="px-3 py-1">campo</th><th class="px-3 py-1">original</th><th class="px-1 py-1"></th><th class="px-3 py-1">sintético</th><th class="px-3 py-1"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join("");
+  return `<div class="text-xs text-stone-400">${escapeHtml(nota)}</div>${corpos}`;
+}
+
+async function synthesizeCapture(captureId) {  const btn = document.getElementById("cap_synthesize_btn");
   const sourceInput = document.getElementById("cap_synth_source_dir");
   const samplesInput = document.getElementById("cap_synth_samples");
   const variationInput = document.getElementById("cap_synth_variation");
@@ -518,9 +573,17 @@ async function synthesizeCapture(captureId) {
         <span class="md:col-span-2">dataset: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.dataset || "-")}</span></span>
         <span class="md:col-span-2">sessões: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.sessions_dir || "-")}</span></span>
         <span class="md:col-span-2">relatório: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.report || "-")}</span></span>
+        <span class="md:col-span-2"><button id="cap_depara_open_btn" type="button" class="r2ctl-btn-soft text-xs">⇄ Ver de→para por tela</button></span>
       </div>
     `;
   }
+
+  // Modal de→para dos dados gerados (abre automaticamente após o Gerar)
+  const deparaContent = document.getElementById("cap_depara_content");
+  if (deparaContent) deparaContent.innerHTML = renderSynthDepara(data.depara, data.variation);
+  const deparaOpen = document.getElementById("cap_depara_open_btn");
+  if (deparaOpen) deparaOpen.onclick = () => openSynthDeparaModal();
+  openSynthDeparaModal();
 }
 
 function renderCaptureSessions(captureId, capture, sessions, preferredSessionId) {

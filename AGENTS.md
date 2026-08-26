@@ -235,10 +235,15 @@ replay2/
   (`capture_synthesis_service.synthetic_fields_payload` — reusa o
   `report.json` da síntese mais recente ou parametriza a captura na hora com
   KB + índices; chaves de consulta vêm marcadas e desabilitadas). O painel
-  não tem mais "semente": o select "Dados das sessões" escolhe
+  não tem mais "semente": o select "Dados" escolhe
   `variation=synthetic` (cada sessão com dados diferentes — default) ou
   `variation=equal` (todas com os mesmos dados, 1ª linha do dataset —
-  `journey_synthesizer.synthesize`).
+  `journey_synthesizer.synthesize`). O "Gerar" (`POST
+  /api/captures/{id}/synthesize`) retorna `depara` (original → sintético da
+  1ª sessão, via `_build_depara_screens` sobre `screen_mappings` + 1ª linha
+  do dataset) e a UI abre automaticamente o modal "De→para por tela"
+  formatado (mesmo visual do modal da página de replay), reabrível pelo
+  botão "Ver de→para por tela" no bloco de resultado.
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via

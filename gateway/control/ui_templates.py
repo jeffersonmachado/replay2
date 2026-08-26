@@ -202,13 +202,18 @@ def build_layout_context(
         scripts.append(
             f"<script>window.__R2CTL_PAGE_STATE__ = {safe_state};</script>"
         )
-    scripts.extend(f'<script type="module" src="{path}"></script>' for path in (page_scripts or []))
+    scripts.extend(
+        f'<script type="module" src="{path}?v={_VERSION}"></script>'
+        for path in (page_scripts or []))
     return {
         "title": title,
         "sidebar": sidebar,
         "topbar": topbar,
         "statusbar": statusbar,
         "scripts": "\n".join(scripts),
+        # cache-buster: a cada deploy a URL dos assets muda, furando cache
+        # de browser com CSS/JS de versão anterior
+        "asset_v": _VERSION,
     }
 
 

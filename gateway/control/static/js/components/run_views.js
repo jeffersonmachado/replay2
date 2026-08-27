@@ -20,6 +20,22 @@ export function runSyntheticOrigin(run) {
   };
 }
 
+// Pares (original → sintético) gravados nos params da run sintética —
+// alimentam a marcação âmbar das linhas de troca no player de divergências.
+export function runSyntheticSubstitutions(run) {
+  if (!run) return [];
+  let params = run.params;
+  if (!params || typeof params !== "object") {
+    try {
+      params = JSON.parse(run.params_json || "{}");
+    } catch {
+      return [];
+    }
+  }
+  const subs = params && params.synthetic_substitutions;
+  return Array.isArray(subs) ? subs : [];
+}
+
 // Badge "sintético" com link para a captura de referência (rastreabilidade).
 export function runSyntheticBadgeHtml(run) {
   const origin = runSyntheticOrigin(run);
@@ -90,6 +106,35 @@ export function runTableRow(run) {
           <button class="r2ctl-btn-action r2ctl-btn-action-retry" data-action="retry" data-id="${escapeHtml(run.id)}">repetir</button>
         </div>
       </td>
+    </tr>
+  `;
+}
+
+const FAILURE_SEVERITY_TONES = {
+  critical: "text-rose-300 bg-rose-900/30",
+  high: "text-amber-300 bg-amber-900/30",
+  medium: "text-yellow-300 bg-yellow-900/30",
+  low: "text-stone-300 bg-stone-700/40",
+  info: "text-sky-300 bg-sky-900/30",
+};
+
+// Linha da tabela da aba Falhas (/runs/failures): falha estruturada com link
+// para a run de origem. O join no payload traz run_status/target da run.
+export function failureTableRow(f) {
+  const severity = String(f.severity || "info").toLowerCase();
+  const sevTone = FAILURE_SEVERITY_TONES[severity] || FAILURE_SEVERITY_TONES.info;
+  const ts = f.ts_ms ? formatDate(f.ts_ms) : "—";
+  const session = f.session_id ? `${String(f.session_id).slice(0, 8)}…` : "—";
+  const sessionTitle = escapeHtml(f.session_id || "");
+  const status = f.run_status ? `<span class="ml-1 text-xs text-stone-500">${escapeHtml(f.run_status)}</span>` : "";
+  return `
+    <tr class="r2ctl-row align-top">
+      <td class="px-4 py-4"><a href="/runs/${escapeHtml(f.run_id)}" class="r2ctl-run-id">#${escapeHtml(f.run_id)}</a>${status}</td>
+      <td class="px-4 py-4 text-stone-200">${escapeHtml(f.failure_type || "—")}</td>
+      <td class="px-4 py-4"><span class="rounded-full ${sevTone} px-2 py-0.5 text-xs font-semibold">${escapeHtml(severity)}</span></td>
+      <td class="px-4 py-4 font-mono text-xs text-stone-400" title="${sessionTitle}">${escapeHtml(session)}</td>
+      <td class="px-4 py-4 text-stone-300">${escapeHtml(f.seq_global ?? f.seq_session ?? "—")}</td>
+      <td class="px-4 py-4 text-xs text-stone-400">${escapeHtml(ts)}</td>
     </tr>
   `;
 }

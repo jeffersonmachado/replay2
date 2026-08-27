@@ -1,6 +1,6 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, html, text } from "../core/dom.js";
-import { runTableRow, runSyntheticOrigin } from "../components/run_views.js";
+import { escapeHtml, formatCount, html, text } from "../core/dom.js";
+import { failureTableRow, runTableRow, runSyntheticOrigin } from "../components/run_views.js";
 import { emptyTableRow } from "../components/tables.js";
 import { activatePageSections } from "../components/page_sections.js";
 
@@ -54,10 +54,50 @@ async function loadSection() {
   }
 
   if (section === "failures") {
-    const result = await apiJson("/api/runs?limit=500");
+    const runId = (document.getElementById("failures_filter_run")?.value || "").trim();
+    const failureType = (document.getElementById("failures_filter_type")?.value || "").trim();
+    const severity = (document.getElementById("failures_filter_severity")?.value || "").trim();
+    const qs = new URLSearchParams({ limit: "200" });
+    if (runId) qs.set("run_id", runId);
+    if (failureType) qs.set("failure_type", failureType);
+    if (severity) qs.set("severity", severity);
+    const result = await apiJson(`/api/runs/failures?${qs.toString()}`);
     if (!result?.data) return;
-    const runs = (result.data.runs || []).filter((r) => FAILED_STATUSES.has(String(r.status || "").toLowerCase()));
-    renderTable("#failures_rows", runs, "#failures_refresh_status", "Nenhuma run com falha encontrada.");
+    const payload = result.data;
+    const failures = payload.failures || [];
+    const typeSelect = document.getElementById("failures_filter_type");
+    if (typeSelect && typeSelect.dataset.loaded !== "1") {
+      typeSelect.innerHTML =
+        `<option value="">Todos os tipos</option>` +
+        (payload.available_types || [])
+          .map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`)
+          .join("");
+      typeSelect.value = failureType;
+      typeSelect.dataset.loaded = "1";
+    }
+    html(
+      "#failures_by_type",
+      (payload.by_type || [])
+        .map(
+          (item) =>
+            `<button data-failure-type="${escapeHtml(item.failure_type)}" class="rounded-full border border-stone-700 px-3 py-1 text-xs ${
+              item.failure_type === failureType
+                ? "bg-rose-900/40 text-rose-200 border-rose-800"
+                : "bg-stone-800/60 text-stone-300 hover:bg-stone-700/60"
+            }">${escapeHtml(item.failure_type)} · ${formatCount(item.count)}</button>`,
+        )
+        .join("") || `<span class="text-xs text-stone-500">nenhuma falha registrada</span>`,
+    );
+    text(
+      "#failures_refresh_status",
+      `últimas ${failures.length} de ${formatCount(payload.total || 0)} falhas`,
+    );
+    html(
+      "#failures_rows",
+      failures.length
+        ? failures.map(failureTableRow).join("")
+        : emptyTableRow("Nenhuma falha encontrada para o filtro atual."),
+    );
     return;
   }
 
@@ -115,6 +155,21 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("runs_filter_origin")?.addEventListener("change", loadSection);
 
   document.getElementById("compare_btn")?.addEventListener("click", compareRuns);
+
+  document.getElementById("failures_filter_btn")?.addEventListener("click", loadSection);
+  document.getElementById("failures_filter_run")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadSection();
+  });
+  document.getElementById("failures_filter_severity")?.addEventListener("change", loadSection);
+  document.getElementById("failures_by_type")?.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-failure-type]");
+    if (!chip) return;
+    const select = document.getElementById("failures_filter_type");
+    if (!select) return;
+    // Clicar no chip ativo limpa o filtro; clicar em outro aplica.
+    select.value = select.value === chip.dataset.failureType ? "" : chip.dataset.failureType;
+    loadSection();
+  });
 
   document.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-action]");

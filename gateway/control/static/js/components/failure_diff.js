@@ -34,11 +34,111 @@ function truncateSig(value) {
   return `${raw.slice(0, 12)}…${raw.slice(-8)}`;
 }
 
+// Marcação de eco do de→para sintético (linhas em âmbar no player). Espelha
+// dakota_gateway/replay_compare.py: pares longos (≥3 chars) são substituídos
+// diretamente pelo placeholder; pares curtos são conferidos nos trechos
+// divergentes da linha via diff de caracteres (LCS).
+export const SUBSTITUTION_PLACEHOLDER = "<troca>";
+
+function normalizePairs(substitutions) {
+  const pairs = [];
+  for (const item of substitutions || []) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const orig = String(item[0] ?? "");
+    const synth = String(item[1] ?? "");
+    if (orig && synth && orig !== synth) pairs.push([orig, synth]);
+  }
+  return pairs;
+}
+
+// Diff de caracteres por LCS — retorna trechos divergentes [chunkA, chunkB].
+function charDiffChunks(a, b) {
+  const n = a.length;
+  const m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const chunks = [];
+  let i = 0;
+  let j = 0;
+  let ca = "";
+  let cb = "";
+  const flush = () => {
+    if (ca || cb) chunks.push([ca, cb]);
+    ca = "";
+    cb = "";
+  };
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      flush();
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ca += a[i];
+      i++;
+    } else {
+      cb += b[j];
+      j++;
+    }
+  }
+  ca += a.slice(i);
+  cb += b.slice(j);
+  flush();
+  return chunks;
+}
+
+function lineHasEcho(lineExp, lineObs, shortPairs) {
+  if (lineExp.includes(SUBSTITUTION_PLACEHOLDER) || lineObs.includes(SUBSTITUTION_PLACEHOLDER)) return true;
+  for (const [ca, cb] of charDiffChunks(lineExp, lineObs)) {
+    const ea = ca.trim();
+    const eb = cb.trim();
+    if (!ea && !eb) continue;
+    if (shortPairs.some(([o, s]) => o === ea && s === eb)) return true;
+  }
+  return false;
+}
+
+// Índices das linhas divergentes que contêm eco do de→para. Linha que só
+// diverge pela troca (idêntica após a máscara dos pares longos) é troca pura
+// e também conta como eco.
+export function substitutionEchoLineIndices(expected, observed, substitutions) {
+  const pairs = normalizePairs(substitutions);
+  if (!pairs.length) return [];
+  const longPairs = pairs.filter(([o, s]) => o.length >= 3 && s.length >= 3);
+  const shortPairs = pairs.filter(([o, s]) => !(o.length >= 3 && s.length >= 3));
+  const expRawLines = String(expected ?? "").split("\n");
+  const obsRawLines = String(observed ?? "").split("\n");
+  let exp = String(expected ?? "");
+  let obs = String(observed ?? "");
+  for (const [orig, synth] of longPairs) {
+    exp = exp.split(orig).join(SUBSTITUTION_PLACEHOLDER);
+    obs = obs.split(synth).join(SUBSTITUTION_PLACEHOLDER);
+  }
+  const expLines = exp.split("\n");
+  const obsLines = obs.split("\n");
+  const total = Math.max(expLines.length, obsLines.length);
+  const indices = [];
+  for (let i = 0; i < total; i++) {
+    const re = i < expRawLines.length ? expRawLines[i] : "";
+    const ro = i < obsRawLines.length ? obsRawLines[i] : "";
+    if (re === ro) continue;
+    const le = i < expLines.length ? expLines[i] : "";
+    const lo = i < obsLines.length ? obsLines[i] : "";
+    if (le === lo || lineHasEcho(le, lo, shortPairs)) indices.push(i);
+  }
+  return indices;
+}
+
 function renderScreenColumn(title, rows, side) {
   const lines = rows
     .map((row) => {
       const value = side === "expected" ? row.expected : row.observed;
-      const cls = row.changed ? "bg-rose-950/60 text-rose-100" : "text-stone-300";
+      const cls = row.changed
+        ? (row.echo ? "bg-amber-950/60 text-amber-100" : "bg-rose-950/60 text-rose-100")
+        : "text-stone-300";
       const content = value === null ? "" : escapeHtml(value);
       return `<div class="${cls} whitespace-pre px-2 leading-5">${content || " "}</div>`;
     })
@@ -50,27 +150,42 @@ function renderScreenColumn(title, rows, side) {
     </div>`;
 }
 
-export function renderScreenDiffHtml(expected, observed) {
+export function renderScreenDiffHtml(expected, observed, substitutions) {
   const rows = diffScreenLines(expected, observed);
+  const echoSet = new Set(substitutionEchoLineIndices(expected, observed, substitutions));
+  for (const row of rows) row.echo = echoSet.has(row.index);
   const stats = screenDiffStats(rows);
+  const legend = echoSet.size
+    ? `${stats.changed} de ${stats.total} linha(s) divergem — em <span class="text-amber-200">âmbar</span> o eco da troca de dados sintéticos; em <span class="text-rose-200">rosa</span> as demais divergências.`
+    : `${stats.changed} de ${stats.total} linha(s) divergem — linhas destacadas em rosa.`;
   return `
-    <p class="mb-3 text-xs text-stone-400">${stats.changed} de ${stats.total} linha(s) divergem — linhas destacadas em rosa.</p>
+    <p class="mb-3 text-xs text-stone-400">${legend}</p>
     <div class="flex flex-col gap-3 lg:flex-row">
       ${renderScreenColumn("Tela esperada (captura)", rows, "expected")}
       ${renderScreenColumn("Tela observada (run)", rows, "observed")}
     </div>`;
 }
 
-// Corpo do modal de divergência de uma falha: telas lado a lado quando a run
-// gravou o conteúdo; caso contrário (runs antigas) mostra mensagem + sigs.
-export function renderFailureDivergenceHtml(failure) {
+// Player inline da seção "Eventos e falhas": as duas telas lado a lado e a
+// navegação ◀ anterior / ▶ reproduzir / próxima ▶ entre as falhas em ordem
+// cronológica (seq crescente), para acompanhar onde a divergência começou e
+// como evoluiu. O JS da página controla a troca de falha (ids fp_*).
+export function renderFailureInlinePlayerHtml(failure, position, total, substitutions) {
   const item = failure || {};
   const evidence = item.evidence || {};
+  const ts = item.ts_ms ? new Date(item.ts_ms).toLocaleString("pt-BR") : "—";
   const meta = `
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+      <button id="fp_prev" type="button" class="r2ctl-btn-soft text-xs"${position <= 1 ? " disabled" : ""}>◀ Anterior</button>
+      <button id="fp_play" type="button" class="r2ctl-btn-soft text-xs">▶ Reproduzir</button>
+      <button id="fp_next" type="button" class="r2ctl-btn-soft text-xs"${position >= total ? " disabled" : ""}>Próxima ▶</button>
+      <span id="fp_position" class="rounded-full bg-stone-800 px-3 py-1 text-xs text-stone-200">falha ${position} de ${total} · seq ${escapeHtml(String(item.seq_global ?? "—"))}</span>
+    </div>
     <div class="mb-3 grid gap-2 text-xs text-stone-400">
       <div><span class="text-stone-500">Tipo:</span> <span class="text-stone-200">${escapeHtml(item.failure_type || "—")}</span>
-        <span class="text-stone-500">· seq:</span> <span class="text-stone-200">${escapeHtml(String(item.seq_global ?? "—"))}</span>
-        <span class="text-stone-500">· sessão:</span> <span class="font-mono text-stone-200">${escapeHtml(String(item.session_id || "—"))}</span></div>
+        <span class="text-stone-500">· gravidade:</span> <span class="text-stone-200">${escapeHtml(item.severity || "—")}</span>
+        <span class="text-stone-500">· sessão:</span> <span class="font-mono text-stone-200">${escapeHtml(String(item.session_id || "—"))}</span>
+        <span class="text-stone-500">·</span> <span class="text-stone-200">${escapeHtml(ts)}</span></div>
       <div><span class="text-stone-500">Mensagem:</span> <span class="text-stone-300">${escapeHtml(item.message || "—")}</span></div>
     </div>`;
   if (!failureHasScreenDiff(item)) {
@@ -83,5 +198,5 @@ export function renderFailureDivergenceHtml(failure) {
         <div><span class="text-stone-500">observada:</span> ${escapeHtml(truncateSig(item.observed_value))}</div>
       </div>`;
   }
-  return meta + renderScreenDiffHtml(evidence.expected_screen || "", evidence.observed_screen || "");
+  return meta + renderScreenDiffHtml(evidence.expected_screen || "", evidence.observed_screen || "", substitutions);
 }

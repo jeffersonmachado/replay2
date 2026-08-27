@@ -8,6 +8,7 @@ from control.services.run_service import (
     apply_run_action,
     create_run_request_payload,
     export_run_report_payload,
+    get_failures_global_payload,
     get_run_comparison_payload,
     get_run_compliance_payload,
     get_run_detail_payload,
@@ -35,6 +36,25 @@ def handle_run_get_route(handler, parsed_path) -> bool:
         con = handler._db()
         try:
             payload = list_runs_payload(con, limit=limit, compliance_status=compliance_status_filter)
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, payload)
+        return True
+
+    if path == "/api/runs/failures":
+        user = handler._require()
+        if not user:
+            return True
+        qs = parse_qs(parsed_path.query or "")
+        limit = parse_int((qs.get("limit") or ["200"])[0], 200, min_value=1, max_value=1000)
+        run_id = parse_int((qs.get("run_id") or ["0"])[0], 0, min_value=0)
+        failure_type = str((qs.get("failure_type") or [""])[0]).strip()
+        severity = str((qs.get("severity") or [""])[0]).strip().lower()
+        con = handler._db()
+        try:
+            payload = get_failures_global_payload(
+                con, run_id=run_id, failure_type=failure_type, severity=severity, limit=limit
+            )
         finally:
             handler._db_release(con)
         write_json(handler, 200, payload)

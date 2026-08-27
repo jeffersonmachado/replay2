@@ -98,9 +98,25 @@
     <div class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h2 class="r2ctl-section-title text-lg font-semibold">Falhas</h2>
-        <p class="r2ctl-section-copy text-sm">Runs com status de falha ou cancelamento para diagnóstico e reprocessamento.</p>
+        <p class="r2ctl-section-copy text-sm">Falhas estruturadas registradas pelas runs — inclui runs concluídas com sucesso (ex.: divergências de tela em replay sintético).</p>
       </div>
       <span id="failures_refresh_status" class="text-xs text-stone-400">carregando</span>
+    </div>
+    <div id="failures_by_type" class="mb-3 flex flex-wrap gap-2"></div>
+    <div class="mb-3 grid gap-3 sm:grid-cols-[140px_1fr_1fr_auto]">
+      <input id="failures_filter_run" placeholder="Run #" class="r2ctl-input" />
+      <select id="failures_filter_type" class="r2ctl-input">
+        <option value="">Todos os tipos</option>
+      </select>
+      <select id="failures_filter_severity" class="r2ctl-input">
+        <option value="">Todas as gravidades</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+        <option value="info">info</option>
+      </select>
+      <button id="failures_filter_btn" class="r2ctl-btn-soft">Filtrar</button>
     </div>
     <div class="r2ctl-table-shell overflow-hidden rounded-3xl">
       <div class="overflow-x-auto">
@@ -108,11 +124,11 @@
           <thead class="r2ctl-table-head text-left text-xs uppercase tracking-[0.18em]">
             <tr>
               <th class="px-4 py-4">run</th>
-              <th class="px-4 py-4">status</th>
-              <th class="px-4 py-4">destino</th>
-              <th class="px-4 py-4">progresso</th>
-              <th class="px-4 py-4">compliance</th>
-              <th class="px-4 py-4">ações</th>
+              <th class="px-4 py-4">tipo</th>
+              <th class="px-4 py-4">gravidade</th>
+              <th class="px-4 py-4">sessão</th>
+              <th class="px-4 py-4">seq</th>
+              <th class="px-4 py-4">data/hora</th>
             </tr>
           </thead>
           <tbody id="failures_rows" class="divide-y divide-stone-800"></tbody>

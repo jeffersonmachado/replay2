@@ -22,5 +22,6 @@ gateway/control/static/js/components/detail_views_reprocess.test.mjs
 gateway/control/static/js/components/skip_fields_select.test.mjs
 gateway/control/static/js/components/failure_diff.test.mjs
 gateway/control/static/js/components/synthetic_depara.test.mjs
+gateway/control/static/js/components/failure_table_row.test.mjs
 gateway/control/static/js/components/template_syntax.test.mjs
 gateway/control/static/js/components/production_no_terminal_parser.test.mjs

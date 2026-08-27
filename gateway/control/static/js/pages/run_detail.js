@@ -1,22 +1,62 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, html, text } from "../core/dom.js";
+import { escapeHtml, html } from "../core/dom.js";
 import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
-import { failureHasScreenDiff, renderFailureDivergenceHtml } from "../components/failure_diff.js";
-import { runSyntheticOrigin } from "../components/run_views.js";
+import { failureHasScreenDiff, renderFailureInlinePlayerHtml } from "../components/failure_diff.js";
+import { runSyntheticOrigin, runSyntheticSubstitutions } from "../components/run_views.js";
 import { renderRunDeparaHtml } from "../components/synthetic_depara.js";
 
 let currentFailures = [];
 let currentRun = null;
+// Falhas navegáveis do player inline, em ordem cronológica (seq crescente) —
+// o usuário acompanha onde a divergência começou e como evoluiu.
+let playerFailures = [];
+let playerIdx = 0;
+let playerTimer = null;
+// Pares original → sintético da run (marcação âmbar das trocas no player).
+let currentSubstitutions = [];
 
-function openFailureDiffModal(idx) {
-  const failure = currentFailures[Number(idx)];
-  if (!failure) return;
-  html("#failure_diff_content", renderFailureDivergenceHtml(failure));
-  document.getElementById("failure_diff_modal")?.classList.remove("hidden");
+const PLAYER_INTERVAL_MS = 1500;
+
+function stopFailurePlayer() {
+  if (playerTimer) {
+    clearInterval(playerTimer);
+    playerTimer = null;
+  }
+  const button = document.getElementById("fp_play");
+  if (button) button.textContent = "▶ Reproduzir";
 }
 
-function closeFailureDiffModal() {
-  document.getElementById("failure_diff_modal")?.classList.add("hidden");
+function renderPlayerFrame() {
+  const failure = playerFailures[playerIdx];
+  if (!failure) return;
+  html("#failure_player", renderFailureInlinePlayerHtml(failure, playerIdx + 1, playerFailures.length, currentSubstitutions));
+}
+
+function selectFailurePlayer(idx, { scroll = false } = {}) {
+  if (idx < 0 || idx >= playerFailures.length) return;
+  stopFailurePlayer();
+  playerIdx = idx;
+  renderPlayerFrame();
+  const container = document.getElementById("failure_player");
+  container?.classList.remove("hidden");
+  if (scroll) container?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function toggleFailurePlayer() {
+  if (playerTimer) {
+    stopFailurePlayer();
+    return;
+  }
+  const button = document.getElementById("fp_play");
+  if (button) button.textContent = "⏸ Pausar";
+  playerTimer = setInterval(() => {
+    if (playerIdx >= playerFailures.length - 1) {
+      stopFailurePlayer();
+      return;
+    }
+    playerIdx += 1;
+    renderPlayerFrame();
+  }, PLAYER_INTERVAL_MS);
 }
 
 function closeRunDeparaModal() {
@@ -128,6 +168,14 @@ async function loadDetail(id) {
   const eventList = events?.data?.events || [];
   currentFailures = failureList;
   currentRun = detail.data.run;
+  currentSubstitutions = runSyntheticSubstitutions(detail.data.run);
+  stopFailurePlayer();
+  document.getElementById("failure_player")?.classList.add("hidden");
+  // Ordem cronológica para o player acompanhar o início da divergência.
+  playerFailures = failureList
+    .map((failure, idx) => ({ failure, idx }))
+    .sort((a, b) => (Number(a.failure.seq_global) || 0) - (Number(b.failure.seq_global) || 0));
+  playerIdx = 0;
 
   let eventsHtml = "";
   if (!failureList.length && !eventList.length) {
@@ -182,16 +230,26 @@ window.addEventListener("DOMContentLoaded", () => {
     loadDetail(runId);
   }
   document.getElementById("load_detail_btn")?.addEventListener("click", () => loadDetail());
-  document.getElementById("failure_diff_close_btn")?.addEventListener("click", () => closeFailureDiffModal());
-  document.getElementById("failure_diff_modal")?.addEventListener("click", (ev) => {
-    if (ev.target === ev.currentTarget) closeFailureDiffModal();
-  });
   document.getElementById("run_depara_close_btn")?.addEventListener("click", () => closeRunDeparaModal());
   document.getElementById("run_depara_modal")?.addEventListener("click", (ev) => {
     if (ev.target === ev.currentTarget) closeRunDeparaModal();
   });
   document.getElementById("events")?.addEventListener("click", (ev) => {
     const button = ev.target.closest("[data-failure-idx]");
-    if (button) openFailureDiffModal(button.dataset.failureIdx);
+    if (!button) return;
+    const failure = currentFailures[Number(button.dataset.failureIdx)];
+    const playerPos = playerFailures.findIndex((entry) => entry.failure === failure);
+    selectFailurePlayer(playerPos >= 0 ? playerPos : 0, { scroll: true });
+  });
+  document.getElementById("failure_player")?.addEventListener("click", (ev) => {
+    if (ev.target.closest("#fp_prev")) {
+      selectFailurePlayer(playerIdx - 1);
+      return;
+    }
+    if (ev.target.closest("#fp_next")) {
+      selectFailurePlayer(playerIdx + 1);
+      return;
+    }
+    if (ev.target.closest("#fp_play")) toggleFailurePlayer();
   });
 });

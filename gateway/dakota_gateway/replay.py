@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover
 from .screen import TerminalScreenState
 from .terminal_config import normalize_encoding, validate_terminal_geometry
 from .replay_compare import (
+    apply_volatile_mask_fallback,
     event_requires_comparison,
     expected_snapshot_from_event,
     normalize_deterministic_mismatch_mode,
@@ -226,6 +227,9 @@ class _TargetSession:
             "visual_sig": snap.visual_sig or "",
             "semantic_sig": snap.semantic_sig or snap.screen_sig or "",
             "screen_sig": snap.screen_sig or "",
+            # Texto da tela para a segunda chance com máscara de voláteis
+            # (ruído ambiental, ex.: "Kb livres" da linha de status).
+            "screen_text": str(self.screen_state.text() or ""),
         }
 
 
@@ -269,11 +273,18 @@ def _wait_for_screen_signature(
             "text_sig": observed.get("text_sig", ""),
             "visual_sig": observed.get("visual_sig", ""),
             "semantic_sig": observed.get("semantic_sig", ""),
+            "screen_text": observed.get("screen_text", ""),
         }
-        return compare_signatures(
+        match = compare_signatures(
             expected_snap, observed_snap, mode=mode,
             legacy_expected_screen_sig=expected_event.get("screen_sig") or expected_event.get("sig") or "",
             legacy_observed_screen_sig=observed.get("screen_sig", ""),
+        )
+        return apply_volatile_mask_fallback(
+            match,
+            expected_event=expected_event,
+            observed_snapshot=observed_snap,
+            session_config=s.cfg,
         )
 
     _, match, _ = wait_for_signature_match(
@@ -343,12 +354,18 @@ def replay_strict_global(cfg: ReplayConfig) -> None:
         expected_snapshot = _expected_snapshot_from_event(checkpoint_event)
 
         def compare(observed: dict) -> dict:
-            return compare_signatures(
+            match = compare_signatures(
                 expected_snapshot,
                 observed,
                 mode=mode,
                 legacy_expected_screen_sig=expected_snapshot.get("screen_sig", ""),
                 legacy_observed_screen_sig=observed.get("screen_sig", ""),
+            )
+            return apply_volatile_mask_fallback(
+                match,
+                expected_event=checkpoint_event,
+                observed_snapshot=observed,
+                session_config=session_cfg,
             )
 
         matched, last_match, observed = wait_for_signature_match(
@@ -507,13 +524,19 @@ def replay_parallel_sessions(cfg: ReplayConfig) -> None:
                         # wait for quiet + match through canonical comparison
                         expected_snapshot = _expected_snapshot_from_event(ev)
 
-                        def compare(observed: dict, _snap=expected_snapshot, _mode=mode) -> dict:
-                            return compare_signatures(
+                        def compare(observed: dict, _snap=expected_snapshot, _mode=mode, _ev=ev, _scfg=session_cfg) -> dict:
+                            match = compare_signatures(
                                 _snap,
                                 observed,
                                 mode=_mode,
                                 legacy_expected_screen_sig=_snap.get("screen_sig", ""),
                                 legacy_observed_screen_sig=observed.get("screen_sig", ""),
+                            )
+                            return apply_volatile_mask_fallback(
+                                match,
+                                expected_event=_ev,
+                                observed_snapshot=observed,
+                                session_config=_scfg,
                             )
 
                         matched, last_match, observed = wait_for_signature_match(

@@ -189,6 +189,72 @@ def get_run_failures_payload(con, run_id: int) -> dict:
     return {"failures": failures}
 
 
+def get_failures_global_payload(
+    con,
+    *,
+    run_id: int = 0,
+    failure_type: str = "",
+    severity: str = "",
+    limit: int = 200,
+) -> dict:
+    """Falhas estruturadas de todas as runs (aba Falhas da UI).
+
+    A visão por status de run esconde a maioria das falhas: runs sintéticas
+    send-anyway terminam ``success`` registrando ``screen_divergence``. Esta
+    consulta lê direto de ``replay_failures`` com join na run (status/destino)
+    e aceita filtros opcionais por run, tipo e severidade.
+    """
+    where = []
+    args: list = []
+    if run_id:
+        where.append("f.run_id=?")
+        args.append(int(run_id))
+    if failure_type:
+        where.append("f.failure_type=?")
+        args.append(str(failure_type).strip())
+    if severity:
+        where.append("f.severity=?")
+        args.append(str(severity).strip().lower())
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    rows = query_all(
+        con,
+        f"""
+        SELECT f.id, f.run_id, f.ts_ms, f.session_id, f.seq_global, f.seq_session,
+               f.flow_name, f.event_type, f.failure_type, f.severity,
+               f.expected_value, f.observed_value, f.message,
+               r.status AS run_status, r.target_user, r.target_host
+        FROM replay_failures f
+        LEFT JOIN replay_runs r ON r.id = f.run_id
+        {where_sql}
+        ORDER BY f.id DESC
+        LIMIT ?
+        """,
+        (*args, max(1, min(int(limit or 200), 1000))),
+    )
+    total = query_one(con, f"SELECT COUNT(*) AS n FROM replay_failures f{where_sql}", tuple(args))
+    by_type = query_all(
+        con,
+        f"SELECT f.failure_type AS failure_type, COUNT(*) AS n FROM replay_failures f{where_sql}"
+        " GROUP BY f.failure_type ORDER BY n DESC",
+        tuple(args),
+    )
+    by_severity = query_all(
+        con,
+        f"SELECT f.severity AS severity, COUNT(*) AS n FROM replay_failures f{where_sql}"
+        " GROUP BY f.severity ORDER BY n DESC",
+        tuple(args),
+    )
+    types_rows = query_all(con, "SELECT DISTINCT failure_type FROM replay_failures ORDER BY failure_type", ())
+    return {
+        "failures": [dict(r) for r in rows],
+        "total": int(total["n"] if total else 0),
+        "by_type": [{"failure_type": r["failure_type"], "count": r["n"]} for r in by_type],
+        "by_severity": [{"severity": r["severity"], "count": r["n"]} for r in by_severity],
+        "available_types": [r["failure_type"] for r in types_rows],
+    }
+
+
 def create_run_request_payload(con, *, created_by: int, body: dict) -> dict:
     log_dir = str(body.get("log_dir") or "")
     mode = str(body.get("mode") or "strict-global")

@@ -198,5 +198,127 @@ class ReplayFailurePersistenceTests(unittest.TestCase):
         self.assertEqual(json.loads(row["evidence_json"])["screen_state"], "CONSULTA")
 
 
+class GlobalFailuresApiTests(unittest.TestCase):
+    """Aba /runs/failures: GET /api/runs/failures lista registros de
+    replay_failures de todas as runs (incluindo runs success, ex.: replay
+    sintético send-anyway que registra screen_divergence sem falhar)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmpdir.name) / "test.db")
+        self.cookie_secret = b"test_cookie_secret_32_bytes___"
+        self.hmac_key = b"test_hmac_key_32_bytes__________"
+
+        con = connect(self.db_path)
+        init_db(con)
+        ph = auth.pbkdf2_hash_password("admin123")
+        con.execute(
+            "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,'admin',?)",
+            ("admin", ph, now_ms()),
+        )
+        user = con.execute("SELECT id FROM users WHERE username='admin'").fetchone()
+        self.run_ok = create_run(
+            con, created_by=int(user["id"]), log_dir="/tmp/a",
+            target_host="h1", target_user="recital", target_command="", mode="strict-global",
+        )
+        self.run_fail = create_run(
+            con, created_by=int(user["id"]), log_dir="/tmp/b",
+            target_host="h2", target_user="recital", target_command="", mode="strict-global",
+        )
+        for i in range(3):
+            add_run_failure(
+                con, self.run_ok,
+                build_failure_record(
+                    session_id=f"s-ok-{i}", seq_global=10 + i, seq_session=i,
+                    event_type="checkpoint", failure_type="screen_divergence",
+                    severity="medium", expected_value="", observed_value="tela",
+                    message="div", evidence={},
+                ),
+            )
+        add_run_failure(
+            con, self.run_fail,
+            build_failure_record(
+                session_id="s-fail-0", seq_global=50, seq_session=3,
+                event_type="checkpoint", failure_type="timeout",
+                severity="high", expected_value="", observed_value="",
+                message="timeout", evidence={},
+            ),
+        )
+        con.close()
+
+        try:
+            self.server = CONTROL.ControlServer(
+                ("127.0.0.1", 0),
+                CONTROL.Handler,
+                db_path=self.db_path,
+                cookie_secret=self.cookie_secret,
+                hmac_key=self.hmac_key,
+            )
+        except PermissionError as exc:
+            raise unittest.SkipTest(f"sandbox sem permissao para abrir socket local: {exc}") from exc
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        time.sleep(0.2)
+
+        self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self._request("POST", "/api/login", {"username": "admin", "password": "admin123"})
+
+    def tearDown(self):
+        if hasattr(self, "server"):
+            self.server.shutdown()
+            self.server.server_close()
+        self.tmpdir.cleanup()
+
+    def _request(self, method: str, path: str, data: dict | None = None):
+        url = f"http://127.0.0.1:{self.port}{path}"
+        body = None if data is None else json.dumps(data).encode("utf-8")
+        req = Request(url, data=body, headers={"Content-Type": "application/json"}, method=method)
+        with self.opener.open(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, json.loads(raw) if raw else {}
+
+    def test_global_failures_lists_all_runs_including_success(self):
+        status, payload = self._request("GET", "/api/runs/failures")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 4)
+        self.assertEqual(len(payload["failures"]), 4)
+        run_ids = {f["run_id"] for f in payload["failures"]}
+        self.assertEqual(run_ids, {self.run_ok, self.run_fail})
+        for f in payload["failures"]:
+            self.assertIn("run_status", f)
+        self.assertEqual(payload["by_type"][0]["failure_type"], "screen_divergence")
+        self.assertEqual(payload["by_type"][0]["count"], 3)
+        self.assertIn("timeout", payload["available_types"])
+        self.assertIn("screen_divergence", payload["available_types"])
+
+    def test_global_failures_filter_by_run(self):
+        status, payload = self._request("GET", f"/api/runs/failures?run_id={self.run_fail}")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["failures"][0]["run_id"], self.run_fail)
+        self.assertEqual(payload["failures"][0]["failure_type"], "timeout")
+
+    def test_global_failures_filter_by_type_and_severity(self):
+        status, payload = self._request(
+            "GET", "/api/runs/failures?failure_type=screen_divergence&severity=medium"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 3)
+        self.assertTrue(all(f["severity"] == "medium" for f in payload["failures"]))
+
+    def test_global_failures_filter_combines_run_and_type(self):
+        status, payload = self._request(
+            "GET", f"/api/runs/failures?run_id={self.run_ok}&failure_type=timeout"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["failures"], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

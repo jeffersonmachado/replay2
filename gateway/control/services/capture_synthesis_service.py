@@ -762,6 +762,10 @@ def start_synthetic_replay(
             "synthetic": True,
             "source_capture_id": capture_id,
             "journey_id": synth.get("journey_id") or "",
+            # Pares (original → sintético) aplicados na trilha — permitem ao
+            # replay classificar a divergência explicada pela troca como
+            # synthetic_data_swap em vez de screen_divergence.
+            "synthetic_substitutions": [[o, s] for o, s in substitutions if o != s],
         },
     }
     created = create_run_request_payload(con, created_by=created_by, body=run_body)

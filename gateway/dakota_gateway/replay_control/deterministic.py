@@ -5,6 +5,8 @@ import selectors
 
 from ..replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _session_config_from_event  # type: ignore
 from ..replay_compare import (
+    apply_synthetic_substitution_fallback,
+    apply_volatile_mask_fallback,
     event_requires_comparison,
     expected_snapshot_from_event,
     observed_snapshot_from_session,
@@ -46,6 +48,12 @@ def _deterministic_failure(
         timeout_reached=True,
         concurrent_mode=concurrent_mode,
     )
+    if match.get("synthetic_substitution"):
+        # Divergência explicada integralmente pelo de→para: é a troca de
+        # dado sintético ecoando na tela, não uma divergência funcional.
+        failure_type = "synthetic_data_swap"
+        severity = "low"
+        reason = "divergência explicada pela troca de dados sintéticos (de→para aplicado no replay)"
     mismatch_mode = _on_deterministic_mismatch(params)
     action = "failed"
     if mismatch_mode == "skip":
@@ -81,6 +89,13 @@ def _deterministic_failure(
 
 def _comparison_mode_from_params(params: dict | None, default: str = "visual") -> str:
     return resolve_comparison_mode(replay=params, default=default)["comparison_mode"]
+
+
+def _substitution_pairs_from_params(params: dict | None) -> list:
+    """Pares (original → sintético) embutidos nos params da run sintética."""
+    raw = params if isinstance(params, dict) else {}
+    subs = raw.get("synthetic_substitutions")
+    return list(subs) if isinstance(subs, (list, tuple)) else []
 
 
 def _legacy_checkpoint_expected(sig: str) -> dict:
@@ -138,12 +153,25 @@ def compare_expected_observed(
     session_config: ReplayConfig | SessionReplayState | dict | None = None,
     replay_config: ReplayConfig | dict | None = None,
 ) -> dict:
-    return compare_signatures(
+    match = compare_signatures(
         expected_snapshot,
         observed_snapshot,
         mode=resolve_comparison_mode(event=event, session=session_config, replay=replay_config or params)["comparison_mode"],
         legacy_expected_screen_sig=str(expected_snapshot.get("screen_sig") or ""),
         legacy_observed_screen_sig=str(observed_snapshot.get("screen_sig") or ""),
+    )
+    match = apply_volatile_mask_fallback(
+        match,
+        expected_event=event,
+        observed_snapshot=observed_snapshot,
+        session_config=session_config,
+    )
+    return apply_synthetic_substitution_fallback(
+        match,
+        expected_event=event,
+        observed_snapshot=observed_snapshot,
+        session_config=session_config,
+        substitutions=_substitution_pairs_from_params(params),
     )
 
 

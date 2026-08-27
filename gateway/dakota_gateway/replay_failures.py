@@ -11,6 +11,7 @@ ALLOWED_FAILURE_TYPES = {
     "functional",
     "timeout",
     "screen_divergence",
+    "synthetic_data_swap",
     "technical_error",
     "navigation_error",
     "concurrency_error",

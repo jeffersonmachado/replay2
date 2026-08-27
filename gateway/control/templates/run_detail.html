@@ -19,20 +19,10 @@
       <h2 class="r2ctl-section-title text-lg font-semibold">Eventos e falhas</h2>
       <a href="/runs" class="r2ctl-btn-soft">Voltar para Execuções</a>
     </div>
+    <!-- Player de divergências: duas telas lado a lado, navegação entre falhas -->
+    <div id="failure_player" class="hidden mb-4 rounded-2xl border border-stone-800 bg-stone-950/40 p-4"></div>
     <pre id="events" class="r2ctl-detail-surface max-h-[420px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma run para carregar eventos.</pre>
   </section>
-  <!-- Modal "o que diverge" de uma falha -->
-  <div id="failure_diff_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-    <div class="r2ctl-card rounded-3xl w-full max-w-5xl max-h-[85vh] overflow-y-auto p-5 shadow-inner shadow-black/20">
-      <div class="mb-4 flex items-center justify-between gap-3">
-        <h3 class="text-lg font-semibold">O que diverge nesta falha</h3>
-        <button id="failure_diff_close_btn" class="r2ctl-btn-soft text-xs">✕ Fechar</button>
-      </div>
-      <div id="failure_diff_content" class="text-sm">
-        <div class="text-sm text-stone-400">Carregando divergência...</div>
-      </div>
-    </div>
-  </div>
   <!-- Modal de→para dos dados sintéticos substituídos na run -->
   <div id="run_depara_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
     <div class="r2ctl-card rounded-3xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-5 shadow-inner shadow-black/20">

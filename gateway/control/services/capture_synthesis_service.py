@@ -364,6 +364,8 @@ def _build_depara_screens(
                     "original": original,
                     "note": note,
                     "method": method,
+                    "origin": "grade" if inp.get("is_grid") else "formulario",
+                    "grid_source": str(inp.get("grid_source") or ""),
                 })
                 continue
             field = str(inp.get("field_name") or "").strip()
@@ -387,6 +389,8 @@ def _build_depara_screens(
                 "kept": kept,
                 "note": note,
                 "method": str(inp.get("method") or ""),
+                "origin": "grade" if inp.get("is_grid") else "formulario",
+                "grid_source": str(inp.get("grid_source") or ""),
             })
         # Telas de menu/navegação (sem campo mapeado e sem GET de formulário
         # identificado pelo cursor) não entram: os dígitos de opção delas
@@ -484,6 +488,8 @@ def _screen_mappings_from_template(template) -> list[dict]:
                     "field_name": i.field_name,
                     "method": i.method,
                     "layout_field": getattr(i, "layout_field", ""),
+                    "is_grid": getattr(i, "is_grid", False),
+                    "grid_source": getattr(i, "grid_source", ""),
                 }
                 for i in step.inputs
             ],

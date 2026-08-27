@@ -16,6 +16,17 @@ function deparaScreenTitle(screen) {
     (showEntity ? ` <span class="font-normal text-stone-500">· entidade ${escapeHtml(screen.entity)}</span>` : "");
 }
 
+// Badge de origem do campo: "formulário" (GET clássico) ou
+// "grade · <tabela>" (célula de dbedit — a tabela real que alimenta a
+// grade, ex.: est366 na grade de pagamento, quando identificada).
+function originBadge(row) {
+  if (row.origin === "grade") {
+    const src = row.grid_source ? ` · ${escapeHtml(row.grid_source)}` : "";
+    return `<span class="inline-flex items-center rounded-full border border-sky-900/60 bg-sky-950/50 px-2 py-0.5 text-xs text-sky-300">grade${src}</span>`;
+  }
+  return '<span class="inline-flex items-center rounded-full border border-stone-700 bg-stone-900/60 px-2 py-0.5 text-xs text-stone-500">formulário</span>';
+}
+
 function renderDeparaFieldRow(field) {
   const keptBadge = field.kept
     ? `<span class="inline-flex items-center rounded-full border border-amber-900/60 bg-amber-950/50 px-2 py-0.5 text-xs text-amber-200">mantido${field.note === "chave de consulta" ? " (chave)" : ""}</span>`
@@ -23,6 +34,7 @@ function renderDeparaFieldRow(field) {
   const synthClass = field.kept ? "text-stone-400" : "text-emerald-300";
   return `<tr class="border-b border-stone-800/60">
     <td class="px-3 py-2 font-mono text-stone-200">${escapeHtml(field.field || "-")}</td>
+    <td class="px-3 py-2">${originBadge(field)}</td>
     <td class="px-3 py-2 font-mono text-stone-300 break-all">${escapeHtml(field.original || "")}</td>
     <td class="px-1 py-2 text-stone-500">→</td>
     <td class="px-3 py-2 font-mono ${synthClass} break-all">${escapeHtml(field.synthetic || "")}</td>
@@ -34,6 +46,7 @@ function renderDeparaPreservedRow(preserved) {
   const note = preserved.note ? ` — ${escapeHtml(preserved.note)}` : "";
   return `<tr class="border-b border-stone-800/60">
     <td class="px-3 py-2 font-mono text-stone-400">${escapeHtml(preserved.field || "-")}</td>
+    <td class="px-3 py-2">${originBadge(preserved)}</td>
     <td class="px-3 py-2 font-mono text-stone-400 break-all">${escapeHtml(preserved.original || "")}</td>
     <td class="px-1 py-2 text-stone-600">=</td>
     <td class="px-3 py-2 font-mono text-stone-500 break-all">${escapeHtml(preserved.original || "")}</td>
@@ -48,7 +61,7 @@ export function renderDeparaScreenHtml(screen) {
     <h4 class="mb-2 text-sm font-semibold text-stone-200">${deparaScreenTitle(screen)}</h4>
     <table class="w-full text-left text-xs">
       <thead><tr class="border-b border-stone-700/60 text-stone-400">
-        <th class="px-3 py-1">campo</th><th class="px-3 py-1">original</th><th class="px-1 py-1"></th><th class="px-3 py-1">sintético</th><th class="px-3 py-1"></th>
+        <th class="px-3 py-1">campo</th><th class="px-3 py-1">origem</th><th class="px-3 py-1">original</th><th class="px-1 py-1"></th><th class="px-3 py-1">sintético</th><th class="px-3 py-1"></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>

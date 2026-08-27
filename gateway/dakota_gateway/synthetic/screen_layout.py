@@ -79,6 +79,14 @@ _RE_ARR_FTRADUZ = re.compile(
     re.IGNORECASE,
 )
 
+# use &earqtmp6 in 0 alias arqtmp6 — alias temporário que a grade edita.
+_RE_USE_ALIAS = re.compile(
+    r"\buse\s+\S+\s+in\s+0\s+alias\s+(\w+)", re.IGNORECASE,
+)
+
+# replace campo with est366->valor — tabela real que alimenta a grade.
+_RE_REPLACE_FROM = re.compile(r"\bwith\s+(\w+)\s*->", re.IGNORECASE)
+
 # Largura padrão de coluna de grade quando nem PICTURE nem cabeçalho
 # informam tamanho (mantém o alinhamento das colunas seguintes).
 _GRID_DEFAULT_WIDTH = 8
@@ -100,6 +108,12 @@ class PositionedField:
     # (row..row_end × col..col_end). None em GETs clássicos.
     row_end: int | None = None
     col_end: int | None = None
+    # Origem do campo: "form" (GET clássico do formulário) ou "grid"
+    # (célula de grade dbedit). grid_source é a tabela real que alimenta
+    # a grade (ex.: est366 na grade de pagamento do est361.prg), quando
+    # identificada pelo preenchimento do alias temporário.
+    origin: str = "form"
+    grid_source: str = ""
 
     @property
     def is_grid_cell(self) -> bool:
@@ -217,6 +231,54 @@ def _extract_grids(lines: list[str]) -> list[PositionedField]:
                                 key=lambda e: abs(e[0] - call_line))
         return (entry_line, *rest)
 
+    # Varredura auxiliar: aliases temporários (use &x in 0 alias Y), pontos
+    # `select <alias>` e preenchimentos `replace ... with tabela->campo` —
+    # usados para achar a tabela real que alimenta cada grade (a grade edita
+    # um alias tmp; o `with X->` logo após o `select <alias>` denuncia a
+    # tabela de origem).
+    alias_use: list[tuple[int, str]] = []  # (linha do use, alias)
+    select_lines: list[tuple[int, str]] = []  # (linha, alias)
+    replace_hits: list[tuple[int, str]] = []
+    for scan_line, scan_text in enumerate(lines, 1):
+        u = _RE_USE_ALIAS.search(scan_text)
+        if u:
+            alias_use.append((scan_line, u.group(1).lower()))
+        s = re.match(r"\s*select\s+(\w+)", scan_text, re.IGNORECASE)
+        if s:
+            select_lines.append((scan_line, s.group(1).lower()))
+        for r in _RE_REPLACE_FROM.finditer(scan_text):
+            replace_hits.append((scan_line, r.group(1).lower()))
+    temp_aliases = {a for _, a in alias_use}
+
+    def grid_source_table(cam: dict[int, list[tuple[int, str]]],
+                          call_line: int) -> str:
+        """Tabela que alimenta a grade: o `with X->` mais frequente nos
+        blocos `select <alias>` do alias temporário criado junto dos arrays
+        de coluna da grade. Vazio quando não há candidato único."""
+        def_lines = [e[0] for entries in cam.values() for e in entries]
+        if not def_lines:
+            return ""
+        anchor = min(def_lines, key=lambda li: abs(li - call_line))
+        # Alias temporário criado mais perto da definição dos arrays
+        # (criar_dbf + use &tmp alias X ficam colados às colunas).
+        near = [a for ul, a in alias_use if abs(ul - anchor) <= 80]
+        if not near:
+            return ""
+        alias = min(near, key=lambda a: min(abs(ul - anchor)
+                    for ul, au in alias_use if au == a))
+        counts: dict[str, int] = {}
+        for sline, salias in select_lines:
+            if salias != alias:
+                continue
+            for rline, tbl in replace_hits:
+                if sline < rline <= sline + 60 and tbl not in temp_aliases:
+                    counts[tbl] = counts.get(tbl, 0) + 1
+        if not counts:
+            return ""
+        top_n = max(counts.values())
+        best = [t for t, n in counts.items() if n == top_n]
+        return best[0] if len(best) == 1 else ""
+
     cells: list[PositionedField] = []
     for lineno, line in enumerate(lines, 1):
         d = _RE_DBEDIT.search(line)
@@ -235,6 +297,7 @@ def _extract_grids(lines: list[str]) -> list[PositionedField]:
             continue
         picts = arr_str.get(pict_name) or {}
         hdrs = arr_hdr.get(col_name) or {}
+        grid_source = grid_source_table(cam, lineno)
 
         start = left
         for idx in sorted(cam):
@@ -258,6 +321,7 @@ def _extract_grids(lines: list[str]) -> list[PositionedField]:
                     field=_normalize_field_name(expr), label=label,
                     picture=picture,
                     row_end=bottom, col_end=start + width - 1,
+                    origin="grid", grid_source=grid_source,
                 ))
             start += width + _GRID_COL_SEP
     return cells

@@ -44,6 +44,10 @@ class MappedInput:
     # Campo do layout do fonte encontrado pela posição do cursor mesmo quando
     # a entidade da KB não tem esse campo (valor mantido, não substituído).
     layout_field: str = ""
+    # Origem do campo mapeado por posição: grade dbedit (is_grid) e tabela
+    # real que alimenta a grade (grid_source, ex.: est366) quando conhecida.
+    is_grid: bool = False
+    grid_source: str = ""
 
 
 @dataclass
@@ -710,7 +714,9 @@ class CaptureKnowledgeIntegrator:
                             evidence=[f"{method}: "
                                       f"({position[0]},{position[1]})→"
                                       f"{pf.var}→{target.name}"],
-                            picture=pf.picture)
+                            picture=pf.picture,
+                            is_grid=pf.is_grid_cell,
+                            grid_source=getattr(pf, "grid_source", ""))
                     # O cursor estava num GET do fonte, mas o campo não existe
                     # na entidade da KB (ou já foi usado) — manter o original
                     # com evidência explícita em vez de devolver method="".
@@ -723,6 +729,8 @@ class CaptureKnowledgeIntegrator:
                         method="kept_layout_field",
                         layout_field=pf.field,
                         picture=pf.picture,
+                        is_grid=pf.is_grid_cell,
+                        grid_source=getattr(pf, "grid_source", ""),
                         evidence=[f"cursor ({position[0]},{position[1]})→"
                                   f"{pf.var}→{pf.field}: {reason}; "
                                   "valor original mantido"])
@@ -775,7 +783,9 @@ class CaptureKnowledgeIntegrator:
                         evidence=[f"{method}: "
                                   f"({position[0]},{position[1]})→"
                                   f"{pf.var}→{target.name}"],
-                        picture=pf.picture)
+                        picture=pf.picture,
+                        is_grid=pf.is_grid_cell,
+                        grid_source=getattr(pf, "grid_source", ""))
 
         # 2: matched_fields por posicao de dados (data_index)
         # Com binding fraco (fallback/posicional), a ordem dos labels só é

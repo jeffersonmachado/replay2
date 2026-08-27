@@ -198,6 +198,29 @@ class BuildDeparaScreensTests(unittest.TestCase):
         screens = _build_depara_screens(_screen_mappings(), _DATASET_ROW, {"cpf"})
         self.assertEqual(len(screens), 1)
 
+    def test_origem_formulario_e_grade_com_tabela(self):
+        """Todo campo sai com origin: "formulario" por default; célula de
+        dbedit sai "grade" com a tabela real que alimenta a grade."""
+        mappings = [dict(_screen_mappings()[0])]
+        mappings[0]["inputs"] = list(mappings[0]["inputs"]) + [
+            {"original": "g2511", "placeholder": "{{arq.modelo}}",
+             "field_name": "modelo", "method": "by_grid_column",
+             "is_grid": True, "grid_source": "est361"},
+            {"original": "2", "placeholder": None, "field_name": None,
+             "method": "kept_layout_field", "layout_field": "parcelas",
+             "is_grid": True, "grid_source": "est366"},
+        ]
+        row = dict(_DATASET_ROW, modelo="c6182")
+        screens = _build_depara_screens(mappings, row, set())
+        fields = {f["field"]: f for f in screens[0]["fields"]}
+        self.assertEqual(fields["cpf"]["origin"], "formulario")
+        self.assertEqual(fields["cpf"]["grid_source"], "")
+        self.assertEqual(fields["modelo"]["origin"], "grade")
+        self.assertEqual(fields["modelo"]["grid_source"], "est361")
+        pres = {p["field"]: p for p in screens[0]["preserved"]}
+        self.assertEqual(pres["parcelas"]["origin"], "grade")
+        self.assertEqual(pres["parcelas"]["grid_source"], "est366")
+
 
 class SubstitutionsPayloadTests(unittest.TestCase):
     """synthetic_substitutions_payload: manifest, rebuild e erros."""

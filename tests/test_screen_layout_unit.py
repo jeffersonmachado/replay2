@@ -163,3 +163,54 @@ def test_field_at_grade_desempate(tmp_path):
     assert field_at(layout, 19, 12, value="229,9").var == "valor"
     # texto → célula textual (numéricas rejeitam valor não numérico)
     assert field_at(layout, 19, 12, value="abc").var == "tam"
+
+
+SAMPLE_GRID_SOURCE_PRG = """\
+function fCriaTmp6
+use &earqtmp6 in 0 alias arqtmp6
+public vCamTmp6[2]
+vCamTmp6[1] = "codigo"
+vCamTmp6[2] = "valor"
+vPictTmp6[1] = "99"
+vPictTmp6[2] = "999.999,99"
+vColTmp6[1] = fTraduz(p_idioma,"Cd","P",2,.f.,"")
+vColTmp6[2] = fTraduz(p_idioma,"Valor","P",10,.f.,"")
+if seek(cPedido,est366)
+   do while !eof()
+      select arqtmp6
+      append blank
+      replace codigo with est366->formapag
+      replace valor  with est366->valor
+   enddo
+endif
+return
+function fTela
+@ 07,13 get cFrete pict "@!"
+dbedit(13,01,19,78,vCamTmp6,"fTabelaPag",vPictTmp6,vColTmp6)
+return
+"""
+
+
+def test_extract_layout_grade_com_tabela_origem(tmp_path):
+    """A grade dbedit edita um alias temporário; o `with X->` do
+    preenchimento na mesma função denuncia a tabela real (est366).
+    GET clássico fica origin=form, sem tabela."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_GRID_SOURCE_PRG, encoding="utf-8")
+    layout = extract_layout(prg)
+    by_var = {pf.var: pf for pf in layout}
+    assert by_var["codigo"].origin == "grid"
+    assert by_var["codigo"].grid_source == "est366"
+    assert by_var["valor"].grid_source == "est366"
+    assert by_var["cFrete"].origin == "form"
+    assert by_var["cFrete"].grid_source == ""
+
+
+def test_extract_layout_grade_sem_preenchimento_sem_origem(tmp_path):
+    """Sem `with X->` identificável, grid_source fica vazio (não inventa)."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_GRID_PRG, encoding="utf-8")
+    layout = extract_layout(prg)
+    grids = [pf for pf in layout if pf.is_grid_cell]
+    assert grids and all(pf.origin == "grid" for pf in grids)
+    assert all(pf.grid_source == "" for pf in grids)

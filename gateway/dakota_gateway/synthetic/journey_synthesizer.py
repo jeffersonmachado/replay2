@@ -131,6 +131,9 @@ class TemplateInput:
     # Campo do layout do fonte quando o cursor achou um GET mas o campo não
     # existe na entidade da KB (input mantido, método kept_layout_field).
     layout_field: str = ""
+    # Origem do campo: grade dbedit (is_grid) e tabela que alimenta a grade.
+    is_grid: bool = False
+    grid_source: str = ""
 
 
 @dataclass
@@ -270,6 +273,8 @@ class JourneySynthesizer:
                     evidence=list(mi.evidence),
                     picture=mi.picture,
                     layout_field=mi.layout_field,
+                    is_grid=mi.is_grid,
+                    grid_source=mi.grid_source,
                 ))
 
             # screen_title: binding > screen_context > screen_sample
@@ -539,6 +544,8 @@ class JourneySynthesizer:
                             "confidence": i.confidence,
                             "evidence": i.evidence,
                             "layout_field": i.layout_field,
+                            "is_grid": i.is_grid,
+                            "grid_source": i.grid_source,
                         }
                         for i in s.inputs
                     ],
@@ -750,6 +757,8 @@ class JourneySynthesizer:
                             "original_type": i.original_type,
                             "evidence": i.evidence,
                             "layout_field": i.layout_field,
+                            "is_grid": i.is_grid,
+                            "grid_source": i.grid_source,
                         }
                         for i in s.inputs
                     ],
@@ -783,6 +792,8 @@ class JourneySynthesizer:
                         original_type=i.get("original_type", ""),
                         evidence=i.get("evidence", []),
                         layout_field=i.get("layout_field", ""),
+                        is_grid=bool(i.get("is_grid", False)),
+                        grid_source=i.get("grid_source", ""),
                     )
                     for i in s.get("inputs", [])
                 ],

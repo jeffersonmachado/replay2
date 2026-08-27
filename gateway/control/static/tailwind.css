@@ -1261,6 +1261,10 @@ video {
   border-color: rgb(3 105 161 / 0.4);
 }
 
+.border-sky-900\/60 {
+  border-color: rgb(12 74 110 / 0.6);
+}
+
 .border-stone-600 {
   --tw-border-opacity: 1;
   border-color: rgb(87 83 78 / var(--tw-border-opacity, 1));
@@ -1433,6 +1437,10 @@ video {
 
 .bg-sky-900\/40 {
   background-color: rgb(12 74 110 / 0.4);
+}
+
+.bg-sky-950\/50 {
+  background-color: rgb(8 47 73 / 0.5);
 }
 
 .bg-stone-700 {

@@ -209,7 +209,12 @@ replay2/
   menu do título gravado (`_screen_display_name`: "3.6.1 PEDIDO E-COMMERCE"),
   não pelo entity_name — que pode ser espúrio (entidade "arq" da KB vem de
   um alias genérico `arq.` de outro programa e atrai telas com campos
-  genéricos).
+  genéricos). Cada campo do de→para carrega `origin` ("formulario" = GET
+  clássico, "grade" = célula de dbedit) e, para grades, `grid_source` — a
+  tabela real que alimenta o alias temporário da grade, detectada pelo
+  `replace ... with <tabela>->` mais frequente na função que define os
+  arrays de coluna (est361.prg: itens ← est361, pagamento ← est366); a UI
+  mostra o badge "formulário" / "grade · <tabela>" por campo.
   Replay sintético em 1 clique (v0.8.15): `synthetic_trail.py`
   (`build_synthetic_trail`) regrava a trilha da captura com os valores
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira

@@ -100,3 +100,39 @@ test('renderRunDeparaHtml escapa valores vindos do manifest', () => {
   assert.match(html, /&lt;b&gt;1&lt;\/b&gt;/);
   assert.match(html, /&lt;i&gt;2&lt;\/i&gt;/);
 });
+
+test('renderRunDeparaHtml marca origem formulário × grade com tabela', () => {
+  const payload = {
+    screens: [{
+      entity: 'arq',
+      display_name: '3.6.1 Pedido E-Commerce',
+      operation: 'read',
+      fields: [
+        { field: 'frete', original: '1', synthetic: '2', kept: false, origin: 'formulario', grid_source: '' },
+        { field: 'modelo', original: 'g2511', synthetic: 'c6182', kept: false, origin: 'grade', grid_source: 'est361' },
+      ],
+      preserved: [
+        { field: 'parcelas', original: '2', note: 'campo fora da KB — original mantido', method: 'kept_layout_field', origin: 'grade', grid_source: 'est366' },
+      ],
+    }],
+  };
+  const html = renderRunDeparaHtml(payload);
+  assert.match(html, />formulário</);
+  assert.match(html, />grade · est361</);
+  assert.match(html, />grade · est366</);
+});
+
+test('renderRunDeparaHtml grade sem tabela identificada mostra só grade', () => {
+  const payload = {
+    screens: [{
+      entity: 'arq',
+      operation: 'read',
+      fields: [
+        { field: 'qtd', original: '1', synthetic: '3', kept: false, origin: 'grade', grid_source: '' },
+      ],
+    }],
+  };
+  const html = renderRunDeparaHtml(payload);
+  assert.match(html, />grade</);
+  assert.ok(!html.includes('grade ·'));
+});

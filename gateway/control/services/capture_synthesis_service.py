@@ -131,12 +131,7 @@ def synthesize_capture(
     # do detalhe da captura após o "Gerar". Em variation=equal todas as
     # sessões usam esta linha; em synthetic ela representa a sessão 1.
     depara_screens: list[dict] = []
-    try:
-        with open(result.dataset_path, encoding="utf-8") as fh:
-            first_line = fh.readline().strip()
-        dataset_row = json.loads(first_line) if first_line else {}
-    except Exception:
-        dataset_row = {}
+    dataset_row = _first_session_dataset_row(result.dataset_path)
     if dataset_row:
         depara_screens = _build_depara_screens(result.screen_mappings, dataset_row, key_fields)
 
@@ -256,6 +251,21 @@ def _format_synthetic_value(original: str, value: Any) -> str:
     return text
 
 
+def _dataset_lookup(dataset_row: dict, entity: str, field: str) -> tuple[bool, Any]:
+    """Valor do campo no dataset da sessão 1, preferindo a chave prefixada
+    pela entidade efetiva do input (``est361.modelo``) — sem ela, um campo
+    com mesmo nome em duas entidades (ex.: ``codigo`` do formulário e da
+    grade) pegaria o valor da entidade errada. Cai para a chave bare quando
+    o row não é multi-entidade (trilhas/datasets antigos)."""
+    if entity:
+        prefixed = f"{entity}.{field}"
+        if prefixed in dataset_row:
+            return True, dataset_row[prefixed]
+    if field in dataset_row:
+        return True, dataset_row[field]
+    return False, None
+
+
 def _extract_substitutions(
     screen_mappings: list[dict],
     dataset_row: dict,
@@ -279,7 +289,11 @@ def _extract_substitutions(
             if not field:
                 m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
                 field = m.group(1) if m else ""
-            if not field or field not in dataset_row:
+            if not field:
+                continue
+            ent = str(inp.get("entity_name") or screen.get("entity_name") or "")
+            found, raw_value = _dataset_lookup(dataset_row, ent, field)
+            if not found:
                 continue
             if field.lower() in skip:
                 # Substituição identidade: mantém o valor original na trilha,
@@ -288,7 +302,7 @@ def _extract_substitutions(
                 # (ex.: frete "1") casaria no menu ("1 - REDE LOJAS").
                 subs.append((original, original))
                 continue
-            value = _format_synthetic_value(original, dataset_row[field])
+            value = _format_synthetic_value(original, raw_value)
             if value and value != original:
                 subs.append((original, value))
     return subs
@@ -323,6 +337,39 @@ def _screen_display_name(screen: dict) -> str:
     if m:
         return m.group(1).strip().title()
     return str(screen.get("entity_name") or "")
+
+
+def _first_session_dataset_row(dataset_path) -> dict:
+    """Primeira linha do dataset por entidade, mesclada — espelha o
+    ``session_data`` da sessão 1 (que junta o 1º registro de CADA entidade).
+    Necessário porque telas com grade dbedit geram entidades separadas
+    (est361=itens, est366=pagamento), cada uma com seu registro no jsonl.
+    """
+    merged: dict = {}
+    try:
+        lines = [l for l in Path(dataset_path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    except OSError:
+        return {}
+    seen_entities: set[str] = set()
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        ent = str(rec.get("_entity") or "")
+        if ent in seen_entities:
+            continue
+        seen_entities.add(ent)
+        for key, val in rec.items():
+            if key == "_entity":
+                continue
+            # Espelha o session_data da sessão 1: chave prefixada por
+            # entidade (resolve {{est361.modelo}}) + bare (última entidade
+            # vence em caso de colisão de nome entre entidades).
+            if ent:
+                merged[f"{ent}.{key}"] = val
+            merged[key] = val
+    return merged
 
 
 def _build_depara_screens(
@@ -372,14 +419,18 @@ def _build_depara_screens(
             if not field:
                 m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
                 field = m.group(1) if m else ""
-            if not field or field not in dataset_row:
+            if not field:
+                continue
+            ent = str(inp.get("entity_name") or screen.get("entity_name") or "")
+            found, raw_value = _dataset_lookup(dataset_row, ent, field)
+            if not found:
                 continue
             kept = False
             note = ""
             if field.lower() in skip:
                 kept, note, synthetic = True, "chave de consulta", original
             else:
-                synthetic = _format_synthetic_value(original, dataset_row[field])
+                synthetic = _format_synthetic_value(original, raw_value)
                 if synthetic == original:
                     kept, note = True, "igual ao original"
             fields.append({
@@ -444,8 +495,7 @@ def synthetic_substitutions_payload(con, capture_id: int, *, log_dir: str) -> di
             "de síntese (report.json/dataset.jsonl) ao lado do trail/"
         )
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    dataset_lines = [l for l in dataset_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    dataset_row = json.loads(dataset_lines[0]) if dataset_lines else {}
+    dataset_row = _first_session_dataset_row(dataset_path)
     screen_mappings = list(report.get("screen_mappings") or [])
 
     from dakota_gateway.synthetic.engine import SyntheticEngine
@@ -639,8 +689,7 @@ def start_synthetic_replay(
     )
 
     dataset_path = Path(synth["artifacts"]["dataset"])
-    dataset_lines = [l for l in dataset_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    dataset_row = json.loads(dataset_lines[0]) if dataset_lines else {}
+    dataset_row = _first_session_dataset_row(dataset_path)
 
     # Campos-âncora (chave de consulta detectada na KB) são mantidos com o
     # valor original automaticamente; o chamador pode adicionar outros via

@@ -276,3 +276,110 @@ class TestPictureConstraints:
                                   field="frete", picture="@!")]
         CaptureKnowledgeIntegrator._apply_picture_constraints(schemas, layout)
         assert schemas[0].datatype == "text" and schemas[0].max_value is None
+
+
+PRG_GRID_SRC = """\
+@ 04,00 say [*] + fTraduz(p_idioma,"Pedido","P",12,.t.,"")
+@ 07,01 say fTraduz(p_idioma,"Frete","P",12,.t.,"")
+@ 04,13 get cPedido pict p_mascdoc
+@ 07,13 get cFrete  pict "@!"
+clear gets
+use &earqtmp1 in 0 alias arqtmp1
+public vCamTmp[03]
+vCamTmp[01] = "right(item,2)"
+vCamTmp[02] = "modelo"
+vCamTmp[03] = "qtd"
+vPictTmp[01] = "99"
+vPictTmp[02] = "@"
+vPictTmp[03] = "9999"
+vColTmp[01] = fTraduz(p_idioma,"Item","P",2,.f.,"")
+vColTmp[02] = fTraduz(p_idioma,"Modelo","P",6,.f.,"")
+vColTmp[03] = fTraduz(p_idioma,"Qtd","P",3,.f.,"")
+if seek(cPedido,est361)
+   do while !eof()
+      select arqtmp1
+      append blank
+      replace modelo with est361->modelo
+      replace qtd    with est361->qtd
+   enddo
+endif
+dbedit(16,00,21,69,vCamTmp,"fTabela",vPictTmp,vColTmp)
+"""
+
+
+class TestGridSourceMapping:
+    """Célula de grade cuja tabela de origem é conhecida (``with est361->``
+    no preenchimento do alias tmp) é mapeada para a ENTIDADE DA GRADE, não
+    para a entidade da tela — mesmo quando o campo não existe na KB (a KB
+    da captura 13 tem est361/est366 sem campos)."""
+
+    @pytest.fixture
+    def prg_src(self, tmp_path):
+        prg = tmp_path / "xx361.prg"
+        prg.write_text(PRG_GRID_SRC, encoding="utf-8")
+        return prg
+
+    @pytest.fixture
+    def entity_sem_itens(self):
+        # Entidade da tela SEM os campos da grade (modelo/qtd não estão na
+        # KB) — o mapeamento não pode depender da KB.
+        return EntityDefinition(
+            name="PED", storage_type="sql",
+            fields=[FieldDefinition(name="pedido", datatype="text")])
+
+    @pytest.fixture
+    def binding_src(self, prg_src):
+        return ScreenEntityBinding(
+            program_name="pXx361", source_file=str(prg_src),
+            entity_name="PED", operation="read", confidence=0.6,
+            matched_fields=["pedido"])
+
+    def test_celula_de_grade_vai_para_entidade_da_tabela(
+            self, prg_src, entity_sem_itens, binding_src, tmp_path):
+        """'g2511' na célula modelo (19,4): campo ausente na KB, mas a
+        tabela da grade (est361) é conhecida → by_grid_source."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["g2511"], [(19, 4)])
+        enr = integ.enrich_template(tmpl, [entity_sem_itens], [binding_src])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert mi.method == "by_grid_source"
+        assert (mi.entity_name, mi.field_name) == ("est361", "modelo")
+        assert mi.placeholder == "{{est361.modelo}}"
+        assert mi.is_grid and mi.grid_source == "est361"
+        # A entidade da grade entra na geração do dataset — senão o
+        # placeholder ficaria sem valor.
+        assert "est361" in {e.lower() for e in enr.entities_involved}
+
+    def test_menu_option_em_celula_de_grade_com_origem(
+            self, prg_src, entity_sem_itens, binding_src, tmp_path):
+        """'1' na célula qtd (PICTURE 9999) vira dado da entidade da grade
+        (número), não opção de menu mantida."""
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["1"], [(17, 12)])
+        enr = integ.enrich_template(tmpl, [entity_sem_itens], [binding_src])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert mi.method == "by_grid_source"
+        assert (mi.entity_name, mi.field_name) == ("est361", "qtd")
+        assert mi.field_datatype == "number"
+
+    def test_grade_sem_origem_cai_no_comportamento_anterior(
+            self, tmp_path):
+        """Sem ``with X->`` identificável, grid_source fica vazio e o campo
+        fora da KB continua mantido (kept_layout_field) — não inventa."""
+        prg = tmp_path / "xx361.prg"
+        prg.write_text(PRG_GRID, encoding="utf-8")
+        entity = EntityDefinition(
+            name="PED", storage_type="sql",
+            fields=[FieldDefinition(name="pedido", datatype="text")])
+        binding = ScreenEntityBinding(
+            program_name="pXx361", source_file=str(prg),
+            entity_name="PED", operation="read", confidence=0.6,
+            matched_fields=["pedido"])
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["g2511"], [(19, 4)])
+        enr = integ.enrich_template(tmpl, [entity], [binding])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        # Não inventa: sem tabela de origem, a célula fora da KB não vira
+        # substituição (sem placeholder, sem campo).
+        assert mi.method != "by_grid_source"
+        assert not mi.field_name and not mi.placeholder

@@ -34,6 +34,9 @@ from dakota_gateway.state_db import connect, init_db, now_ms
 
 from control.services.capture_synthesis_service import (
     _build_depara_screens,
+    _dataset_lookup,
+    _extract_substitutions,
+    _first_session_dataset_row,
     synthetic_substitutions_payload,
 )
 
@@ -415,6 +418,85 @@ class SubstitutionsRouteTests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertFalse(payload["ok"])
+
+
+class TestDatasetRowMultiEntidade(unittest.TestCase):
+    """Dataset multi-entidade (tela com grades dbedit de tabelas distintas):
+    a "1ª sessão" mescla o 1º registro de CADA entidade, com chave
+    prefixada (est361.modelo) e bare — espelha o session_data do
+    journey_synthesizer."""
+
+    def _write_dataset(self, path: Path, records: list[dict]):
+        path.write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+            encoding="utf-8")
+
+    def test_mescla_primeiro_registro_de_cada_entidade(self):
+        with tempfile.TemporaryDirectory() as td:
+            ds = Path(td) / "dataset.jsonl"
+            self._write_dataset(ds, [
+                {"_entity": "arq", "pedido": "100", "frete": 5},
+                {"_entity": "arq", "pedido": "200", "frete": 9},  # 2ª amostra: fora
+                {"_entity": "est361", "modelo": "G2511", "qtd": 3},
+                {"_entity": "est366", "parcelas": 2, "valor": 100.5},
+            ])
+            row = _first_session_dataset_row(ds)
+        self.assertEqual(row["arq.pedido"], "100")
+        self.assertEqual(row["est361.modelo"], "G2511")
+        self.assertEqual(row["est366.parcelas"], 2)
+        self.assertEqual(row["modelo"], "G2511")   # bare também presente
+        self.assertNotIn("200", row.values())       # só a 1ª amostra
+        self.assertNotIn("_entity", row)
+
+    def test_dataset_inexistente_retorna_vazio(self):
+        self.assertEqual(_first_session_dataset_row("/nao/existe.jsonl"), {})
+
+    def test_lookup_prefere_chave_da_entidade_do_input(self):
+        row = {"arq.codigo": 10, "est366.codigo": 99, "codigo": 10}
+        found, val = _dataset_lookup(row, "est366", "codigo")
+        self.assertTrue(found)
+        self.assertEqual(val, 99)
+
+    def test_lookup_cai_no_bare_sem_prefixo(self):
+        row = {"frete": 5}
+        found, val = _dataset_lookup(row, "arq", "frete")
+        self.assertTrue(found)
+        self.assertEqual(val, 5)
+        self.assertEqual(_dataset_lookup(row, "arq", "x"), (False, None))
+
+    def test_substitutions_usam_entidade_do_input(self):
+        """Mesmo campo em duas entidades: a substituição usa o valor da
+        entidade do input (grade), não o bare da entidade da tela."""
+        screen_mappings = [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "07", "placeholder": "{{arq.codigo}}",
+                 "field_name": "codigo", "entity_name": "arq",
+                 "method": "by_cursor_position"},
+                {"original": "03", "placeholder": "{{est366.codigo}}",
+                 "field_name": "codigo", "entity_name": "est366",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est366"},
+            ],
+        }]
+        dataset_row = {"arq.codigo": 70, "est366.codigo": 30, "codigo": 70}
+        subs = _extract_substitutions(screen_mappings, dataset_row)
+        self.assertIn(("07", "70"), subs)
+        self.assertIn(("03", "30"), subs)
+
+    def test_depara_usa_entidade_do_input(self):
+        screen_mappings = [{
+            "entity_name": "arq", "operation": "read",
+            "inputs": [
+                {"original": "03", "placeholder": "{{est366.codigo}}",
+                 "field_name": "codigo", "entity_name": "est366",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est366"},
+            ],
+        }]
+        dataset_row = {"arq.codigo": 70, "est366.codigo": 30, "codigo": 70}
+        screens = _build_depara_screens(screen_mappings, dataset_row, set())
+        self.assertEqual(screens[0]["fields"][0]["synthetic"], "30")
 
 
 if __name__ == "__main__":

@@ -199,7 +199,16 @@ replay2/
   `_value_range_for_field`; original inteiro puro gera `number`, não
   `decimal`; célula com PICTURE de função `@` e original alfanumérico curto
   gera `format="pattern:<original>"`, que o `DatasetBuilder` resolve
-  preservando o shape — letra→letra, dígito→dígito). Valores de 1-2 dígitos
+  preservando o shape — letra→letra, dígito→dígito). Célula de grade cuja
+  tabela de origem é conhecida (`grid_source`) é mapeada por
+  `by_grid_source` para a **entidade da tabela da grade** (est361=itens,
+  est366=pagamento), não para a entidade da tela — mesmo sem o campo na KB
+  (a KB da captura 13 tem est361/est366 sem campos); a entidade da grade
+  entra em `entities_involved` e o dataset passa a ser multi-entidade
+  (`_first_session_dataset_row` mescla o 1º registro de cada entidade com
+  chave prefixada `entidade.campo` + bare, espelhando o `session_data`;
+  `_dataset_lookup` resolve o valor pela entidade efetiva do input, com
+  fallback bare para datasets antigos). Valores de 1-2 dígitos
   com cara de opção de menu que o cursor não consegue vincular a um GET são
   preservados com evidência explícita: `menu_option_kept` (fora de GET
   conhecido) e `kept_layout_field` (cursor num GET cujo campo não existe na
@@ -219,7 +228,14 @@ replay2/
   (`build_synthetic_trail`) regrava a trilha da captura com os valores
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira
   substituição identidade para preservar a posição do cursor), remove o
-  banner pré-sessão e re-assina hash-chain + HMAC; campos-âncora (chave de
+  banner pré-sessão e re-assina hash-chain + HMAC. A substituição casa o
+  valor original como evento único ou como **run de teclas de 1 caractere**
+  (campo digitado tecla a tecla — dígitos de máscara e também
+  alfanuméricos/decimais de grade, ex.: 'g2511'/'229,9' da captura 13;
+  ENTER/ESC/TAB quebram o run): o valor novo é distribuído 1 caractere por
+  evento, o último evento carrega o restante quando o valor é mais longo
+  (input multi-caractere é válido no replay) e os excedentes ficam vazios
+  quando é mais curto; campos-âncora (chave de
   consulta: compõe índice da entidade — parseado do fonte ou lido dos
   arquivos de índice Recital `i<TABELA>.00N` (`index_file_reader.py`: a
   expressão da chave fica em texto claro no primeiro bloco, ex. `rede +

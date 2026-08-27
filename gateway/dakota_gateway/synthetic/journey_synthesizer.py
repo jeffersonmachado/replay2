@@ -340,79 +340,85 @@ class JourneySynthesizer:
             fields_for_entity: list[FieldSchema] = []
             seen_fields: set[str] = set()
             for step in template.steps:
-                if step.entity_name and step.entity_name.upper() == entity_name.upper():
-                    for inp in step.inputs:
-                        # A mesma entidade pode aparecer em várias telas —
-                        # acumular campos de TODAS (dedup por nome), senão os
-                        # placeholders das demais telas ficam sem valor no
-                        # dataset e as sessões saem com {{...}} não resolvido.
-                        field_key = (inp.field_name or "").strip().lower()
-                        if (inp.field_name and inp.method != "command"
-                                and field_key not in seen_fields):
-                            seen_fields.add(field_key)
-                            fu = (inp.field_name or "").upper().strip()
-                            # Formato especifico (cpf, email, phone)
-                            fmt = None
-                            if fu in _CPF_NAMES:
-                                fmt = "cpf"
-                            elif fu in _CNPJ_NAMES:
-                                fmt = "cnpj"
-                            elif fu in _EMAIL_NAMES:
-                                fmt = "email"
-                            elif fu in _PHONE_NAMES:
-                                fmt = "phone"
-                            # Datatype (decimal, person_name, address, etc.)
+                for inp in step.inputs:
+                    # Entidade efetiva do input: célula de grade aponta a
+                    # tabela real da grade (by_grid_source, ex.: est361);
+                    # demais inputs seguem a entidade da tela.
+                    inp_entity = (inp.entity_name or step.entity_name or "")
+                    if not inp_entity \
+                            or inp_entity.upper() != entity_name.upper():
+                        continue
+                    # A mesma entidade pode aparecer em várias telas —
+                    # acumular campos de TODAS (dedup por nome), senão os
+                    # placeholders das demais telas ficam sem valor no
+                    # dataset e as sessões saem com {{...}} não resolvido.
+                    field_key = (inp.field_name or "").strip().lower()
+                    if (inp.field_name and inp.method != "command"
+                            and field_key not in seen_fields):
+                        seen_fields.add(field_key)
+                        fu = (inp.field_name or "").upper().strip()
+                        # Formato especifico (cpf, email, phone)
+                        fmt = None
+                        if fu in _CPF_NAMES:
+                            fmt = "cpf"
+                        elif fu in _CNPJ_NAMES:
+                            fmt = "cnpj"
+                        elif fu in _EMAIL_NAMES:
+                            fmt = "email"
+                        elif fu in _PHONE_NAMES:
+                            fmt = "phone"
+                        # Datatype (decimal, person_name, address, etc.)
+                        dtype = "text"
+                        if fu in _MONEY_FIELD_NAMES:
+                            dtype = "decimal"
+                        elif fu in _PERSON_NAME_NAMES:
+                            dtype = "person_name"
+                        elif fu in _COMPANY_NAME_NAMES:
+                            dtype = "company_name"
+                        elif fu in _ADDRESS_NAMES:
+                            dtype = "address"
+                        elif fu in _DESC_NAMES:
                             dtype = "text"
-                            if fu in _MONEY_FIELD_NAMES:
-                                dtype = "decimal"
-                            elif fu in _PERSON_NAME_NAMES:
-                                dtype = "person_name"
-                            elif fu in _COMPANY_NAME_NAMES:
-                                dtype = "company_name"
-                            elif fu in _ADDRESS_NAMES:
-                                dtype = "address"
-                            elif fu in _DESC_NAMES:
-                                dtype = "text"
-                            elif inp.original_type == "number":
-                                # inteiro puro no original → inteiro; com
-                                # separador decimal → decimal (senão campos
-                                # PICTURE 9999 recebiam "554,50")
-                                dtype = ("number" if re.fullmatch(
-                                    r"\d+", inp.original.strip()) else "decimal")
-                            elif inp.original_type in ("text", "text_long"):
-                                dtype = "person_name"
+                        elif inp.original_type == "number":
+                            # inteiro puro no original → inteiro; com
+                            # separador decimal → decimal (senão campos
+                            # PICTURE 9999 recebiam "554,50")
+                            dtype = ("number" if re.fullmatch(
+                                r"\d+", inp.original.strip()) else "decimal")
+                        elif inp.original_type in ("text", "text_long"):
+                            dtype = "person_name"
 
-                            # Célula de grade com PICTURE de função ("@"): o
-                            # provider por nome geraria texto livre ("Gabriela
-                            # Duarte") num campo de 4-6 colunas. Preserva o
-                            # formato do original (letra→letra, dígito→dígito).
-                            pic = (getattr(inp, "picture", "") or "").strip()
-                            if (not fmt and pic.startswith("@")
-                                    and re.fullmatch(r"[A-Za-z0-9]{1,20}",
-                                                     inp.original.strip())):
-                                fmt = f"pattern:{inp.original.strip()}"
-                                dtype = "text"
+                        # Célula de grade com PICTURE de função ("@"): o
+                        # provider por nome geraria texto livre ("Gabriela
+                        # Duarte") num campo de 4-6 colunas. Preserva o
+                        # formato do original (letra→letra, dígito→dígito).
+                        pic = (getattr(inp, "picture", "") or "").strip()
+                        if (not fmt and pic.startswith("@")
+                                and re.fullmatch(r"[A-Za-z0-9]{1,20}",
+                                                 inp.original.strip())):
+                            fmt = f"pattern:{inp.original.strip()}"
+                            dtype = "text"
 
-                            fs = FieldSchema(
-                                name=inp.field_name,
-                                datatype=dtype,
-                                format=fmt if fmt else None,
-                                required=True,
-                            )
-                            # PICTURE do GET (inputs mapeados por posição de
-                            # cursor) limita a geração à largura real do campo.
-                            # Aplicada ANTES do range heurístico: a PICTURE é
-                            # a verdade física do campo e vence a heurística
-                            # (ex.: qtd com PICTURE 9999 vira inteiro 0-9999,
-                            # não decimal 1-999).
-                            if pic:
-                                CaptureKnowledgeIntegrator._picture_to_constraints(
-                                    fs, pic)
-                            if fs.min_value is None and fs.max_value is None:
-                                fs.min_value, fs.max_value = _value_range_for_field(
-                                    inp.field_name)
-                            fields_for_entity.append(fs)
-                            entity_field_map.setdefault(entity_name, {})[inp.field_name.lower()] = inp.field_name
+                        fs = FieldSchema(
+                            name=inp.field_name,
+                            datatype=dtype,
+                            format=fmt if fmt else None,
+                            required=True,
+                        )
+                        # PICTURE do GET (inputs mapeados por posição de
+                        # cursor) limita a geração à largura real do campo.
+                        # Aplicada ANTES do range heurístico: a PICTURE é
+                        # a verdade física do campo e vence a heurística
+                        # (ex.: qtd com PICTURE 9999 vira inteiro 0-9999,
+                        # não decimal 1-999).
+                        if pic:
+                            CaptureKnowledgeIntegrator._picture_to_constraints(
+                                fs, pic)
+                        if fs.min_value is None and fs.max_value is None:
+                            fs.min_value, fs.max_value = _value_range_for_field(
+                                inp.field_name)
+                        fields_for_entity.append(fs)
+                        entity_field_map.setdefault(entity_name, {})[inp.field_name.lower()] = inp.field_name
 
             if not fields_for_entity:
                 continue
@@ -540,6 +546,7 @@ class JourneySynthesizer:
                             "original": i.original,
                             "placeholder": i.placeholder,
                             "field_name": i.field_name,
+                            "entity_name": i.entity_name,
                             "method": i.method,
                             "confidence": i.confidence,
                             "evidence": i.evidence,

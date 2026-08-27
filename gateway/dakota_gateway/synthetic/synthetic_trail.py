@@ -66,6 +66,16 @@ def _drop_pre_session_banner(events: list[dict]) -> tuple[list[dict], int]:
     return keep, dropped
 
 
+# Teclas que nunca são dado de campo digitado tecla a tecla (ENTER, ESC,
+# TAB, backspace) — quebram a sequência de teclas de um campo.
+_NON_DATA_KEYS = {"\r", "\n", "\x1b", "\t", "\x00", "\x7f", "\x08"}
+
+
+def _is_data_key(key: str) -> bool:
+    """Tecla de 1 caractere que compõe o valor digitado num campo."""
+    return len(key) == 1 and key not in _NON_DATA_KEYS
+
+
 def _apply_substitutions(
     events: list[dict],
     substitutions: list[tuple[str, str]],
@@ -79,34 +89,44 @@ def _apply_substitutions(
     for original, value in substitutions:
         if not original:
             continue
-        # Campo com máscara digitado dígito a dígito: sequência de eventos
-        # de 1 caractere cuja concatenação é o valor original.
-        if len(original) > 1 and original.isdigit() and value.isdigit() and len(value) == len(original):
+        # Campo digitado tecla a tecla: sequência de eventos de 1 caractere
+        # cuja concatenação é o valor original (dígitos de máscara como CPF,
+        # mas também alfanuméricos/decimais de grade — 'g2511', '229,9' da
+        # captura 13). O valor novo é distribuído pelos eventos do run: 1
+        # caractere por evento; se for mais longo que o run, o último evento
+        # carrega o restante (input multi-caractere é válido no replay); se
+        # mais curto, os excedentes ficam vazios (nada é enviado).
+        if len(original) > 1:
             run: list[int] = []
             found: list[int] | None = None
             for i in det_idx:
                 if i <= cursor:
                     continue
                 key = det_key(events[i])
-                if len(key) == 1 and key.isdigit():
+                if _is_data_key(key):
                     run.append(i)
-                    digits = "".join(det_key(events[j]) for j in run)
-                    if digits == original:
+                    typed = "".join(det_key(events[j]) for j in run)
+                    if typed == original:
                         found = list(run)
                         break
-                    if not original.startswith(digits):
+                    if not original.startswith(typed):
                         run = []
                 else:
                     run = []
             if found:
-                for pos, digit in zip(found, value):
-                    events[pos]["key_b64"] = b64(digit.encode("utf-8"))
-                    events[pos]["key_text"] = digit
+                last = len(found) - 1
+                for pos_i, pos in enumerate(found):
+                    if pos_i < last:
+                        chunk = value[pos_i] if pos_i < len(value) else ""
+                    else:
+                        chunk = value[pos_i:] if pos_i < len(value) else ""
+                    events[pos]["key_b64"] = b64(chunk.encode("utf-8"))
+                    events[pos]["key_text"] = chunk
                 cursor = found[-1]
-                applied.append(f"{original}->{value} (dígitos, seq {events[found[0]].get('seq_global')}..{events[found[-1]].get('seq_global')})")
+                label = ("dígitos" if original.isdigit() and value.isdigit()
+                         and len(value) == len(original) else "teclas")
+                applied.append(f"{original}->{value} ({label}, seq {events[found[0]].get('seq_global')}..{events[found[-1]].get('seq_global')})")
                 continue
-            warnings.append(f"sequência de dígitos {original!r} não encontrada; substituição pulada")
-            continue
         # Substituição simples: primeiro evento igual ao original após o cursor.
         pos = next(
             (i for i in det_idx if i > cursor and det_key(events[i]) == original),

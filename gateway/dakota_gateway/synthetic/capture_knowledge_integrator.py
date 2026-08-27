@@ -248,6 +248,12 @@ class CaptureKnowledgeIntegrator:
             total_inputs_count += len(screen_inputs)
             if entity_name:
                 entities_involved.add(entity_name)
+            # Entidades por input (grade dbedit → tabela real da grade, ex.:
+            # est361/est366) entram na geração do dataset junto da entidade
+            # da tela — senão o placeholder {{est361.modelo}} fica sem valor.
+            for mi in mapped:
+                if mi.entity_name:
+                    entities_involved.add(mi.entity_name)
 
             screen_mappings.append(ScreenKnowledgeMapping(
                 screen_signature=screen_sig,
@@ -589,6 +595,41 @@ class CaptureKnowledgeIntegrator:
             unmatched_inputs=unmatched,
         )
 
+    def _grid_source_mapping(
+        self,
+        input_index: int,
+        value: str,
+        val_type: str,
+        pf,
+        position: tuple[int, int],
+    ) -> MappedInput:
+        """Mapeia célula de grade dbedit para a entidade da tabela real que
+        alimenta a grade (``grid_source`` do layout: est361=itens,
+        est366=pagamento no est361.prg).
+
+        A tabela da grade é evidência mais forte que o binding tela↔entidade
+        da KB (que pode ser espúrio — entidade "arq" da captura 13): a célula
+        editada pertence ao alias temporário preenchido com
+        ``replace ... with <tabela>->campo``. Não depende do campo existir na
+        KB — a geração do dado usa nome/PICTURE/original.
+        """
+        src = (getattr(pf, "grid_source", "") or "").strip().lower()
+        pic = (getattr(pf, "picture", "") or "").strip()
+        dtype = "number" if re.fullmatch(r"[9.,]+", pic) else "text"
+        return MappedInput(
+            input_index=input_index, original_value=value,
+            original_type=val_type, entity_name=src,
+            field_name=pf.field, field_datatype=dtype,
+            semantic_type=self._infer_semantic_type(pf.field),
+            method="by_grid_source",
+            placeholder=f"{{{{{src}.{pf.field}}}}}",
+            confidence=0.8,
+            evidence=[f"by_grid_source: ({position[0]},{position[1]})→"
+                      f"{pf.var}→{src}.{pf.field}"],
+            picture=pic,
+            is_grid=True,
+            grid_source=src)
+
     def _map_input_to_field(
         self,
         input_index: int,
@@ -697,6 +738,12 @@ class CaptureKnowledgeIntegrator:
                 pf = field_at(layout, position[0], position[1],
                               exact=True, value=stripped)
                 if pf is not None:
+                    # Célula de grade com tabela de origem conhecida: a
+                    # tabela da grade vence o binding tela↔entidade da KB.
+                    if pf.is_grid_cell and getattr(pf, "grid_source", "") \
+                            and pf.field.upper() not in used_fields:
+                        return self._grid_source_mapping(
+                            input_index, value, val_type, pf, position)
                     target = entity_fields.get(pf.field.upper())
                     if target is not None \
                             and target.name.upper() not in used_fields:
@@ -768,6 +815,12 @@ class CaptureKnowledgeIntegrator:
         if layout and position:
             pf = field_at(layout, position[0], position[1], value=stripped)
             if pf is not None:
+                # Célula de grade com tabela de origem conhecida: a tabela
+                # da grade vence o binding tela↔entidade da KB.
+                if pf.is_grid_cell and getattr(pf, "grid_source", "") \
+                        and pf.field.upper() not in used_fields:
+                    return self._grid_source_mapping(
+                        input_index, value, val_type, pf, position)
                 target = entity_fields.get(pf.field.upper())
                 if target is not None and target.name.upper() not in used_fields:
                     method = "by_grid_column" if getattr(pf, "is_grid_cell", False) \

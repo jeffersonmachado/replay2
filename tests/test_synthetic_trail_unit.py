@@ -143,6 +143,78 @@ def test_substituicao_ausente_gera_warning(tmp_path):
     assert not result["applied"]
 
 
+def _fixture_grade_events():
+    """Campos de grade digitados tecla a tecla (captura 13: modelo/valor)."""
+    return [
+        _ev(1, "session_start", logname="ferblo"),
+        _det(2, "3"),
+        _det(3, "\r"),
+        # modelo: g2511 (alfanumérico, 5 teclas)
+        *[_det(4 + i, c) for i, c in enumerate("g2511")],
+        _det(9, "\t"),
+        # valor: 229,9 (decimal com vírgula, 5 teclas)
+        *[_det(10 + i, c) for i, c in enumerate("229,9")],
+        _det(15, "\r"),
+        _ev(16, "session_end"),
+    ]
+
+
+def test_substituicao_teclas_alfanumerica_mesmo_tamanho(tmp_path):
+    """'g2511'→'q0983': 1 caractere por evento, como os dígitos de CPF."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_grade_events())
+    result = build_synthetic_trail(
+        src, [("g2511", "q0983")], tmp_path / "out", hmac_key=HMAC_KEY)
+    events = _read_trail(result["out"])
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    typed = "".join(k for k in keys if len(k) == 1)
+    assert "q0983" in typed and "g2511" not in typed
+    assert result["applied"] and not result["warnings"]
+
+
+def test_substituicao_teclas_valor_mais_longo(tmp_path):
+    """'229,9'→'345597,51': o evento final do run carrega o restante —
+    input multi-caractere é válido no replay."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_grade_events())
+    result = build_synthetic_trail(
+        src, [("229,9", "345597,51")], tmp_path / "out", hmac_key=HMAC_KEY)
+    events = _read_trail(result["out"])
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    run = keys[keys.index("\t") + 1:keys.index("\r", 2)]
+    assert run == ["3", "4", "5", "5", "97,51"]
+    assert "".join(run) == "345597,51"
+    assert result["applied"] and not result["warnings"]
+
+
+def test_substituicao_teclas_valor_mais_curto(tmp_path):
+    """'g2511'→'ab': eventos excedentes ficam vazios (nada é enviado)."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_grade_events())
+    result = build_synthetic_trail(
+        src, [("g2511", "ab")], tmp_path / "out", hmac_key=HMAC_KEY)
+    events = _read_trail(result["out"])
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    assert keys[2:7] == ["a", "b", "", "", ""]
+    assert result["applied"] and not result["warnings"]
+    # cadeia íntegra mesmo com eventos esvaziados
+    verify_log(str(tmp_path / "out"), HMAC_KEY)
+
+
+def test_tecla_de_controle_quebra_o_run(tmp_path):
+    """ENTER no meio impede casamento espúrio através de campos."""
+    events = [
+        _ev(1, "session_start", logname="ferblo"),
+        _det(2, "g"), _det(3, "2"), _det(4, "\r"), _det(5, "5"), _det(6, "1"), _det(7, "1"),
+        _ev(8, "session_end"),
+    ]
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, events)
+    result = build_synthetic_trail(
+        src, [("g2511", "q0983")], tmp_path / "out", hmac_key=HMAC_KEY)
+    assert not result["applied"] and len(result["warnings"]) == 1
+
+
 def test_seq_renumerado_sem_gaps(tmp_path):
     src = tmp_path / "audit-test.jsonl"
     _write_trail(src, _fixture_events())

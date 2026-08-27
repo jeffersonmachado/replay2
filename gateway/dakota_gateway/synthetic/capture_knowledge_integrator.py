@@ -41,6 +41,9 @@ class MappedInput:
     evidence: list[str] = field(default_factory=list)
     method: str = ""  # by_semantic_type, by_screen_order, by_matched_fields, by_field_name, unmapped
     picture: str = ""  # PICTURE literal do GET (quando mapeado por posição)
+    # Campo do layout do fonte encontrado pela posição do cursor mesmo quando
+    # a entidade da KB não tem esse campo (valor mantido, não substituído).
+    layout_field: str = ""
 
 
 @dataclass
@@ -708,8 +711,31 @@ class CaptureKnowledgeIntegrator:
                                       f"({position[0]},{position[1]})→"
                                       f"{pf.var}→{target.name}"],
                             picture=pf.picture)
+                    # O cursor estava num GET do fonte, mas o campo não existe
+                    # na entidade da KB (ou já foi usado) — manter o original
+                    # com evidência explícita em vez de devolver method="".
+                    reason = ("campo ausente na entidade "
+                              f"'{entity.name}' da KB") if target is None \
+                        else "campo já mapeado para outro input"
+                    return MappedInput(
+                        input_index=input_index, original_value=value,
+                        original_type=val_type, entity_name=entity.name,
+                        method="kept_layout_field",
+                        layout_field=pf.field,
+                        picture=pf.picture,
+                        evidence=[f"cursor ({position[0]},{position[1]})→"
+                                  f"{pf.var}→{pf.field}: {reason}; "
+                                  "valor original mantido"])
+                return MappedInput(
+                    input_index=input_index, original_value=value,
+                    original_type=val_type, method="menu_option_kept",
+                    evidence=["valor curto com cara de opção de menu; cursor "
+                              "fora de GET conhecido do fonte — valor original "
+                              "mantido"])
             return MappedInput(input_index=input_index, original_value=value,
-                               original_type="menu_option")
+                               original_type=val_type, method="menu_option_kept",
+                               evidence=["opção de menu (1-2 dígitos) — valor "
+                                         "original mantido"])
 
         # Procura campo: semantico > matched_fields > screen_order > field_name
         entity_field_list = list(entity.fields)

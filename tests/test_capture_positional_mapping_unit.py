@@ -95,6 +95,27 @@ class TestPositionalBinding:
         mi = enr.screen_mappings[0].mapped_inputs[0]
         assert not mi.field_name
         assert mi.original_type == "menu_option"
+        assert mi.method == "menu_option_kept"
+        assert mi.evidence
+        assert enr.mapped_inputs == 0
+
+    def test_menu_option_em_get_fora_da_entidade_e_mantido(
+            self, prg_file, binding, tmp_path):
+        """Cursor num GET do fonte cujo campo NÃO existe na entidade da KB
+        (ex.: entidade espúria "arq" sem 'ecommerc' — captura 13): o valor
+        é mantido com evidência explícita, não method vazio."""
+        sem_frete = EntityDefinition(
+            name="PED", storage_type="sql",
+            fields=[FieldDefinition(name="pedido", datatype="text")])
+        integ = CaptureKnowledgeIntegrator(source_root=str(tmp_path))
+        tmpl = _template(["1"], [(7, 13)])  # GET cFrete existe no fonte
+        enr = integ.enrich_template(tmpl, [sem_frete], [binding])
+        mi = enr.screen_mappings[0].mapped_inputs[0]
+        assert not mi.field_name
+        assert not mi.placeholder
+        assert mi.method == "kept_layout_field"
+        assert mi.layout_field == "frete"
+        assert any("ausente na entidade" in ev for ev in mi.evidence)
         assert enr.mapped_inputs == 0
 
     def test_sem_source_root_nao_ha_posicional(

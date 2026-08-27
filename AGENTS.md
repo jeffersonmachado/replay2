@@ -199,7 +199,17 @@ replay2/
   `_value_range_for_field`; original inteiro puro gera `number`, não
   `decimal`; célula com PICTURE de função `@` e original alfanumérico curto
   gera `format="pattern:<original>"`, que o `DatasetBuilder` resolve
-  preservando o shape — letra→letra, dígito→dígito).
+  preservando o shape — letra→letra, dígito→dígito). Valores de 1-2 dígitos
+  com cara de opção de menu que o cursor não consegue vincular a um GET são
+  preservados com evidência explícita: `menu_option_kept` (fora de GET
+  conhecido) e `kept_layout_field` (cursor num GET cujo campo não existe na
+  entidade da KB — `layout_field` carrega o nome do campo do fonte). O
+  de→para (`_build_depara_screens`) lista esses preservados na seção
+  "mantidos" das telas com substituições e nomeia cada tela pelo código de
+  menu do título gravado (`_screen_display_name`: "3.6.1 PEDIDO E-COMMERCE"),
+  não pelo entity_name — que pode ser espúrio (entidade "arq" da KB vem de
+  um alias genérico `arq.` de outro programa e atrai telas com campos
+  genéricos).
   Replay sintético em 1 clique (v0.8.15): `synthetic_trail.py`
   (`build_synthetic_trail`) regrava a trilha da captura com os valores
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira

@@ -849,6 +849,10 @@ video {
   max-height: 420px;
 }
 
+.max-h-\[46vh\] {
+  max-height: 46vh;
+}
+
 .max-h-\[480px\] {
   max-height: 480px;
 }
@@ -861,6 +865,10 @@ video {
   max-height: 80vh;
 }
 
+.max-h-\[85vh\] {
+  max-height: 85vh;
+}
+
 .min-h-\[84px\] {
   min-height: 84px;
 }
@@ -871,10 +879,6 @@ video {
 
 .w-12 {
   width: 3rem;
-}
-
-.w-16 {
-  width: 4rem;
 }
 
 .w-2 {
@@ -947,6 +951,10 @@ video {
 
 .max-w-3xl {
   max-width: 48rem;
+}
+
+.max-w-5xl {
+  max-width: 64rem;
 }
 
 .max-w-\[1580px\] {
@@ -1208,6 +1216,10 @@ video {
   border-color: rgb(180 83 9 / 0.5);
 }
 
+.border-amber-800\/50 {
+  border-color: rgb(146 64 14 / 0.5);
+}
+
 .border-amber-900\/60 {
   border-color: rgb(120 53 15 / 0.6);
 }
@@ -1235,6 +1247,10 @@ video {
 
 .border-rose-700\/40 {
   border-color: rgb(190 18 60 / 0.4);
+}
+
+.border-rose-900\/50 {
+  border-color: rgb(136 19 55 / 0.5);
 }
 
 .border-rose-900\/60 {
@@ -1307,6 +1323,10 @@ video {
 
 .bg-amber-900\/40 {
   background-color: rgb(120 53 15 / 0.4);
+}
+
+.bg-amber-950\/20 {
+  background-color: rgb(69 26 3 / 0.2);
 }
 
 .bg-amber-950\/40 {
@@ -1390,8 +1410,21 @@ video {
   background-color: rgb(136 19 55 / 0.3);
 }
 
+.bg-rose-950 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(76 5 25 / var(--tw-bg-opacity, 1));
+}
+
+.bg-rose-950\/20 {
+  background-color: rgb(76 5 25 / 0.2);
+}
+
 .bg-rose-950\/50 {
   background-color: rgb(76 5 25 / 0.5);
+}
+
+.bg-rose-950\/60 {
+  background-color: rgb(76 5 25 / 0.6);
 }
 
 .bg-sky-900\/30 {
@@ -1429,12 +1462,20 @@ video {
   background-color: rgb(28 25 23 / var(--tw-bg-opacity, 1));
 }
 
+.bg-stone-900\/60 {
+  background-color: rgb(28 25 23 / 0.6);
+}
+
 .bg-stone-950\/35 {
   background-color: rgb(12 10 9 / 0.35);
 }
 
 .bg-stone-950\/40 {
   background-color: rgb(12 10 9 / 0.4);
+}
+
+.bg-stone-950\/60 {
+  background-color: rgb(12 10 9 / 0.6);
 }
 
 .bg-yellow-900\/30 {
@@ -1636,6 +1677,10 @@ video {
   font-weight: 500;
 }
 
+.font-normal {
+  font-weight: 400;
+}
+
 .font-semibold {
   font-weight: 600;
 }
@@ -1651,6 +1696,10 @@ video {
 .ordinal {
   --tw-ordinal: ordinal;
   font-variant-numeric: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
+}
+
+.leading-5 {
+  line-height: 1.25rem;
 }
 
 .leading-6 {
@@ -1851,6 +1900,11 @@ video {
 .text-stone-500 {
   --tw-text-opacity: 1;
   color: rgb(120 113 108 / var(--tw-text-opacity, 1));
+}
+
+.text-stone-600 {
+  --tw-text-opacity: 1;
+  color: rgb(87 83 78 / var(--tw-text-opacity, 1));
 }
 
 .text-white {

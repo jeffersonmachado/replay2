@@ -144,6 +144,60 @@ class BuildDeparaScreensTests(unittest.TestCase):
         self.assertNotIn("{KEY:ENTER}", originals)
         self.assertEqual(len(screens[0]["fields"]), 3)
 
+    def test_display_name_vem_do_codigo_de_menu(self):
+        """Título gravado com linha de menu ("| 3.6.1 PEDIDO E-COMMERCE")
+        vira o nome da tela no lugar do entity_name espúrio ("arq")."""
+        mappings = [dict(_screen_mappings()[0], screen_title=(
+            " DAKOTA S/A                                 ESTOQUE\n"
+            "  REDE DE LOJAS          | 3.6.1 PEDIDO E-COMMERCE\n"
+            " Pedido.....:"
+        ))]
+        screens = _build_depara_screens(mappings, _DATASET_ROW, {"cpf"})
+        self.assertEqual(screens[0]["display_name"], "3.6.1 Pedido E-Commerce")
+        self.assertEqual(screens[0]["entity"], "arq")
+
+    def test_display_name_cai_para_entidade_sem_titulo(self):
+        screens = _build_depara_screens(_screen_mappings(), _DATASET_ROW, {"cpf"})
+        self.assertEqual(screens[0]["display_name"], "arq")
+
+    def test_preservados_entram_em_tela_com_substituicoes(self):
+        """Inputs de dados sem campo mapeado aparecem como 'mantidos' na
+        tela que tem substituições (contabiliza tudo que foi digitado)."""
+        mappings = [dict(_screen_mappings()[0])]
+        mappings[0]["inputs"] = list(mappings[0]["inputs"]) + [
+            {"original": "4", "placeholder": None, "field_name": None,
+             "method": "kept_layout_field", "layout_field": "ecommerc"},
+            {"original": "9", "placeholder": None, "field_name": None,
+             "method": "menu_option_kept"},
+        ]
+        screens = _build_depara_screens(mappings, _DATASET_ROW, set())
+        pres = {p["original"]: p for p in screens[0]["preserved"]}
+        self.assertEqual(pres["4"]["field"], "ecommerc")
+        self.assertIn("fora da KB", pres["4"]["note"])
+        self.assertTrue(pres["9"]["note"].startswith("opção/código"))
+
+    def test_tela_so_com_campo_fora_da_kb_entra(self):
+        """Tela sem substituições mas com GET de formulário identificado
+        pelo cursor (kept_layout_field) entra no de→para."""
+        mappings = [{
+            "entity_name": "arq", "operation": "read",
+            "screen_title": "  REDE DE LOJAS | 3.6.1 PEDIDO E-COMMERCE",
+            "inputs": [
+                {"original": "4", "placeholder": None, "field_name": None,
+                 "method": "kept_layout_field", "layout_field": "ecommerc"},
+            ],
+        }]
+        screens = _build_depara_screens(mappings, _DATASET_ROW, set())
+        self.assertEqual(len(screens), 1)
+        self.assertEqual(screens[0]["preserved"][0]["field"], "ecommerc")
+        self.assertEqual(screens[0]["display_name"], "3.6.1 Pedido E-Commerce")
+
+    def test_tela_de_menu_sem_campos_nao_entra(self):
+        """Tela de navegação (só dígito de opção, sem campo mapeado nem
+        kept_layout_field) fica de fora do de→para — evita ruído."""
+        screens = _build_depara_screens(_screen_mappings(), _DATASET_ROW, {"cpf"})
+        self.assertEqual(len(screens), 1)
+
 
 class SubstitutionsPayloadTests(unittest.TestCase):
     """synthetic_substitutions_payload: manifest, rebuild e erros."""

@@ -54,6 +54,39 @@ test('renderRunDeparaHtml mostra a jornada quando presente', () => {
   assert.match(html, /Jornada: capture-13-replay/);
 });
 
+test('renderRunDeparaHtml prefere display_name e mantém entidade como contexto', () => {
+  const payload = {
+    screens: [{
+      entity: 'arq',
+      display_name: '3.6.1 Pedido E-Commerce',
+      operation: 'read',
+      fields: [{ field: 'frete', original: '1', synthetic: '2', kept: false }],
+    }],
+  };
+  const html = renderRunDeparaHtml(payload);
+  assert.match(html, /Tela 3\.6\.1 Pedido E-Commerce \(read\)/);
+  assert.match(html, /entidade arq/);
+});
+
+test('renderRunDeparaHtml lista dados digitados mantidos sem substituição', () => {
+  const payload = {
+    screens: [{
+      entity: 'arq',
+      display_name: '3.6.1 Pedido E-Commerce',
+      operation: 'read',
+      fields: [{ field: 'frete', original: '1', synthetic: '2', kept: false }],
+      preserved: [
+        { field: 'ecommerc', original: '4', note: 'campo fora da KB — original mantido', method: 'kept_layout_field' },
+        { field: '', original: 'i', note: 'sem match confiável — original mantido', method: 'unmapped' },
+      ],
+    }],
+  };
+  const html = renderRunDeparaHtml(payload);
+  assert.match(html, /ecommerc/);
+  assert.match(html, /mantido — campo fora da KB/);
+  assert.match(html, /1 de 1 campo\(s\) substituídos · 2 dado\(s\) digitado\(s\) mantido\(s\)/);
+});
+
 test('renderRunDeparaHtml escapa valores vindos do manifest', () => {
   const payload = {
     screens: [{

@@ -128,6 +128,9 @@ class TemplateInput:
     original_type: str = ""
     evidence: list[str] = field(default_factory=list)
     picture: str = ""  # PICTURE do GET (inputs mapeados por posição)
+    # Campo do layout do fonte quando o cursor achou um GET mas o campo não
+    # existe na entidade da KB (input mantido, método kept_layout_field).
+    layout_field: str = ""
 
 
 @dataclass
@@ -266,6 +269,7 @@ class JourneySynthesizer:
                     original_type=mi.original_type,
                     evidence=list(mi.evidence),
                     picture=mi.picture,
+                    layout_field=mi.layout_field,
                 ))
 
             # screen_title: binding > screen_context > screen_sample
@@ -534,6 +538,7 @@ class JourneySynthesizer:
                             "method": i.method,
                             "confidence": i.confidence,
                             "evidence": i.evidence,
+                            "layout_field": i.layout_field,
                         }
                         for i in s.inputs
                     ],
@@ -744,6 +749,7 @@ class JourneySynthesizer:
                             "confidence": i.confidence,
                             "original_type": i.original_type,
                             "evidence": i.evidence,
+                            "layout_field": i.layout_field,
                         }
                         for i in s.inputs
                     ],
@@ -776,6 +782,7 @@ class JourneySynthesizer:
                         confidence=i.get("confidence", 0.0),
                         original_type=i.get("original_type", ""),
                         evidence=i.get("evidence", []),
+                        layout_field=i.get("layout_field", ""),
                     )
                     for i in s.get("inputs", [])
                 ],

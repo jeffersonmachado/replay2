@@ -309,6 +309,22 @@ def _capture_user_from_trail(capture_jsonl: str) -> str:
     return ""
 
 
+def _screen_display_name(screen: dict) -> str:
+    """Nome amigável da tela para o de→para.
+
+    O ``entity_name`` da KB pode ser espúrio/genérico (ex.: entidade "arq"
+    descoberta de um alias ``arq.`` de outro programa) — exibi-lo como nome da
+    tela confunde o usuário. Quando o título gravado tem a linha de código de
+    menu do Recital ("| 3.6.1 PEDIDO E-COMMERCE"), usa-se "3.6.1 PEDIDO
+    E-COMMERCE"; senão, cai para o entity_name.
+    """
+    title = str(screen.get("screen_title") or "")
+    m = re.search(r"(\d+(?:\.\d+)+\s+[A-Z0-9][^\n|]{1,60})", title.upper())
+    if m:
+        return m.group(1).strip().title()
+    return str(screen.get("entity_name") or "")
+
+
 def _build_depara_screens(
     screen_mappings: list[dict],
     dataset_row: dict,
@@ -318,16 +334,37 @@ def _build_depara_screens(
     sintética e se foi mantido (chave de consulta ou igual ao original).
 
     Espelha a seleção de ``_extract_substitutions``: só entram inputs com
-    placeholder resolvido para um campo presente no dataset.
+    placeholder resolvido para um campo presente no dataset. Inputs de dados
+    SEM campo mapeado (opção de menu, campo fora da KB, texto sem match)
+    entram na lista ``preserved`` — o usuário vê todos os dados digitados
+    contabilizados, não só os substituídos.
     """
     skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
     screens: list[dict] = []
     for screen in screen_mappings or []:
         fields: list[dict] = []
+        preserved: list[dict] = []
         for inp in screen.get("inputs") or []:
             placeholder = str(inp.get("placeholder") or "")
             original = str(inp.get("original") or "")
-            if not placeholder or not original or "{KEY:" in original:
+            method = str(inp.get("method") or "")
+            if not original or "{KEY:" in original or method == "command":
+                continue
+            if not placeholder:
+                # Dado digitado mantido com o valor original — explicado.
+                if method == "kept_layout_field":
+                    note = "campo fora da KB — original mantido"
+                elif method in ("menu_option_kept", ""):
+                    note = "opção/código — original mantido"
+                else:
+                    note = "sem match confiável — original mantido"
+                preserved.append({
+                    "field": str(inp.get("layout_field")
+                                 or inp.get("field_name") or ""),
+                    "original": original,
+                    "note": note,
+                    "method": method,
+                })
                 continue
             field = str(inp.get("field_name") or "").strip()
             if not field:
@@ -351,11 +388,18 @@ def _build_depara_screens(
                 "note": note,
                 "method": str(inp.get("method") or ""),
             })
-        if fields:
+        # Telas de menu/navegação (sem campo mapeado e sem GET de formulário
+        # identificado pelo cursor) não entram: os dígitos de opção delas
+        # virariam ruído no de→para. Preservados só aparecem em telas com
+        # substituições ou com campo de formulário comprovado pelo layout.
+        has_layout_kept = any(p["method"] == "kept_layout_field" for p in preserved)
+        if fields or has_layout_kept:
             screens.append({
                 "entity": str(screen.get("entity_name") or ""),
+                "display_name": _screen_display_name(screen),
                 "operation": str(screen.get("operation") or ""),
                 "fields": fields,
+                "preserved": preserved,
             })
     return screens
 
@@ -439,6 +483,7 @@ def _screen_mappings_from_template(template) -> list[dict]:
                     "placeholder": i.placeholder,
                     "field_name": i.field_name,
                     "method": i.method,
+                    "layout_field": getattr(i, "layout_field", ""),
                 }
                 for i in step.inputs
             ],

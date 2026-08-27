@@ -2,6 +2,7 @@ import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, formatCount, html, text, statusLabel, statusToneClass } from "../core/dom.js";
 import { activatePageSections } from "../components/page_sections.js";
 import { initSkipFieldsSelect } from "../components/skip_fields_select.js";
+import { renderDeparaScreenHtml, countDeparaFields } from "../components/synthetic_depara.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -468,32 +469,12 @@ function renderSynthDepara(depara, variation) {
   const nota = variation === "equal"
     ? `Dados iguais: as ${formatCount(sessions)} sessões usam estes mesmos valores.`
     : `Valores da sessão 1 de ${formatCount(sessions)} — com dados sintetizados, cada sessão tem valores diferentes.`;
-  const corpos = screens.map((sc) => {
-    const title = `Tela ${escapeHtml(sc.entity || "-")}${sc.operation ? ` (${escapeHtml(sc.operation)})` : ""}`;
-    const rows = (sc.fields || []).map((f) => {
-      const keptBadge = f.kept
-        ? `<span class="inline-flex items-center rounded-full border border-amber-900/60 bg-amber-950/50 px-2 py-0.5 text-xs text-amber-200">mantido${f.note === "chave de consulta" ? " (chave)" : ""}</span>`
-        : "";
-      const synthClass = f.kept ? "text-stone-400" : "text-emerald-300";
-      return `<tr class="border-b border-stone-800/60">
-        <td class="px-3 py-2 font-mono text-stone-200">${escapeHtml(f.field || "-")}</td>
-        <td class="px-3 py-2 font-mono text-stone-300 break-all">${escapeHtml(f.original || "")}</td>
-        <td class="px-1 py-2 text-stone-500">→</td>
-        <td class="px-3 py-2 font-mono ${synthClass} break-all">${escapeHtml(f.synthetic || "")}</td>
-        <td class="px-3 py-2">${keptBadge}</td>
-      </tr>`;
-    }).join("");
-    return `<div>
-      <h4 class="mb-2 text-sm font-semibold text-stone-200">${title}</h4>
-      <table class="w-full text-left text-xs">
-        <thead><tr class="border-b border-stone-700/60 text-stone-400">
-          <th class="px-3 py-1">campo</th><th class="px-3 py-1">original</th><th class="px-1 py-1"></th><th class="px-3 py-1">sintético</th><th class="px-3 py-1"></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-  }).join("");
-  return `<div class="text-xs text-stone-400">${escapeHtml(nota)}</div>${corpos}`;
+  const { campos, substituidos, preservados } = countDeparaFields(screens);
+  const resumo = `${substituidos} de ${campos} campo(s) substituídos` +
+    (preservados ? ` · ${preservados} dado(s) digitado(s) mantido(s) com o valor original` : "") +
+    ".";
+  const corpos = screens.map((sc) => renderDeparaScreenHtml(sc)).join("");
+  return `<div class="text-xs text-stone-400">${escapeHtml(nota)}</div><div class="text-xs text-stone-400">${escapeHtml(resumo)}</div>${corpos}`;
 }
 
 async function synthesizeCapture(captureId) {  const btn = document.getElementById("cap_synthesize_btn");

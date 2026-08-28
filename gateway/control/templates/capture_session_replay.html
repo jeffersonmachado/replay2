@@ -733,7 +733,10 @@ input[type="range"] {
   let allEventsPromise = null;
   let streamLoadFailed = null;
   const REPLAY_STREAM_FIRST_CHUNK = 60;
-  const REPLAY_STREAM_CHUNK = 200;
+  // 500/janela: com índice + cache de estado (stream=1), cada janela custa
+  // ~1s fixo + ~28ms/evento materializado + re-feed ≤1000 eventos —
+  // janelas maiores diluem o custo fixo e o nº de requests.
+  const REPLAY_STREAM_CHUNK = 500;
 
   async function ensureAllPlaybackEvents(onProgress) {
     if (allEventsLoaded) return true;

@@ -449,6 +449,7 @@ input[type="range"] {
   let _buildTimelineItems;
   let _findBestCheckpoint;
   let _createReplayState;
+  let calcDelay, _shouldBatch, _MAX_EVENTS_PER_TICK;
   let sessionEncoding = 'utf-8';
   // Lista lazy da timeline (scroll infinito em lotes)
   let eventsLazyList = null;
@@ -477,6 +478,7 @@ input[type="range"] {
     import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
     import('/assets/js/components/replay_snapshot_state.js').then(mod => { _createReplayState = mod.createReplayState; }),
     import('/assets/js/components/replay_window_loader.js').then(mod => { _mergeReplayWindow = mod.mergeReplayWindow; _nextWindowOffset = mod.nextWindowOffset; }),
+    import('/assets/js/components/playback_pacing.js').then(mod => { calcDelay = mod.calcDelay; _shouldBatch = mod.shouldBatch; _MAX_EVENTS_PER_TICK = mod.MAX_EVENTS_PER_TICK; }),
   ]);
 
   // Carregar dados de replay
@@ -1413,17 +1415,7 @@ input[type="range"] {
     window.location = `/runs/${runId}`;
   }
 
-  function calcDelay(currentEvent, nextEvent, speed) {
-    var currentTs = (currentEvent && currentEvent.ts_ms) ? currentEvent.ts_ms : 0;
-    var nextTs = (nextEvent && nextEvent.ts_ms) ? nextEvent.ts_ms : 0;
-    var rawDelay = nextTs - currentTs;
-    // Delay minimo de 50ms para eventos sem timestamp ou muito proximos
-    if (!rawDelay || rawDelay <= 0) return 50;
-    // Ajusta pela velocidade (speed=1 → tempo real, speed=2 → metade do tempo)
-    var adjusted = rawDelay / (speed || 1);
-    // Limita entre 50ms e 5s para evitar pausas muito longas ou muito curtas
-    return Math.max(50, Math.min(adjusted, 5000));
-  }
+  // calcDelay/shouldBatch vêm de playback_pacing.js (importado no boot).
 
   function startPlayback() {
     var events = playbackEvents();
@@ -1454,42 +1446,68 @@ input[type="range"] {
 
     var events = playbackEvents();
     var total = playbackDisplayTotal(events);
-    var idx = playbackState.nextEventIndex ?? 0;
-    if (idx >= events.length) {
-      if (!allEventsLoaded && !streamLoadFailed) {
-        // Streaming: ainda há janelas a caminho — aguarda a próxima fusão
-        // em vez de encerrar o playback no fim do que já chegou.
-        var waitCounter = document.getElementById('playback-event-counter');
-        if (waitCounter) waitCounter.textContent = idx + ' / ' + total + ' (carregando...)';
-        playbackState._pendingPair = null;
-        playbackTimeout = setTimeout(playNextEvent, 250);
-        return;
-      }
-      finalizePlaybackUi();
-      return;
-    }
-
-    var event = events[idx];
     var outputEl = document.getElementById('playback-output');
     var progressBar = document.getElementById('playback-progress-bar');
     var counter = document.getElementById('playback-event-counter');
+    var terminal = document.getElementById('playback-terminal');
 
-    // Aplica EXATAMENTE UMA VEZ
-    if (event.direction === 'out') {
-      feedReplayEvent(playbackState, event);
+    // Aplica em lote os eventos cuja espera ajustada cabe num frame
+    // (playback_pacing.shouldBatch). Sem o lote, o piso de 50ms por evento
+    // limitava o player a ~20 eventos/s em QUALQUER velocidade — o slider
+    // parecia não funcionar em capturas com milhares de chunks de saída.
+    var delay = 50;
+    var applied = 0;
+    var lastEvent = null;
+    var nextEvent = null;
+    var needsRender = false;
+
+    while (true) {
+      var idx = playbackState.nextEventIndex ?? 0;
+      if (idx >= events.length) {
+        if (!allEventsLoaded && !streamLoadFailed) {
+          // Streaming: ainda há janelas a caminho — aguarda a próxima fusão
+          // em vez de encerrar o playback no fim do que já chegou.
+          if (counter) counter.textContent = idx + ' / ' + total + ' (carregando...)';
+          playbackState._pendingPair = null;
+          playbackTimeout = setTimeout(playNextEvent, 250);
+          return;
+        }
+        finalizePlaybackUi();
+        return;
+      }
+
+      var event = events[idx];
+      // Aplica EXATAMENTE UMA VEZ
+      if (event.direction === 'out') {
+        feedReplayEvent(playbackState, event);
+        needsRender = true;
+      }
+      playbackState.displayedEventIndex = idx;
+      playbackState.nextEventIndex = idx + 1;
+      lastEvent = event;
+      applied++;
+
+      var nextIdx = playbackState.nextEventIndex;
+      nextEvent = nextIdx < events.length ? events[nextIdx] : null;
+      delay = nextEvent ? calcDelay(event, nextEvent, playbackState.speed) : 50;
+      if (!_shouldBatch(delay) || applied >= _MAX_EVENTS_PER_TICK) break;
+    }
+
+    // Renderiza a tela UMA vez por tick — o innerHTML por evento era o
+    // gargalo visual nas rajadas de chunks de saída.
+    if (needsRender && outputEl) {
       var snap = playbackState._snapshot;
       if (snap && snap.cells && typeof renderSnapshotToHtml === 'function') {
         outputEl.innerHTML = renderSnapshotToHtml(snap);
       }
     }
-
-    var terminal = document.getElementById('playback-terminal');
     if (terminal) terminal.scrollTop = terminal.scrollHeight;
 
-    var progress = ((idx + 1) / total) * 100;
+    var doneIdx = playbackState.displayedEventIndex;
+    var progress = ((doneIdx + 1) / total) * 100;
     progressBar.style.width = progress + '%';
-    counter.textContent = (idx + 1) + ' / ' + total;
-    document.getElementById('playback-seq-current').textContent = 'seq: ' + (event?.seq ?? '-');
+    counter.textContent = (doneIdx + 1) + ' / ' + total;
+    document.getElementById('playback-seq-current').textContent = 'seq: ' + (lastEvent?.seq ?? '-');
     document.getElementById('playback-geometry-info').textContent =
       'geom: ' + termGeometry.rows + '\u00D7' + termGeometry.cols + ' (' + termGeometry.source + ')';
 
@@ -1499,15 +1517,9 @@ input[type="range"] {
       sigInfo.textContent = 'text_sig: ' + ((playbackState._snapshot.text_sig || '').substring(0, 20) || '-') + ' | visual_sig: ' + ((playbackState._snapshot.visual_sig || '').substring(0, 20) || '-');
     }
 
-    playbackState.displayedEventIndex = idx;
-    playbackState.nextEventIndex = idx + 1;
-
-    var nextIdx = playbackState.nextEventIndex;
-    var nextEvent = nextIdx < events.length ? events[nextIdx] : null;
-    var delay = nextEvent ? calcDelay(event, nextEvent, playbackState.speed) : 50;
     // Guarda o par de eventos do timeout pendente para o slider de
     // velocidade poder reagendar com o novo delay sem esperar o ciclo.
-    playbackState._pendingPair = { event: event, nextEvent: nextEvent };
+    playbackState._pendingPair = { event: lastEvent, nextEvent: nextEvent };
     playbackTimeout = setTimeout(playNextEvent, delay);
   }
 

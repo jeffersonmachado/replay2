@@ -8,6 +8,7 @@ import {
   MIN_DELAY_MS,
   MAX_DELAY_MS,
   MAX_EVENTS_PER_TICK,
+  SKIP_PAUSES_DELAY_MS,
 } from './playback_pacing.js';
 
 const ev = (ts_ms) => ({ ts_ms });
@@ -111,4 +112,38 @@ test('playback em lote: preserva o tempo real em 1x e acelera de verdade em 4x',
   // Modelo antigo (piso fixo de 50ms, 1 evento por tick): 4x mal acelerava.
   const oldMs = (events.length - 1) * MIN_DELAY_MS; // 4x caía no mesmo piso
   assert.ok(t4 * 3 < oldMs, `4x=${t4}ms deveria ser muito menor que o piso antigo (${oldMs}ms)`);
+});
+
+test('pular pausas: teto curto comprime think-time mesmo a 1x', () => {
+  // Gap de 6s (digitação real da captura 59): normal a 1x → 5s (teto
+  // padrão); com pular pausas → 150ms.
+  assert.equal(calcDelay(ev(1000), ev(7000), 1), MAX_DELAY_MS);
+  assert.equal(calcDelay(ev(1000), ev(7000), 1, SKIP_PAUSES_DELAY_MS), SKIP_PAUSES_DELAY_MS);
+  // Gaps curtos reais continuam respeitados (abaixo do teto curto).
+  assert.equal(calcDelay(ev(1000), ev(1100), 1, SKIP_PAUSES_DELAY_MS), 100);
+});
+
+test('pular pausas: sessão com think-time colapsa no playback', () => {
+  // 120 eventos a cada 6s = 12min de captura — o cenário da captura 59.
+  const events = [];
+  let ts = 0;
+  for (let i = 0; i < 120; i++) { events.push(ev(ts)); ts += 6000; }
+
+  function totalTime(speed, maxDelay) {
+    let i = 0;
+    let totalMs = 0;
+    let guard = 0;
+    while (i < events.length && guard++ < 100000) {
+      const plan = planPlaybackTick(events, i, speed, maxDelay);
+      totalMs += plan.waitMs;
+      i = Math.max(plan.nextIndex, i + 1);
+    }
+    return totalMs;
+  }
+
+  const normal = totalTime(1, undefined);
+  const pulando = totalTime(1, SKIP_PAUSES_DELAY_MS);
+  assert.ok(normal > 500000, `normal=${normal}ms deveria ser ~12min`);
+  // 120 eventos × ~150ms ≈ 18s — duas ordens de grandeza abaixo.
+  assert.ok(pulando < 30000, `pulando=${pulando}ms deveria ser ~18s`);
 });

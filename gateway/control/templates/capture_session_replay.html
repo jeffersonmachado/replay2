@@ -114,7 +114,13 @@
       <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
         <label for="playback-speed" class="text-xs text-stone-400">Velocidade</label>
         <input id="playback-speed" type="range" min="0.25" max="4" step="0.25" value="1" class="w-full mt-2" />
-        <p id="playback-speed-label" class="text-xs text-stone-300 mt-1">1.0x</p>
+        <div class="flex items-center justify-between mt-1">
+          <p id="playback-speed-label" class="text-xs text-stone-300">1.0x</p>
+          <label for="playback-skip-pauses" class="flex items-center gap-1 text-xs text-stone-400 cursor-pointer" title="Pausas de digitação (think-time) viram 150ms — o playback não espera o tempo real entre teclas">
+            <input id="playback-skip-pauses" type="checkbox" class="accent-rose-500" />
+            Pular pausas
+          </label>
+        </div>
       </div>
       <div class="r2ctl-detail-surface rounded-2xl px-4 py-2">
         <p class="text-xs text-stone-400">Progresso</p>
@@ -430,7 +436,7 @@ input[type="range"] {
 
   let replayData = null;
   let termGeometry = { rows: 25, cols: 80, source: 'legacy_fallback' };
-  let playbackState = { isRunning: false, isPaused: false, currentEventIndex: 0, speed: 1 };
+  let playbackState = { isRunning: false, isPaused: false, currentEventIndex: 0, speed: 1, skipPauses: false };
   let playbackTimeout = null;
   let operationalReplayReady = false;
   let eventsFilterMode = 'all';
@@ -449,7 +455,7 @@ input[type="range"] {
   let _buildTimelineItems;
   let _findBestCheckpoint;
   let _createReplayState;
-  let calcDelay, _planPlaybackTick;
+  let calcDelay, _planPlaybackTick, SKIP_PAUSES_DELAY_MS = 150;
   let sessionEncoding = 'utf-8';
   // Lista lazy da timeline (scroll infinito em lotes)
   let eventsLazyList = null;
@@ -478,7 +484,7 @@ input[type="range"] {
     import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
     import('/assets/js/components/replay_snapshot_state.js').then(mod => { _createReplayState = mod.createReplayState; }),
     import('/assets/js/components/replay_window_loader.js').then(mod => { _mergeReplayWindow = mod.mergeReplayWindow; _nextWindowOffset = mod.nextWindowOffset; }),
-    import('/assets/js/components/playback_pacing.js').then(mod => { calcDelay = mod.calcDelay; _planPlaybackTick = mod.planPlaybackTick; }),
+    import('/assets/js/components/playback_pacing.js').then(mod => { calcDelay = mod.calcDelay; _planPlaybackTick = mod.planPlaybackTick; SKIP_PAUSES_DELAY_MS = mod.SKIP_PAUSES_DELAY_MS; }),
   ]);
 
   // Carregar dados de replay
@@ -1036,21 +1042,36 @@ input[type="range"] {
     document.getElementById('playback-progress-bar').style.width = '0%';
   });
 
-  document.getElementById('playback-speed')?.addEventListener('input', (e) => {
-    playbackState.speed = parseFloat(e.target.value);
-    document.getElementById('playback-speed-label').textContent = playbackState.speed.toFixed(2) + 'x';
-    persistPlaybackPrefs({ speed: playbackState.speed });
-    // Aplica em tempo real: reagenda o timeout pendente com o novo delay
-    // (antes, a velocidade só valia a partir do PRÓXIMO evento agendado).
+  // Reagenda o tick pendente com o delay atual (velocidade × pular
+  // pausas) — usado pelo slider e pelo checkbox para valer em tempo real,
+  // não só a partir do próximo evento agendado.
+  function playbackMaxDelay() {
+    return playbackState.skipPauses ? SKIP_PAUSES_DELAY_MS : undefined;
+  }
+
+  function reschedulePendingTick() {
     if (playbackState.isRunning && !playbackState.isPaused
         && playbackTimeout && playbackState._pendingPair) {
       clearTimeout(playbackTimeout);
       const pair = playbackState._pendingPair;
       const delay = pair.nextEvent
-        ? calcDelay(pair.event, pair.nextEvent, playbackState.speed)
+        ? calcDelay(pair.event, pair.nextEvent, playbackState.speed, playbackMaxDelay())
         : 50;
       playbackTimeout = setTimeout(playNextEvent, delay);
     }
+  }
+
+  document.getElementById('playback-speed')?.addEventListener('input', (e) => {
+    playbackState.speed = parseFloat(e.target.value);
+    document.getElementById('playback-speed-label').textContent = playbackState.speed.toFixed(2) + 'x';
+    persistPlaybackPrefs({ speed: playbackState.speed });
+    reschedulePendingTick();
+  });
+
+  document.getElementById('playback-skip-pauses')?.addEventListener('change', (e) => {
+    playbackState.skipPauses = !!e.target.checked;
+    persistPlaybackPrefs({ skipPauses: playbackState.skipPauses });
+    reschedulePendingTick();
   });
 
   // ── feedReplayEvent: somente snapshot/diff (TerminalEngine Python) ──
@@ -1332,6 +1353,10 @@ input[type="range"] {
     if (speedInput) speedInput.value = String(safeSpeed);
     if (speedLabel) speedLabel.textContent = `${safeSpeed.toFixed(2)}x`;
 
+    playbackState.skipPauses = !!prefs?.skipPauses;
+    const skipInput = document.getElementById('playback-skip-pauses');
+    if (skipInput) skipInput.checked = playbackState.skipPauses;
+
     const panel = document.getElementById('playback-panel');
     const startBtn = document.getElementById('playback-start-btn');
     if (!panel || !startBtn) return;
@@ -1474,7 +1499,7 @@ input[type="range"] {
       return;
     }
 
-    var plan = _planPlaybackTick(events, idx, playbackState.speed);
+    var plan = _planPlaybackTick(events, idx, playbackState.speed, playbackMaxDelay());
     var needsRender = false;
     for (var k = plan.startIndex; k < plan.nextIndex; k++) {
       var event = events[k];

@@ -17,8 +17,12 @@ export const MAX_DELAY_MS = 5000;
 // Teto de segurança de eventos por tick — evita travar a UI numa rajada
 // gigante de eventos sem delta de tempo.
 export const MAX_EVENTS_PER_TICK = 300;
+// Modo "pular pausas": think-time do usuário (segundos entre teclas) vira
+// uma pausa curta fixa. Sem ele, uma captura com ~1h de digitação real
+// (ex.: captura 59, ~6s entre teclas) leva ~17min de playback mesmo a 4x.
+export const SKIP_PAUSES_DELAY_MS = 150;
 
-export function calcDelay(currentEvent, nextEvent, speed) {
+export function calcDelay(currentEvent, nextEvent, speed, maxDelayMs = MAX_DELAY_MS) {
   const currentTs = currentEvent && currentEvent.ts_ms ? currentEvent.ts_ms : 0;
   const nextTs = nextEvent && nextEvent.ts_ms ? nextEvent.ts_ms : 0;
   const s = speed || 1;
@@ -28,15 +32,16 @@ export function calcDelay(currentEvent, nextEvent, speed) {
   // speed=1 → tempo real; speed=2 → metade do tempo
   const adjusted = rawDelay / s;
   // O piso acompanha a velocidade: em 4x cai para ~12ms
-  return Math.max(MIN_DELAY_MS / s, Math.min(adjusted, MAX_DELAY_MS));
+  return Math.max(MIN_DELAY_MS / s, Math.min(adjusted, maxDelayMs));
 }
 
 // Planeja um tick de playback a partir de startIdx: aplica em lote os
 // eventos que cabem num frame e calcula a espera até o próximo tick.
 // Retorna { startIndex, nextIndex, applied, waitMs, firstEvent, nextEvent },
 // onde nextIndex é o primeiro evento NÃO aplicado e nextEvent ele mesmo
-// (null no fim da lista).
-export function planPlaybackTick(events, startIdx, speed) {
+// (null no fim da lista). maxDelayMs sobrescreve o teto de pausa (modo
+// "pular pausas" passa SKIP_PAUSES_DELAY_MS para comprimir think-time).
+export function planPlaybackTick(events, startIdx, speed, maxDelayMs = MAX_DELAY_MS) {
   const s = speed || 1;
   const firstEvent = events[startIdx] || null;
   let i = startIdx;
@@ -56,7 +61,7 @@ export function planPlaybackTick(events, startIdx, speed) {
     if (i - startIdx >= MAX_EVENTS_PER_TICK) break;
   }
   const nextEvent = i < events.length ? events[i] : null;
-  const waitMs = nextEvent && firstEvent ? calcDelay(firstEvent, nextEvent, s) : MIN_DELAY_MS;
+  const waitMs = nextEvent && firstEvent ? calcDelay(firstEvent, nextEvent, s, maxDelayMs) : MIN_DELAY_MS;
   return {
     startIndex: startIdx,
     nextIndex: i,

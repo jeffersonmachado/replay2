@@ -1,14 +1,15 @@
 // Ritmo do playback da sessão capturada.
 //
-// O delay entre dois eventos vem do delta de ts_ms dividido pela velocidade,
-// com piso e teto sensíveis à velocidade. O piso NÃO pode ser fixo: com 50ms
-// por evento o player fica limitado a ~20 eventos/s em qualquer velocidade —
-// em capturas com milhares de chunks de saída o slider parecia não funcionar
-// (ex.: 6426 eventos levavam 7min mesmo a 4x).
+// O player aplica eventos em lote por tick: cabem no lote os eventos cuja
+// soma dos deltas de tempo ajustados (raw/speed) fica dentro de um frame
+// (TICK_BUDGET_MS). A espera do tick é o tempo total do lote (primeiro
+// evento aplicado → próximo não aplicado), então o relógio do playback é
+// preservado — 1x continua tempo real e 4x é 4x mais rápido DE VERDADE.
 //
-// Os eventos cuja espera ajustada cabe num frame (< TICK_BUDGET_MS) são
-// aplicados em lote no mesmo tick pelo chamador (shouldBatch), que renderiza
-// a tela uma única vez por tick.
+// Sem o lote, o piso fixo de 50ms por evento limitava o player a
+// ~20 eventos/s em qualquer velocidade: em capturas com milhares de chunks
+// de saída (ex.: captura 59, 6426 eventos) o slider parecia não funcionar
+// (7min de playback a 4x) e a tela re-renderizava a cada evento.
 
 export const TICK_BUDGET_MS = 100;
 export const MIN_DELAY_MS = 50;
@@ -30,8 +31,31 @@ export function calcDelay(currentEvent, nextEvent, speed) {
   return Math.max(MIN_DELAY_MS / s, Math.min(adjusted, MAX_DELAY_MS));
 }
 
-// true = o próximo evento entra no mesmo tick (rajada); false = o chamador
-// agenda setTimeout com o delay retornado por calcDelay.
-export function shouldBatch(delayMs) {
-  return delayMs < TICK_BUDGET_MS;
+// Planeja um tick de playback a partir de startIdx: aplica em lote os
+// eventos que cabem num frame e calcula a espera até o próximo tick.
+// Retorna { startIndex, nextIndex, applied, waitMs, firstEvent, nextEvent },
+// onde nextIndex é o primeiro evento NÃO aplicado e nextEvent ele mesmo
+// (null no fim da lista).
+export function planPlaybackTick(events, startIdx, speed) {
+  const s = speed || 1;
+  const firstEvent = events[startIdx] || null;
+  let i = startIdx;
+  let acc = 0;
+  while (i < events.length - 1) {
+    const raw = Math.max(0, (events[i + 1].ts_ms || 0) - (events[i].ts_ms || 0)) / s;
+    if (i > startIdx && acc + raw > TICK_BUDGET_MS) break;
+    acc += raw;
+    i++;
+    if (i - startIdx >= MAX_EVENTS_PER_TICK) break;
+  }
+  const nextEvent = i < events.length ? events[i] : null;
+  const waitMs = nextEvent && firstEvent ? calcDelay(firstEvent, nextEvent, s) : MIN_DELAY_MS;
+  return {
+    startIndex: startIdx,
+    nextIndex: i,
+    applied: i - startIdx,
+    waitMs,
+    firstEvent,
+    nextEvent,
+  };
 }

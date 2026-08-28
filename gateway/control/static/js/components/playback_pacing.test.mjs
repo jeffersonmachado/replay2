@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   calcDelay,
-  shouldBatch,
+  planPlaybackTick,
   TICK_BUDGET_MS,
   MIN_DELAY_MS,
   MAX_DELAY_MS,
@@ -37,37 +37,55 @@ test('calcDelay: teto de 5s para pausas longas', () => {
   assert.equal(calcDelay(ev(0), ev(60000), 1), MAX_DELAY_MS);
 });
 
-test('calcDelay: sem timestamps usa o piso como base', () => {
-  assert.equal(calcDelay({}, {}, 1), MIN_DELAY_MS);
+test('planPlaybackTick: gap longo isolado aplica 1 evento e espera o gap', () => {
+  const events = [ev(0), ev(6200), ev(6210)];
+  const plan = planPlaybackTick(events, 0, 1);
+  assert.equal(plan.applied, 1);
+  assert.equal(plan.nextIndex, 1);
+  assert.equal(plan.waitMs, 5000); // teto
+  assert.equal(plan.firstEvent, events[0]);
+  assert.equal(plan.nextEvent, events[1]);
 });
 
-test('shouldBatch: delays menores que o frame entram no mesmo tick', () => {
-  assert.equal(shouldBatch(TICK_BUDGET_MS - 1), true);
-  assert.equal(shouldBatch(TICK_BUDGET_MS), false);
-  assert.equal(shouldBatch(250), false);
+test('planPlaybackTick: rajada sem delta de tempo entra num tick só', () => {
+  const events = [ev(100), ev(100), ev(100), ev(100)];
+  const plan = planPlaybackTick(events, 0, 1);
+  assert.equal(plan.applied, 3);
+  assert.equal(plan.nextIndex, 3);
+  assert.equal(plan.waitMs, MIN_DELAY_MS); // span 0 → piso uma vez só
 });
 
-test('playback em lote: captura de rajada deixa de levar minutos a 4x', () => {
-  // Simula o modelo do player: aplica em lote os eventos com delay < frame e
-  // agenda timeout só nos limites de lote. 6426 eventos a cada ~57ms.
+test('planPlaybackTick: respeita o teto de eventos por tick', () => {
+  const events = Array.from({ length: MAX_EVENTS_PER_TICK + 50 }, () => ev(0));
+  const plan = planPlaybackTick(events, 0, 1);
+  assert.ok(plan.applied <= MAX_EVENTS_PER_TICK);
+});
+
+test('playback em lote: preserva o tempo real em 1x e acelera de verdade em 4x', () => {
+  // 6426 eventos a cada ~57ms — rajada como a da captura 59.
   const events = [];
   let ts = 0;
   for (let i = 0; i < 6426; i++) { events.push(ev(ts)); ts += 57; }
-  for (const speed of [1, 4]) {
+  const span = events[events.length - 1].ts_ms - events[0].ts_ms;
+
+  function totalTime(speed) {
     let i = 0;
     let totalMs = 0;
     while (i < events.length - 1) {
-      let applied = 0;
-      let delay = 0;
-      do {
-        delay = calcDelay(events[i], events[i + 1], speed);
-        i++;
-        applied++;
-      } while (i < events.length - 1 && shouldBatch(delay) && applied < MAX_EVENTS_PER_TICK);
-      totalMs += delay;
+      const plan = planPlaybackTick(events, i, speed);
+      totalMs += plan.waitMs;
+      i = plan.nextIndex;
     }
-    // Sem o lote, 6426 eventos custavam >= 321s (6426 x 50ms) em qualquer
-    // velocidade. Com o lote, a rajada flui em poucos segundos.
-    assert.ok(totalMs < 30000, `playback a ${speed}x levou ${totalMs}ms`);
+    return totalMs;
   }
+
+  // 1x continua tempo real (±2% pelos pisos); 4x é 4x mais rápido de verdade.
+  const t1 = totalTime(1);
+  const t4 = totalTime(4);
+  assert.ok(Math.abs(t1 - span) / span < 0.02, `1x=${t1}ms deveria ≈ ${span}ms (tempo real)`);
+  assert.ok(Math.abs(t4 - span / 4) / (span / 4) < 0.02, `4x=${t4}ms deveria ≈ ${span / 4}ms`);
+
+  // Modelo antigo (piso fixo de 50ms, 1 evento por tick): 4x mal acelerava.
+  const oldMs = (events.length - 1) * MIN_DELAY_MS; // 4x caía no mesmo piso
+  assert.ok(t4 * 3 < oldMs, `4x=${t4}ms deveria ser muito menor que o piso antigo (${oldMs}ms)`);
 });

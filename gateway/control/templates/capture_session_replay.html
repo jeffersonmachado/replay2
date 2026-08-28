@@ -449,7 +449,7 @@ input[type="range"] {
   let _buildTimelineItems;
   let _findBestCheckpoint;
   let _createReplayState;
-  let calcDelay, _shouldBatch, _MAX_EVENTS_PER_TICK;
+  let calcDelay, _planPlaybackTick;
   let sessionEncoding = 'utf-8';
   // Lista lazy da timeline (scroll infinito em lotes)
   let eventsLazyList = null;
@@ -478,7 +478,7 @@ input[type="range"] {
     import('/assets/js/components/checkpoint_seek.js').then(mod => { _findBestCheckpoint = mod.findBestCheckpoint; }),
     import('/assets/js/components/replay_snapshot_state.js').then(mod => { _createReplayState = mod.createReplayState; }),
     import('/assets/js/components/replay_window_loader.js').then(mod => { _mergeReplayWindow = mod.mergeReplayWindow; _nextWindowOffset = mod.nextWindowOffset; }),
-    import('/assets/js/components/playback_pacing.js').then(mod => { calcDelay = mod.calcDelay; _shouldBatch = mod.shouldBatch; _MAX_EVENTS_PER_TICK = mod.MAX_EVENTS_PER_TICK; }),
+    import('/assets/js/components/playback_pacing.js').then(mod => { calcDelay = mod.calcDelay; _planPlaybackTick = mod.planPlaybackTick; }),
   ]);
 
   // Carregar dados de replay
@@ -1451,47 +1451,38 @@ input[type="range"] {
     var counter = document.getElementById('playback-event-counter');
     var terminal = document.getElementById('playback-terminal');
 
-    // Aplica em lote os eventos cuja espera ajustada cabe num frame
-    // (playback_pacing.shouldBatch). Sem o lote, o piso de 50ms por evento
-    // limitava o player a ~20 eventos/s em QUALQUER velocidade — o slider
-    // parecia não funcionar em capturas com milhares de chunks de saída.
-    var delay = 50;
-    var applied = 0;
-    var lastEvent = null;
-    var nextEvent = null;
-    var needsRender = false;
-
-    while (true) {
-      var idx = playbackState.nextEventIndex ?? 0;
-      if (idx >= events.length) {
-        if (!allEventsLoaded && !streamLoadFailed) {
-          // Streaming: ainda há janelas a caminho — aguarda a próxima fusão
-          // em vez de encerrar o playback no fim do que já chegou.
-          if (counter) counter.textContent = idx + ' / ' + total + ' (carregando...)';
-          playbackState._pendingPair = null;
-          playbackTimeout = setTimeout(playNextEvent, 250);
-          return;
-        }
-        finalizePlaybackUi();
+    // Aplica em lote os eventos que cabem num frame (playback_pacing).
+    // Sem o lote, o piso de 50ms por evento limitava o player a
+    // ~20 eventos/s em QUALQUER velocidade — o slider parecia não
+    // funcionar em capturas com milhares de chunks de saída.
+    var idx = playbackState.nextEventIndex ?? 0;
+    if (idx >= events.length) {
+      if (!allEventsLoaded && !streamLoadFailed) {
+        // Streaming: ainda há janelas a caminho — aguarda a próxima fusão
+        // em vez de encerrar o playback no fim do que já chegou.
+        if (counter) counter.textContent = idx + ' / ' + total + ' (carregando...)';
+        playbackState._pendingPair = null;
+        playbackTimeout = setTimeout(playNextEvent, 250);
         return;
       }
+      finalizePlaybackUi();
+      return;
+    }
 
-      var event = events[idx];
+    var plan = _planPlaybackTick(events, idx, playbackState.speed);
+    var needsRender = false;
+    for (var k = plan.startIndex; k < plan.nextIndex; k++) {
+      var event = events[k];
       // Aplica EXATAMENTE UMA VEZ
       if (event.direction === 'out') {
         feedReplayEvent(playbackState, event);
         needsRender = true;
       }
-      playbackState.displayedEventIndex = idx;
-      playbackState.nextEventIndex = idx + 1;
-      lastEvent = event;
-      applied++;
-
-      var nextIdx = playbackState.nextEventIndex;
-      nextEvent = nextIdx < events.length ? events[nextIdx] : null;
-      delay = nextEvent ? calcDelay(event, nextEvent, playbackState.speed) : 50;
-      if (!_shouldBatch(delay) || applied >= _MAX_EVENTS_PER_TICK) break;
+      playbackState.displayedEventIndex = k;
+      playbackState.nextEventIndex = k + 1;
     }
+    var lastEvent = events[plan.nextIndex - 1] || null;
+    var nextEvent = plan.nextEvent;
 
     // Renderiza a tela UMA vez por tick — o innerHTML por evento era o
     // gargalo visual nas rajadas de chunks de saída.
@@ -1517,10 +1508,12 @@ input[type="range"] {
       sigInfo.textContent = 'text_sig: ' + ((playbackState._snapshot.text_sig || '').substring(0, 20) || '-') + ' | visual_sig: ' + ((playbackState._snapshot.visual_sig || '').substring(0, 20) || '-');
     }
 
-    // Guarda o par de eventos do timeout pendente para o slider de
-    // velocidade poder reagendar com o novo delay sem esperar o ciclo.
-    playbackState._pendingPair = { event: lastEvent, nextEvent: nextEvent };
-    playbackTimeout = setTimeout(playNextEvent, delay);
+    // A espera do tick é o tempo total do lote (primeiro evento aplicado →
+    // próximo não aplicado), preservando o tempo real: o lote só economiza
+    // ciclos de renderização, NÃO comprime o relógio. O par guardado ancora
+    // o reagendamento do slider de velocidade com o mesmo cálculo.
+    playbackState._pendingPair = { event: plan.firstEvent, nextEvent: nextEvent };
+    playbackTimeout = setTimeout(playNextEvent, plan.waitMs);
   }
 
   // Voltar à página de capturas: o <a href="/captures"> já navega nativamente.

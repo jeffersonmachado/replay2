@@ -272,7 +272,13 @@ replay2/
   sem nenhuma linha em comum — divergência de contexto, não funcional) e, sem
   exigência de idade, mudanças de contexto app ↔ shell
   (`context_switch_override`: telas disjuntas + prompt ksh/`not found` em um
-  dos lados). A trilha
+  dos lados) e avanços além da referência (`content_present_override`: toda
+  linha não-vazia da tela esperada presente na observada, verbatim ou como
+  prefixo com eco ≥ 4 chars — eco/rolagem, a sessão avançou sem divergir). A
+  falha de checkpoint de um `deterministic_input` é registrada UMA vez só
+  (o `wait_checkpoint` do strict-global recebe `record_failure=False`; o
+  registro definitivo com a ação skip/send-anyway é o do
+  `_deterministic_failure` no except). A trilha
   sintética grava o manifest `trail/de-para.json` (original → sintético por
   tela, com os mantidos marcados); a página de replay da sessão exibe o
   badge "sintético • captura #N" com link para o replay de origem e o botão

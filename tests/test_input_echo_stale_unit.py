@@ -1,6 +1,13 @@
 """Testes da tolerância de eco de input e da referência envelhecida no replay."""
 from __future__ import annotations
 
+import base64
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+from dakota_gateway.replay import ReplayConfig
+from dakota_gateway import replay_control
 from dakota_gateway.replay_compare import apply_input_echo_fallback
 from dakota_gateway.replay_control.deterministic import (
     _deterministic_failure,
@@ -291,3 +298,209 @@ def test_falha_context_switch_rebaixada_no_registro_deterministico():
     assert failure["failure_type"] == "screen_divergence"
     assert failure["severity"] == "low"
     assert "app ↔ shell" in failure["message"]
+
+
+MENU_REF = (
+    "Menu de opcoes do usuario ferblo\n"
+    "  1 - (REDE LOJAS) Sistema das Lojas\n"
+    "  0 - Fim\n"
+    "Digite a sua opcao:\n"
+)
+
+MENU_AVANCOU = (
+    "Menu de opcoes do usuario ferblo\n"
+    "  1 - (REDE LOJAS) Sistema das Lojas\n"
+    "  0 - Fim\n"
+    "Digite a sua opcao: 0\n"
+    "(ferblo)MIG24:/dakota1/u/ferblo >\n"
+)
+
+
+def test_content_present_rebaixa_quando_tela_avancou_com_eco():
+    """Toda linha esperada presente (verbatim ou prefixo com eco) = avançou sem divergir."""
+    from dakota_gateway.replay_control.deterministic import content_present_override
+
+    failure_type, severity, reason = content_present_override(
+        "screen_divergence",
+        "medium",
+        "checkpoint não estabilizou",
+        expected_screen=MENU_REF,
+        observed_screen=MENU_AVANCOU,
+    )
+    assert failure_type == "screen_divergence"
+    assert severity == "low"
+    assert "conteúdo esperado presente" in reason
+
+
+def test_content_present_rebaixa_superset_com_scrollback():
+    """Todas as linhas verbatim + saída extra de shell (date, erros) = rolagem."""
+    from dakota_gateway.replay_control.deterministic import content_present_override
+
+    observed = MENU_REF + "(ferblo)MIG24:/dakota11/est > date\nFri Aug 28 14:24:35 -03 2026\n"
+    _, severity, _ = content_present_override(
+        "screen_divergence", "medium", "motivo",
+        expected_screen=MENU_REF, observed_screen=observed,
+    )
+    assert severity == "low"
+
+
+def test_content_present_nao_rebaixa_quando_falta_linha():
+    """Menu diferente (outro nível de navegação) não é rolagem — mantém medium."""
+    from dakota_gateway.replay_control.deterministic import content_present_override
+
+    outro_menu = (
+        "Menu de opcoes do usuario ferblo\n"
+        "  1 - Saldos\n"
+        "  2 - Produto\n"
+        "  3 - Documentos fiscais\n"
+    )
+    _, severity, reason = content_present_override(
+        "screen_divergence", "medium", "motivo",
+        expected_screen=MENU_REF, observed_screen=outro_menu,
+    )
+    assert severity == "medium"
+    assert reason == "motivo"
+
+
+def test_content_present_linha_curta_nao_casa_por_prefixo():
+    """Linha esperada curta (<4 chars) só casa verbatim — evita falso positivo."""
+    from dakota_gateway.replay_control.deterministic import content_present_override
+
+    _, severity, _ = content_present_override(
+        "screen_divergence", "medium", "motivo",
+        expected_screen="0\n", observed_screen="01\n",
+    )
+    assert severity == "medium"
+
+
+def test_content_present_tela_vazia_nao_rebaixa():
+    from dakota_gateway.replay_control.deterministic import content_present_override
+
+    _, severity, _ = content_present_override(
+        "screen_divergence", "medium", "motivo",
+        expected_screen=MENU_REF, observed_screen="",
+    )
+    assert severity == "medium"
+
+
+def test_falha_content_present_no_registro_deterministico():
+    """_deterministic_failure rebaixa quando a sessão só avançou além da referência."""
+    failure = _deterministic_failure(
+        sid="sess-1",
+        seq_global=15,
+        seq_session=15,
+        expected_sig="a",
+        observed_sig="b",
+        params={"synthetic": True, "on_deterministic_mismatch": "send-anyway"},
+        checkpoint_timeout_ms=5000,
+        checkpoint_quiet_ms=250,
+        mode_label="strict-global-deterministic",
+        concurrent_mode=False,
+        match={"matched": False},
+        expected_screen=MENU_REF,
+        observed_screen=MENU_AVANCOU,
+        expected_event=_evento(MENU_REF, screen_snapshot_age_ms=994),
+    )
+    assert failure["failure_type"] == "screen_divergence"
+    assert failure["severity"] == "low"
+    assert "conteúdo esperado presente" in failure["message"]
+
+
+# --- Regressão: falha de checkpoint no deterministic_input registrada 1x ---
+
+
+class _Selector:
+    def register(self, *args, **kwargs):
+        return None
+
+    def select(self, timeout=None):
+        return []
+
+    def close(self):
+        return None
+
+
+class _Session:
+    instances: list["_Session"] = []
+
+    def __init__(self, cfg, sid, target_user_override=None):
+        self.master_fd = 0
+        self.session_id = sid
+        self.last_out_ms = 0
+        self.screen_state = object()
+        self._writes: list[bytes] = []
+        self.instances.append(self)
+
+    def canonical_snapshot_now(self) -> dict:
+        return {
+            "visual_sig": "sha256:visual-ok",
+            "text_sig": "sha256:text-ok",
+            "semantic_sig": "sha256:semantic-ok",
+            "screen_sig": "",
+        }
+
+    def read_out(self):
+        return b""
+
+    def write_in(self, data: bytes):
+        self._writes.append(bytes(data))
+
+    def close(self):
+        return None
+
+
+def _strict_log_dir(tmp_path: Path, event: dict) -> str:
+    entries = [
+        {"type": "session_start", "session_id": "s1", "seq_global": 1, "seq_session": 1, "rows": 2, "cols": 3},
+        event,
+    ]
+    (tmp_path / "audit-control.part001.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in entries),
+        encoding="utf-8",
+    )
+    return str(tmp_path)
+
+
+def test_strict_global_deterministic_input_registra_falha_uma_vez(tmp_path):
+    """O checkpoint falho do deterministic_input registra 1 falha só.
+
+    Antes da correção o wait_checkpoint gravava a falha e o except gravava de
+    novo via _deterministic_failure — cada divergência aparecia em duplicata.
+    """
+    event = {
+        "type": "deterministic_input",
+        "session_id": "s1",
+        "seq_global": 2,
+        "seq_session": 2,
+        "comparison_mode": "visual",
+        "expected_visual_sig": "sha256:visual-wrong",
+        "key_b64": base64.b64encode(b"A").decode("ascii"),
+    }
+    cfg = ReplayConfig(
+        log_dir=_strict_log_dir(tmp_path, event),
+        target_host="local",
+        input_mode="deterministic",
+        on_deterministic_mismatch="send-anyway",
+        comparison_mode="visual",
+        checkpoint_quiet_ms=0,
+    )
+    _Session.instances = []
+    failures: list[dict] = []
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(
+        replay_control.executors.selectors, "DefaultSelector", _Selector
+    ):
+        replay_control.replay_strict_global_controlled(
+            cfg,
+            params={
+                "input_mode": "deterministic",
+                "on_deterministic_mismatch": "send-anyway",
+                "comparison_mode": "visual",
+            },
+            should_pause_or_cancel=lambda: None,
+            on_progress=lambda *args: None,
+            on_failure=failures.append,
+            checkpoint_timeout_ms=20,
+        )
+    assert len(failures) == 1
+    assert failures[0]["event_type"] == "deterministic_input"
+    assert _Session.instances[0]._writes == [b"A"]

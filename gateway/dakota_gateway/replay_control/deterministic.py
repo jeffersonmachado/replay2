@@ -75,6 +75,13 @@ def _deterministic_failure(
             expected_screen=expected_screen,
             observed_screen=observed_screen,
         )
+        failure_type, severity, reason = content_present_override(
+            failure_type,
+            severity,
+            reason,
+            expected_screen=expected_screen,
+            observed_screen=observed_screen,
+        )
     mismatch_mode = _on_deterministic_mismatch(params)
     action = "failed"
     if mismatch_mode == "skip":
@@ -235,6 +242,60 @@ def context_switch_override(
         "low",
         "mudança de contexto durante a captura (app ↔ shell) — divergência de gravação, não funcional",
     )
+
+
+# Tamanho mínimo da linha esperada para aceitar o casamento por prefixo (o eco
+# estende a linha: "Digite a sua opcao:" → "Digite a sua opcao: 0"). Linhas
+# curtas demais casariam por acidente ("1" é prefixo de "1500").
+_PREFIX_MATCH_MIN_LEN = 4
+
+
+def _expected_line_present(line: str, observed_lines: list) -> bool:
+    """True se a linha esperada existe na observada — verbatim ou como prefixo.
+
+    O prefixo cobre o eco da tecla digitada no prompt e a continuação de
+    comando no shell: a linha de referência ("...est >") aparece na tela
+    observada já com o texto digitado ("...est > date").
+    """
+    for obs_line in observed_lines:
+        if obs_line == line:
+            return True
+        if len(line) >= _PREFIX_MATCH_MIN_LEN and obs_line.startswith(line):
+            return True
+    return False
+
+
+def content_present_override(
+    failure_type: str,
+    severity: str,
+    reason: str,
+    *,
+    expected_screen: str,
+    observed_screen: str,
+) -> tuple[str, str, str]:
+    """Rebaixa divergência cujo conteúdo esperado está todo na tela observada.
+
+    Medido na run 34 (captura 13, mesmo sistema): quando o replay avança
+    alguns instantes além da referência gravada, a tela observada contém TODAS
+    as linhas esperadas — verbatim ou estendidas pelo eco do input/rolagem de
+    shell — mais linhas novas. A sessão seguiu o mesmo caminho; a diferença é
+    só o instante da foto. Critério conservador: TODA linha não-vazia da tela
+    esperada precisa estar presente (verbatim ou como prefixo); qualquer linha
+    faltando mantém a classificação original. O tipo da falha é mantido e a
+    severidade é rebaixada para low com motivo explicativo.
+    """
+    exp_lines = [ln.strip() for ln in str(expected_screen or "").splitlines() if ln.strip()]
+    obs_lines = [ln.strip() for ln in str(observed_screen or "").splitlines() if ln.strip()]
+    if not exp_lines or not obs_lines:
+        return failure_type, severity, reason
+    if all(_expected_line_present(ln, obs_lines) for ln in exp_lines):
+        return (
+            failure_type,
+            "low",
+            "conteúdo esperado presente na tela observada (eco/rolagem após a referência)"
+            " — a sessão avançou sem divergir",
+        )
+    return failure_type, severity, reason
 
 
 def _legacy_checkpoint_expected(sig: str) -> dict:

@@ -42,6 +42,7 @@ from .deterministic import (
     compare_expected_observed,
     stale_reference_override,
     context_switch_override,
+    content_present_override,
     synthetic_swap_override,
 )
 from .executors import (

@@ -33,6 +33,7 @@ from .deterministic import (
     compare_expected_observed,
     stale_reference_override,
     context_switch_override,
+    content_present_override,
     synthetic_swap_override,
 )
 from .window import _is_replay_input_event, _replay_input_mode, _selected_events
@@ -90,7 +91,7 @@ def replay_strict_global_controlled(
             except Exception:
                 pass
 
-    def wait_checkpoint(sid: str, expected_event: dict, seq_global: int, seq_session: int = 0):
+    def wait_checkpoint(sid: str, expected_event: dict, seq_global: int, seq_session: int = 0, record_failure: bool = True):
         s = get_sess(sid)
         expected_snapshot = _expected_snapshot_from_event(expected_event)
 
@@ -140,27 +141,35 @@ def replay_strict_global_controlled(
                 expected_screen=expected_screen,
                 observed_screen=observed_screen,
             )
-        on_failure(
-            build_failure_record(
-                session_id=sid,
-                seq_global=seq_global,
-                seq_session=seq_session,
-                event_type="checkpoint",
-                failure_type=failure_type,
-                severity=severity,
-                expected_value=expected_sig,
-                observed_value=got,
-                message=f"{reason} session={sid}: expected={expected_sig!r} got={got!r}",
-                evidence={
-                    "checkpoint_timeout_ms": checkpoint_timeout_ms,
-                    "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
-                    "mode": "strict-global",
-                    "match": match,
-                    "expected_screen": expected_screen,
-                    "observed_screen": observed_screen,
-                },
+            failure_type, severity, reason = content_present_override(
+                failure_type,
+                severity,
+                reason,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
             )
-        )
+        if record_failure:
+            on_failure(
+                build_failure_record(
+                    session_id=sid,
+                    seq_global=seq_global,
+                    seq_session=seq_session,
+                    event_type="checkpoint",
+                    failure_type=failure_type,
+                    severity=severity,
+                    expected_value=expected_sig,
+                    observed_value=got,
+                    message=f"{reason} session={sid}: expected={expected_sig!r} got={got!r}",
+                    evidence={
+                        "checkpoint_timeout_ms": checkpoint_timeout_ms,
+                        "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
+                        "mode": "strict-global",
+                        "match": match,
+                        "expected_screen": expected_screen,
+                        "observed_screen": observed_screen,
+                    },
+                )
+            )
         raise ReplayError(f"{reason} session={sid}: expected={expected_sig!r} got={got!r}")
 
     try:
@@ -179,7 +188,10 @@ def replay_strict_global_controlled(
                 expected_snapshot = _expected_snapshot_from_event(ev)
                 if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, params, session_config=session_configs.get(sid), replay_config=cfg):
                     try:
-                        wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0))
+                        # Sem registro aqui: o registro definitivo (com ação
+                        # skip/send-anyway) é feito pelo _deterministic_failure
+                        # no except — gravar nos dois pontos duplica a falha.
+                        wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0), record_failure=False)
                     except ReplayError:
                         if input_mode != "deterministic":
                             raise
@@ -344,6 +356,13 @@ def replay_parallel_sessions_controlled(
                                     observed_screen=observed_screen,
                                 )
                                 failure_type, severity, reason = context_switch_override(
+                                    failure_type,
+                                    severity,
+                                    reason,
+                                    expected_screen=expected_screen,
+                                    observed_screen=observed_screen,
+                                )
+                                failure_type, severity, reason = content_present_override(
                                     failure_type,
                                     severity,
                                     reason,
@@ -606,6 +625,13 @@ def replay_parallel_sessions_concurrent_controlled(
                                         observed_screen=observed_screen,
                                     )
                                     failure_type, severity, reason = context_switch_override(
+                                        failure_type,
+                                        severity,
+                                        reason,
+                                        expected_screen=expected_screen,
+                                        observed_screen=observed_screen,
+                                    )
+                                    failure_type, severity, reason = content_present_override(
                                         failure_type,
                                         severity,
                                         reason,

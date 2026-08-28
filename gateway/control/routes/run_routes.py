@@ -186,9 +186,11 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.end_headers()
             return True
         run_id = int(parts[3])
+        qs = parse_qs(parsed_path.query or "")
+        limit = parse_int((qs.get("limit") or ["200"])[0], 200, min_value=1, max_value=1000)
         con = handler._db()
         try:
-            payload = get_run_events_payload(con, run_id)
+            payload = get_run_events_payload(con, run_id, limit=limit)
         finally:
             handler._db_release(con)
         write_json(handler, 200, payload)
@@ -204,9 +206,11 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             handler.end_headers()
             return True
         run_id = int(parts[3])
+        qs = parse_qs(parsed_path.query or "")
+        limit = parse_int((qs.get("limit") or ["200"])[0], 200, min_value=1, max_value=1000)
         con = handler._db()
         try:
-            payload = get_run_failures_payload(con, run_id)
+            payload = get_run_failures_payload(con, run_id, limit=limit)
         finally:
             handler._db_release(con)
         write_json(handler, 200, payload)

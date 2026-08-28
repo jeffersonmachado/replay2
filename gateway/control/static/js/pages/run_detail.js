@@ -31,7 +31,6 @@ function renderPlayerFrame() {
   if (!failure) return;
   html("#failure_player", renderFailureInlinePlayerHtml(failure, playerIdx + 1, playerFailures.length, currentSubstitutions));
 }
-
 function selectFailurePlayer(idx, { scroll = false } = {}) {
   if (idx < 0 || idx >= playerFailures.length) return;
   stopFailurePlayer();
@@ -159,8 +158,8 @@ async function loadDetail(id) {
     apiJson(`/api/runs/${runId}`),
     apiJson(`/api/runs/${runId}/report`),
     apiJson(`/api/runs/${runId}/compare`),
-    apiJson(`/api/runs/${runId}/events`),
-    apiJson(`/api/runs/${runId}/failures`),
+    apiJson(`/api/runs/${runId}/events?limit=1000`),
+    apiJson(`/api/runs/${runId}/failures?limit=1000`),
   ]);
   if (!detail?.data?.run) return;
   renderDetail(detail.data.run, report?.data?.report || {}, comparison?.data?.comparison || {}, failures?.data?.failures || []);
@@ -173,8 +172,8 @@ async function loadDetail(id) {
   document.getElementById("failure_player")?.classList.add("hidden");
   // Ordem cronológica para o player acompanhar o início da divergência.
   playerFailures = failureList
-    .map((failure, idx) => ({ failure, idx }))
-    .sort((a, b) => (Number(a.failure.seq_global) || 0) - (Number(b.failure.seq_global) || 0));
+    .slice()
+    .sort((a, b) => (Number(a.seq_global) || 0) - (Number(b.seq_global) || 0));
   playerIdx = 0;
 
   let eventsHtml = "";
@@ -208,10 +207,13 @@ async function loadDetail(id) {
         + '<th class="py-1 pr-2">Tipo</th><th class="py-1 pr-2">Seq Global</th><th class="py-1 pr-2">Sessão</th><th class="py-1">Data/Hora</th></tr></thead><tbody>';
       eventsHtml += eventList.map(e => {
         const ts = e.ts_ms ? new Date(e.ts_ms).toLocaleString("pt-BR") : "—";
+        // A API devolve {kind, message, data_json}: seq/sessão ficam no payload.
+        let data = {};
+        try { data = e.data_json ? JSON.parse(e.data_json) : {}; } catch { data = {}; }
         return '<tr class="border-b border-stone-800/40">'
-          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs font-semibold text-stone-200">' + escapeHtml(e.type || e.event_type || "—") + '</span></td>'
-          + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(e.seq_global ?? e.seq ?? "—")) + '</td>'
-          + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(e.session_id || e.session_uuid || "—")) + '</td>'
+          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs font-semibold text-stone-200">' + escapeHtml(e.kind || e.type || e.event_type || "—") + '</span></td>'
+          + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(e.seq_global ?? data.seq_global ?? e.seq ?? "—")) + '</td>'
+          + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(e.session_id || data.session_id || e.session_uuid || "—")) + '</td>'
           + '<td class="py-1 text-xs text-stone-400">' + escapeHtml(ts) + '</td></tr>';
       }).join("");
       eventsHtml += '</tbody></table></div></div>';
@@ -238,7 +240,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const button = ev.target.closest("[data-failure-idx]");
     if (!button) return;
     const failure = currentFailures[Number(button.dataset.failureIdx)];
-    const playerPos = playerFailures.findIndex((entry) => entry.failure === failure);
+    const playerPos = playerFailures.findIndex((entry) => entry === failure);
     selectFailurePlayer(playerPos >= 0 ? playerPos : 0, { scroll: true });
   });
   document.getElementById("failure_player")?.addEventListener("click", (ev) => {

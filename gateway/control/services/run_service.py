@@ -159,12 +159,12 @@ def get_run_comparison_payload(con, run_id: int, *, baseline_run_id: int = 0) ->
     return {"comparison": comparison}
 
 
-def get_run_events_payload(con, run_id: int) -> dict:
-    rows = query_all(con, "SELECT * FROM replay_run_events WHERE run_id=? ORDER BY id DESC LIMIT 200", (int(run_id),))
+def get_run_events_payload(con, run_id: int, *, limit: int = 200) -> dict:
+    rows = query_all(con, "SELECT * FROM replay_run_events WHERE run_id=? ORDER BY id DESC LIMIT ?", (int(run_id), int(limit)))
     return {"events": [dict(r) for r in rows]}
 
 
-def get_run_failures_payload(con, run_id: int) -> dict:
+def get_run_failures_payload(con, run_id: int, *, limit: int = 200) -> dict:
     rows = query_all(
         con,
         """
@@ -174,9 +174,9 @@ def get_run_failures_payload(con, run_id: int) -> dict:
         FROM replay_failures
         WHERE run_id=?
         ORDER BY id DESC
-        LIMIT 200
+        LIMIT ?
         """,
-        (int(run_id),),
+        (int(run_id), int(limit)),
     )
     failures = []
     for row in rows:

@@ -320,5 +320,116 @@ class GlobalFailuresApiTests(unittest.TestCase):
         self.assertEqual(payload["failures"], [])
 
 
+class RunEventsFailuresLimitApiTests(unittest.TestCase):
+    """Regressão: /api/runs/{id}/events e /failures cortavam em 200 mesmo com
+    limit maior — runs com mais de 200 falhas (ex.: replay sintético
+    send-anyway) escondiam registros na UI."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmpdir.name) / "test.db")
+        self.cookie_secret = b"test_cookie_secret_32_bytes___"
+        self.hmac_key = b"test_hmac_key_32_bytes__________"
+
+        con = connect(self.db_path)
+        init_db(con)
+        ph = auth.pbkdf2_hash_password("admin123")
+        con.execute(
+            "INSERT INTO users(username,password_hash,role,created_at_ms) VALUES(?,?,'admin',?)",
+            ("admin", ph, now_ms()),
+        )
+        user = con.execute("SELECT id FROM users WHERE username='admin'").fetchone()
+        self.run_id = create_run(
+            con,
+            created_by=int(user["id"]),
+            log_dir="/tmp/replay-audit",
+            target_host="legacy.example",
+            target_user="recital",
+            target_command="",
+            mode="strict-global",
+        )
+        base_ts = now_ms()
+        for i in range(250):
+            add_run_failure(
+                con,
+                self.run_id,
+                build_failure_record(
+                    session_id="s-bulk",
+                    seq_global=1000 + i,
+                    seq_session=i,
+                    event_type="checkpoint",
+                    failure_type="screen_divergence",
+                    severity="medium",
+                    expected_value="SIG:A",
+                    observed_value="SIG:B",
+                    message=f"divergencia {i}",
+                    evidence={"expected_screen": "A", "observed_screen": "B"},
+                ),
+            )
+            con.execute(
+                "INSERT INTO replay_run_events(run_id, ts_ms, kind, message, data_json)"
+                " VALUES(?,?,?,?,?)",
+                (self.run_id, base_ts + i, "failure", f"ev {i}",
+                 json.dumps({"session_id": "s-bulk", "seq_global": 1000 + i})),
+            )
+        con.commit()
+        con.close()
+
+        try:
+            self.server = CONTROL.ControlServer(
+                ("127.0.0.1", 0),
+                CONTROL.Handler,
+                db_path=self.db_path,
+                cookie_secret=self.cookie_secret,
+                hmac_key=self.hmac_key,
+            )
+        except PermissionError as exc:
+            raise unittest.SkipTest(f"sandbox sem permissao para abrir socket local: {exc}") from exc
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        time.sleep(0.2)
+
+        self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self._request(
+            "POST",
+            "/api/login",
+            {"username": "admin", "password": "admin123"},
+        )
+
+    def tearDown(self):
+        if hasattr(self, "server"):
+            self.server.shutdown()
+            self.server.server_close()
+        self.tmpdir.cleanup()
+
+    def _request(self, method: str, path: str, data: dict | None = None):
+        url = f"http://127.0.0.1:{self.port}{path}"
+        body = None if data is None else json.dumps(data).encode("utf-8")
+        req = Request(url, data=body, headers={"Content-Type": "application/json"}, method=method)
+        with self.opener.open(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, json.loads(raw) if raw else {}
+
+    def test_failures_default_limit_200_e_limit_1000(self):
+        status, payload = self._request("GET", f"/api/runs/{self.run_id}/failures")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["failures"]), 200)
+
+        status, payload = self._request("GET", f"/api/runs/{self.run_id}/failures?limit=1000")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["failures"]), 250)
+
+    def test_events_default_limit_200_e_limit_1000(self):
+        status, payload = self._request("GET", f"/api/runs/{self.run_id}/events")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["events"]), 200)
+
+        status, payload = self._request("GET", f"/api/runs/{self.run_id}/events?limit=1000")
+        self.assertEqual(status, 200)
+        # 250 inseridos + 1 evento de ciclo de vida gravado pelo create_run
+        self.assertEqual(len(payload["events"]), 251)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

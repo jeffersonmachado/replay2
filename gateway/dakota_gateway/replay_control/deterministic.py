@@ -1,6 +1,7 @@
 """Comparação determinística do replay_control (decomposição do módulo monolítico)."""
 from __future__ import annotations
 
+import re
 import selectors
 
 from ..replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _session_config_from_event  # type: ignore
@@ -64,6 +65,13 @@ def _deterministic_failure(
             severity,
             reason,
             expected_event=expected_event,
+            expected_screen=expected_screen,
+            observed_screen=observed_screen,
+        )
+        failure_type, severity, reason = context_switch_override(
+            failure_type,
+            severity,
+            reason,
             expected_screen=expected_screen,
             observed_screen=observed_screen,
         )
@@ -183,6 +191,49 @@ def stale_reference_override(
         "low",
         "tela de referência da captura desatualizada "
         f"(snapshot de {age_ms / 1000:.0f}s antes do input) — divergência de contexto, não funcional",
+    )
+
+
+# Prompt de shell ksh do ambiente Dakota — ex.: "(ferblo)MIG24:/dakota1/u/ferblo >".
+_SHELL_PROMPT_RE = re.compile(r"^\(?\w+\)?[\w.\-]+:[\/\w.\-~ ]*\s?>", re.M)
+# Erro típico de comando digitado errado no shell ("ksh: exti: not found").
+_SHELL_ERROR_RE = re.compile(r"\b(ksh|sh|bash)\b.*\bnot found\b", re.M)
+
+
+def _has_shell_marker(screen: str) -> bool:
+    text = str(screen or "")
+    return bool(_SHELL_PROMPT_RE.search(text) or _SHELL_ERROR_RE.search(text))
+
+
+def context_switch_override(
+    failure_type: str,
+    severity: str,
+    reason: str,
+    *,
+    expected_screen: str,
+    observed_screen: str,
+) -> tuple[str, str, str]:
+    """Rebaixa divergência causada por mudança de contexto app ↔ shell na captura.
+
+    Cobre o caso que o stale_reference_override não pega: a captura alternou
+    entre a aplicação e o shell do servidor em sequência rápida (snapshot
+    "novo", idade < 10s), então a tela esperada é de outro contexto. Critério
+    combinado, deliberadamente conservador para não esconder divergência
+    funcional real: as telas não compartilham NENHUMA linha não-vazia E há
+    evidência explícita de shell (prompt ksh ou erro "not found") em pelo
+    menos um dos lados. O tipo da falha é mantido e a severidade é rebaixada
+    para low com motivo explicativo.
+    """
+    exp_lines = {ln.strip() for ln in str(expected_screen or "").splitlines() if ln.strip()}
+    obs_lines = {ln.strip() for ln in str(observed_screen or "").splitlines() if ln.strip()}
+    if not exp_lines or not obs_lines or (exp_lines & obs_lines):
+        return failure_type, severity, reason
+    if not (_has_shell_marker(expected_screen) or _has_shell_marker(observed_screen)):
+        return failure_type, severity, reason
+    return (
+        failure_type,
+        "low",
+        "mudança de contexto durante a captura (app ↔ shell) — divergência de gravação, não funcional",
     )
 
 

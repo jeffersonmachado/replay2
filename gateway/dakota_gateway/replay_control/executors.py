@@ -32,6 +32,7 @@ from .deterministic import (
     _wait_for_expected_observed,
     compare_expected_observed,
     stale_reference_override,
+    context_switch_override,
     synthetic_swap_override,
 )
 from .window import _is_replay_input_event, _replay_input_mode, _selected_events
@@ -129,6 +130,13 @@ def replay_strict_global_controlled(
                 severity,
                 reason,
                 expected_event=expected_event,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            )
+            failure_type, severity, reason = context_switch_override(
+                failure_type,
+                severity,
+                reason,
                 expected_screen=expected_screen,
                 observed_screen=observed_screen,
             )
@@ -332,6 +340,13 @@ def replay_parallel_sessions_controlled(
                                     severity,
                                     reason,
                                     expected_event=ev,
+                                    expected_screen=expected_screen,
+                                    observed_screen=observed_screen,
+                                )
+                                failure_type, severity, reason = context_switch_override(
+                                    failure_type,
+                                    severity,
+                                    reason,
                                     expected_screen=expected_screen,
                                     observed_screen=observed_screen,
                                 )
@@ -587,6 +602,13 @@ def replay_parallel_sessions_concurrent_controlled(
                                         severity,
                                         reason,
                                         expected_event=ev,
+                                        expected_screen=expected_screen,
+                                        observed_screen=observed_screen,
+                                    )
+                                    failure_type, severity, reason = context_switch_override(
+                                        failure_type,
+                                        severity,
+                                        reason,
                                         expected_screen=expected_screen,
                                         observed_screen=observed_screen,
                                     )

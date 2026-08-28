@@ -269,7 +269,10 @@ replay2/
   executores) e rebaixa para `low` divergências cuja tela de referência da
   captura está envelhecida (`stale_reference_override` em
   `replay_control/deterministic.py`: `screen_snapshot_age_ms` ≥ 10s E telas
-  sem nenhuma linha em comum — divergência de contexto, não funcional). A trilha
+  sem nenhuma linha em comum — divergência de contexto, não funcional) e, sem
+  exigência de idade, mudanças de contexto app ↔ shell
+  (`context_switch_override`: telas disjuntas + prompt ksh/`not found` em um
+  dos lados). A trilha
   sintética grava o manifest `trail/de-para.json` (original → sintético por
   tela, com os mantidos marcados); a página de replay da sessão exibe o
   badge "sintético • captura #N" com link para o replay de origem e o botão

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dakota_gateway.replay_compare import apply_input_echo_fallback
 from dakota_gateway.replay_control.deterministic import (
     _deterministic_failure,
+    context_switch_override,
     stale_reference_override,
 )
 
@@ -213,3 +214,80 @@ def test_falha_stale_nao_rebaixada_sem_evento():
         observed_screen=TELA_SHELL,
     )
     assert failure["severity"] == "medium"
+
+
+TELA_SHELL_EXIT = "(ferblo)MIG24:/dakota1/u/ferblo > exit\n"
+TELA_APP_FINAL = "Fim da execucao\n\n"
+
+
+def test_context_switch_rebaixa_com_shell_na_esperada():
+    """0 linhas em comum + prompt de shell num dos lados = mudança de contexto."""
+    failure_type, severity, reason = context_switch_override(
+        "screen_divergence",
+        "medium",
+        "checkpoint não estabilizou",
+        expected_screen=TELA_SHELL_EXIT,
+        observed_screen=TELA_APP_FINAL,
+    )
+    assert failure_type == "screen_divergence"
+    assert severity == "low"
+    assert "app ↔ shell" in reason
+
+
+def test_context_switch_rebaixa_com_shell_na_observada():
+    _, severity, _ = context_switch_override(
+        "screen_divergence",
+        "medium",
+        "motivo",
+        expected_screen=TELA_APP_FINAL,
+        observed_screen=TELA_SHELL + "ksh: exti: not found\n",
+    )
+    assert severity == "low"
+
+
+def test_context_switch_nao_rebaixa_sem_marcador_shell():
+    """Telas disjuntas sem evidência de shell podem ser erro real — não rebaixa."""
+    _, severity, reason = context_switch_override(
+        "screen_divergence",
+        "medium",
+        "motivo",
+        expected_screen="TELA DE PEDIDO\nCodigo:\n",
+        observed_screen="ERRO FATAL\narquivo travado\n",
+    )
+    assert severity == "medium"
+    assert reason == "motivo"
+
+
+def test_context_switch_nao_rebaixa_com_linha_em_comum():
+    """Qualquer linha em comum indica mesmo contexto — não rebaixa."""
+    _, severity, _ = context_switch_override(
+        "screen_divergence",
+        "medium",
+        "motivo",
+        expected_screen=TELA_SHELL_EXIT + "Menu de opcoes\n",
+        observed_screen="Menu de opcoes\noutro conteudo\n",
+    )
+    assert severity == "medium"
+
+
+def test_falha_context_switch_rebaixada_no_registro_deterministico():
+    """_deterministic_failure aplica o context switch mesmo com snapshot novo."""
+    failure = _deterministic_failure(
+        sid="sess-1",
+        seq_global=519,
+        seq_session=519,
+        expected_sig="a",
+        observed_sig="b",
+        params={"synthetic": True, "on_deterministic_mismatch": "send-anyway"},
+        checkpoint_timeout_ms=5000,
+        checkpoint_quiet_ms=250,
+        mode_label="strict-global-deterministic",
+        concurrent_mode=False,
+        match={"matched": False},
+        expected_screen=TELA_SHELL_EXIT,
+        observed_screen=TELA_APP_FINAL,
+        expected_event=_evento(TELA_SHELL_EXIT, screen_snapshot_age_ms=1202),
+    )
+    assert failure["failure_type"] == "screen_divergence"
+    assert failure["severity"] == "low"
+    assert "app ↔ shell" in failure["message"]

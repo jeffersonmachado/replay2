@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from difflib import SequenceMatcher
 
@@ -148,17 +149,82 @@ def _split_pairs(pairs: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], s
 SUBSTITUTION_PLACEHOLDER = "<troca>"
 
 
-def _line_has_substitution_echo(line_exp: str, line_obs: str, short_pairs: set) -> bool:
-    """True quando algum trecho divergente da linha é um par de→para."""
-    if SUBSTITUTION_PLACEHOLDER in line_exp or SUBSTITUTION_PLACEHOLDER in line_obs:
-        return True
+# Identificador gerado pela aplicação (ex.: número do pedido D00011073) — não é
+# dado digitado (não entra no de→para), mas muda a cada run sintética como
+# consequência da troca. Mesmo shape na mesma posição = eco da troca.
+_GENERATED_ID_RE = re.compile(r"[A-Za-z]?\d{5,}")
+
+
+def _numeric_identity(value: str) -> str:
+    """Normaliza número ignorando zeros à esquerda ('01' e '1' são o mesmo valor)."""
+    return str(int(value)) if value.isdigit() else value
+
+
+def _chunks_have_short_pair_echo(line_exp: str, line_obs: str, short_pairs: set) -> bool:
+    """True quando algum trecho divergente casa um par curto (exato ou numérico).
+
+    O casamento numérico ignora zeros à esquerda: o campo 'Frete' exibe '01'
+    para a opção '1', então o par ('1' → '2') ecoa como '01' → ' 2'.
+    """
+    short_numeric = {(_numeric_identity(o), _numeric_identity(s)) for o, s in short_pairs}
     matcher = SequenceMatcher(None, line_exp, line_obs, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        if (line_exp[i1:i2].strip(), line_obs[j1:j2].strip()) in short_pairs:
+        chunk_exp, chunk_obs = line_exp[i1:i2].strip(), line_obs[j1:j2].strip()
+        if (chunk_exp, chunk_obs) in short_pairs:
+            return True
+        if (_numeric_identity(chunk_exp), _numeric_identity(chunk_obs)) in short_numeric:
             return True
     return False
+
+
+def _numeric_tokens_echo(line_exp: str, line_obs: str, short_pairs: set) -> bool:
+    """True quando TODOS os tokens numéricos divergentes casam pares curtos.
+
+    Cobre o caso em que o diff de caracteres funde o número com o texto
+    ao lado (o decode muda junto: '01 PAC' → ' 2 SEDEX'): compara a sequência
+    de tokens ``\\d+`` das duas linhas, ignorando zeros à esquerda. Se algum
+    token divergente não casa um par curto, a linha não é eco (conservador).
+    """
+    nums_exp = re.findall(r"\d+", line_exp)
+    nums_obs = re.findall(r"\d+", line_obs)
+    if not nums_exp or len(nums_exp) != len(nums_obs) or nums_exp == nums_obs:
+        return False
+    short_numeric = {(_numeric_identity(o), _numeric_identity(s)) for o, s in short_pairs}
+    for token_exp, token_obs in zip(nums_exp, nums_obs):
+        if token_exp == token_obs:
+            continue
+        if (_numeric_identity(token_exp), _numeric_identity(token_obs)) not in short_numeric:
+            return False
+    return True
+
+
+def _chunks_have_generated_id_echo(line_exp: str, line_obs: str) -> bool:
+    """True quando a linha difere só em identificadores gerados de mesmo shape."""
+    ids_exp = _GENERATED_ID_RE.findall(line_exp)
+    ids_obs = _GENERATED_ID_RE.findall(line_obs)
+    if not ids_exp or ids_exp == ids_obs or len(ids_exp) != len(ids_obs):
+        return False
+    shapes = lambda ids: [re.sub(r"\d", "#", token) for token in ids]
+    return shapes(ids_exp) == shapes(ids_obs)
+
+
+def _line_has_substitution_echo(line_exp: str, line_obs: str, short_pairs: set) -> bool:
+    """True quando algum trecho divergente da linha é eco do de→para.
+
+    Eco = placeholder de par longo, par curto nos trechos divergentes (exato
+    ou numérico sem zeros à esquerda) ou identificador gerado pela aplicação
+    com o mesmo shape na mesma posição (consequência da troca, ex.: número
+    do pedido recém-criado).
+    """
+    if SUBSTITUTION_PLACEHOLDER in line_exp or SUBSTITUTION_PLACEHOLDER in line_obs:
+        return True
+    if _chunks_have_short_pair_echo(line_exp, line_obs, short_pairs):
+        return True
+    if _numeric_tokens_echo(line_exp, line_obs, short_pairs):
+        return True
+    return _chunks_have_generated_id_echo(line_exp, line_obs)
 
 
 def _substitution_masked_lines(

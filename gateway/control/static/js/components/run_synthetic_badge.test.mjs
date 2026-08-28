@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runSyntheticOrigin, runSyntheticBadgeHtml } from './run_views.js';
+import { runSyntheticOrigin, runSyntheticBadgeHtml, runSyntheticSubstitutions } from './run_views.js';
 
 const SYNTHETIC_PARAMS = JSON.stringify({
   input_mode: 'deterministic',
@@ -60,4 +60,16 @@ test('runSyntheticBadgeHtml sem captura conhecida indica "captura n/d" sem link'
   assert.match(html, /sintético/);
   assert.match(html, /captura n\/d/);
   assert.doesNotMatch(html, /href=/);
+});
+
+test('runSyntheticSubstitutions lê os pares do params_json', () => {
+  const run = { params_json: JSON.stringify({ synthetic: true, synthetic_substitutions: [['1', '2'], ['g2511', 'n9580']] }) };
+  assert.deepEqual(runSyntheticSubstitutions(run), [['1', '2'], ['g2511', 'n9580']]);
+});
+
+test('runSyntheticSubstitutions aceita params parseado e tolera ausência', () => {
+  assert.deepEqual(runSyntheticSubstitutions({ params: { synthetic_substitutions: [['4', '13']] } }), [['4', '13']]);
+  assert.deepEqual(runSyntheticSubstitutions({ params_json: '{}' }), []);
+  assert.deepEqual(runSyntheticSubstitutions({ params_json: 'não é json' }), []);
+  assert.deepEqual(runSyntheticSubstitutions(null), []);
 });

@@ -10,6 +10,7 @@ from ..replay_compare import (
     event_requires_comparison,
     expected_snapshot_from_event,
     observed_snapshot_from_session,
+    substitution_echo_line_indices,
     wait_for_signature_match,
 )
 from ..replay_failures import build_failure_record, classify_checkpoint_failure
@@ -48,12 +49,13 @@ def _deterministic_failure(
         timeout_reached=True,
         concurrent_mode=concurrent_mode,
     )
-    if match.get("synthetic_substitution"):
-        # Divergência explicada integralmente pelo de→para: é a troca de
-        # dado sintético ecoando na tela, não uma divergência funcional.
-        failure_type = "synthetic_data_swap"
-        severity = "low"
-        reason = "divergência explicada pela troca de dados sintéticos (de→para aplicado no replay)"
+    swap = synthetic_swap_override(
+        match, params, expected_screen=expected_screen, observed_screen=observed_screen
+    )
+    if swap:
+        # Divergência explicada pelo de→para: é a troca de dado sintético
+        # ecoando na tela, não uma divergência funcional.
+        match, failure_type, severity, reason = swap
     mismatch_mode = _on_deterministic_mismatch(params)
     action = "failed"
     if mismatch_mode == "skip":
@@ -96,6 +98,39 @@ def _substitution_pairs_from_params(params: dict | None) -> list:
     raw = params if isinstance(params, dict) else {}
     subs = raw.get("synthetic_substitutions")
     return list(subs) if isinstance(subs, (list, tuple)) else []
+
+
+def synthetic_swap_override(
+    match: dict | None,
+    params: dict | None,
+    *,
+    expected_screen: str = "",
+    observed_screen: str = "",
+) -> tuple[dict, str, str, str] | None:
+    """Reclassificação de troca sintética compartilhada pelos caminhos de falha.
+
+    Retorna ``(match, "synthetic_data_swap", "low", motivo)`` quando o match
+    já veio flagado da comparação ou quando as telas da evidência (as mesmas
+    exibidas na UI) contêm eco do de→para — o snapshot da comparação é do
+    instante do timeout e pode não conter o eco que aparece na tela gravada.
+    Sem eco, retorna ``None`` e o chamador mantém a classificação original.
+    """
+    match = dict(match or {})
+    if not match.get("synthetic_substitution"):
+        pairs = _substitution_pairs_from_params(params)
+        if pairs and expected_screen and observed_screen:
+            echo_lines = substitution_echo_line_indices(expected_screen, observed_screen, pairs)
+            if echo_lines:
+                match["synthetic_substitution"] = True
+                match["synthetic_echo_lines"] = echo_lines
+    if not match.get("synthetic_substitution"):
+        return None
+    return (
+        match,
+        "synthetic_data_swap",
+        "low",
+        "divergência explicada pela troca de dados sintéticos (de→para aplicado no replay)",
+    )
 
 
 def _legacy_checkpoint_expected(sig: str) -> dict:

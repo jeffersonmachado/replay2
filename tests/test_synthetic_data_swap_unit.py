@@ -150,3 +150,116 @@ def test_falha_sem_flag_mantem_screen_divergence():
     )
     assert failure["failure_type"] == "screen_divergence"
     assert failure["severity"] == "medium"
+
+
+def test_eco_par_curto_ignora_zeros_a_esquerda():
+    """O campo exibe '01' para a opção '1': o par (1→2) ecoa como 01→' 2'."""
+    from dakota_gateway.replay_compare import substitution_echo_line_indices
+
+    expected = " Frete......:01 PAC                 Pedido extern:\n"
+    observed = " Frete......: 2 SEDEX               Pedido extern:\n"
+    assert substitution_echo_line_indices(expected, observed, [("1", "2")]) == [0]
+
+
+def test_eco_identificador_gerado_mesmo_shape():
+    """Número do pedido gerado pela aplicação muda como consequência da troca."""
+    from dakota_gateway.replay_compare import substitution_echo_line_indices
+
+    expected = "*Pedido.....:D00011074            E-c:  4 DAKOTA\n"
+    observed = "*Pedido.....:D00011133            E-c:  4 DAKOTA\n"
+    assert substitution_echo_line_indices(expected, observed, [("1", "2")]) == [0]
+    # Shape diferente (prefixo ou tamanho) não é eco.
+    observed_outro = "*Pedido.....:X741133              E-c:  4 DAKOTA\n"
+    assert substitution_echo_line_indices(expected, observed_outro, [("1", "2")]) == []
+
+
+def test_falha_reclassificada_pelo_eco_das_telas_da_evidencia():
+    """Sem flag no match (snapshot do timeout), o eco nas telas gravadas classifica."""
+    failure = _deterministic_failure(
+        sid="sess-1",
+        seq_global=100,
+        seq_session=50,
+        expected_sig="a",
+        observed_sig="b",
+        params={
+            "synthetic": True,
+            "on_deterministic_mismatch": "send-anyway",
+            "synthetic_substitutions": [["g2511", "n9580"]],
+        },
+        checkpoint_timeout_ms=5000,
+        checkpoint_quiet_ms=250,
+        mode_label="visual",
+        concurrent_mode=False,
+        match={"matched": False},
+        expected_screen="Codigo: g2511   Qtde: 1\n",
+        observed_screen="Codigo: n9580   Qtde: 1\n",
+    )
+    assert failure["failure_type"] == "synthetic_data_swap"
+    assert failure["severity"] == "low"
+    assert failure["evidence"]["match"]["synthetic_echo_lines"] == [0]
+
+
+def test_falha_sem_eco_nas_telas_mantem_divergencia():
+    """Telas da evidência sem eco não reclassificam."""
+    failure = _deterministic_failure(
+        sid="sess-1",
+        seq_global=100,
+        seq_session=50,
+        expected_sig="a",
+        observed_sig="b",
+        params={
+            "synthetic": True,
+            "on_deterministic_mismatch": "send-anyway",
+            "synthetic_substitutions": [["g2511", "n9580"]],
+        },
+        checkpoint_timeout_ms=5000,
+        checkpoint_quiet_ms=250,
+        mode_label="visual",
+        concurrent_mode=False,
+        match={"matched": False},
+        expected_screen="MENU PRINCIPAL\n",
+        observed_screen="TELA DE ERRO\n",
+    )
+    assert failure["failure_type"] == "screen_divergence"
+    assert failure["severity"] == "medium"
+
+
+def test_swap_override_com_match_ja_flagado_da_comparacao():
+    """Caminhos de checkpoint dos executors: match flagado na comparação
+    (sem telas no escopo) também reclassifica — cobre o wait_checkpoint
+    strict-global/parallel/concurrent, que não passam por _deterministic_failure."""
+    from dakota_gateway.replay_control.deterministic import synthetic_swap_override
+
+    match = {"matched": False, "synthetic_substitution": True, "synthetic_echo_lines": [19]}
+    result = synthetic_swap_override(match, {"synthetic_substitutions": [["g2511", "n9580"]]})
+    assert result is not None
+    new_match, failure_type, severity, reason = result
+    assert failure_type == "synthetic_data_swap"
+    assert severity == "low"
+    assert "troca de dados sintéticos" in reason
+    assert new_match["synthetic_echo_lines"] == [19]
+    # match original não é mutado
+    assert match is not new_match
+
+
+def test_swap_override_detecta_eco_nas_telas_e_sem_eco_retorna_none():
+    from dakota_gateway.replay_control.deterministic import synthetic_swap_override
+
+    params = {"synthetic_substitutions": [["g2511", "n9580"]]}
+    com_eco = synthetic_swap_override(
+        {"matched": False}, params,
+        expected_screen="Codigo: g2511\n", observed_screen="Codigo: n9580\n",
+    )
+    assert com_eco is not None
+    assert com_eco[1] == "synthetic_data_swap"
+    assert com_eco[0]["synthetic_echo_lines"] == [0]
+    sem_eco = synthetic_swap_override(
+        {"matched": False}, params,
+        expected_screen="MENU\n", observed_screen="ERRO\n",
+    )
+    assert sem_eco is None
+    sem_params = synthetic_swap_override(
+        {"matched": False}, {},
+        expected_screen="Codigo: g2511\n", observed_screen="Codigo: n9580\n",
+    )
+    assert sem_params is None

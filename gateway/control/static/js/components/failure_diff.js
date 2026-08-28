@@ -90,15 +90,61 @@ function charDiffChunks(a, b) {
   return chunks;
 }
 
-function lineHasEcho(lineExp, lineObs, shortPairs) {
-  if (lineExp.includes(SUBSTITUTION_PLACEHOLDER) || lineObs.includes(SUBSTITUTION_PLACEHOLDER)) return true;
+// Identificador gerado pela aplicação (ex.: número do pedido D00011073) —
+// não é dado digitado, mas muda a cada run sintética como consequência da
+// troca. Mesmo shape na mesma posição = eco da troca.
+const GENERATED_ID_RE = /[A-Za-z]?\d{5,}/g;
+
+// Normaliza número ignorando zeros à esquerda ('01' e '1' são o mesmo valor).
+function numericIdentity(value) {
+  return /^\d+$/.test(value) ? String(parseInt(value, 10)) : value;
+}
+
+function chunksHaveShortPairEcho(lineExp, lineObs, shortPairs) {
+  const shortNumeric = new Set(shortPairs.map(([o, s]) => `${numericIdentity(o)}->${numericIdentity(s)}`));
   for (const [ca, cb] of charDiffChunks(lineExp, lineObs)) {
     const ea = ca.trim();
     const eb = cb.trim();
     if (!ea && !eb) continue;
     if (shortPairs.some(([o, s]) => o === ea && s === eb)) return true;
+    if (shortNumeric.has(`${numericIdentity(ea)}->${numericIdentity(eb)}`)) return true;
   }
   return false;
+}
+
+// True quando TODOS os tokens numéricos divergentes casam pares curtos.
+// Cobre o caso em que o diff de caracteres funde o número com o texto ao
+// lado (o decode muda junto: '01 PAC' → ' 2 SEDEX'). Conservador: se algum
+// token divergente não casa um par curto, a linha não é eco.
+function numericTokensEcho(lineExp, lineObs, shortPairs) {
+  const numsExp = lineExp.match(/\d+/g) || [];
+  const numsObs = lineObs.match(/\d+/g) || [];
+  if (!numsExp.length || numsExp.length !== numsObs.length) return false;
+  if (numsExp.every((token, i) => token === numsObs[i])) return false;
+  const shortNumeric = new Set(shortPairs.map(([o, s]) => `${numericIdentity(o)}->${numericIdentity(s)}`));
+  let sawDiff = false;
+  for (let i = 0; i < numsExp.length; i++) {
+    if (numsExp[i] === numsObs[i]) continue;
+    sawDiff = true;
+    if (!shortNumeric.has(`${numericIdentity(numsExp[i])}->${numericIdentity(numsObs[i])}`)) return false;
+  }
+  return sawDiff;
+}
+
+function chunksHaveGeneratedIdEcho(lineExp, lineObs) {
+  const idsExp = lineExp.match(GENERATED_ID_RE) || [];
+  const idsObs = lineObs.match(GENERATED_ID_RE) || [];
+  if (!idsExp.length || idsExp.length !== idsObs.length) return false;
+  if (idsExp.every((token, i) => token === idsObs[i])) return false;
+  const shape = (token) => token.replace(/\d/g, "#");
+  return idsExp.every((token, i) => shape(token) === shape(idsObs[i]));
+}
+
+function lineHasEcho(lineExp, lineObs, shortPairs) {
+  if (lineExp.includes(SUBSTITUTION_PLACEHOLDER) || lineObs.includes(SUBSTITUTION_PLACEHOLDER)) return true;
+  if (chunksHaveShortPairEcho(lineExp, lineObs, shortPairs)) return true;
+  if (numericTokensEcho(lineExp, lineObs, shortPairs)) return true;
+  return chunksHaveGeneratedIdEcho(lineExp, lineObs);
 }
 
 // Índices das linhas divergentes que contêm eco do de→para. Linha que só

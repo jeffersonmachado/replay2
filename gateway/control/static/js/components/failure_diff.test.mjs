@@ -154,3 +154,20 @@ test('renderScreenDiffHtml marca linhas de troca em âmbar e mostra a legenda', 
   assert.match(html, /bg-rose-950\/60/);
   assert.match(html, /âmbar/);
 });
+
+test('substitutionEchoLineIndices casa par curto ignorando zeros à esquerda', () => {
+  const subs = [['1', '2']];
+  const exp = ' Frete......:01 PAC                 Pedido extern:';
+  const obs = ' Frete......: 2 SEDEX               Pedido extern:';
+  assert.deepEqual(substitutionEchoLineIndices(exp, obs, subs), [0]);
+});
+
+test('substitutionEchoLineIndices detecta identificador gerado de mesmo shape', () => {
+  const subs = [['1', '2']];
+  const exp = '*Pedido.....:D00011074            E-c:  4 DAKOTA';
+  const obs = '*Pedido.....:D00011133            E-c:  4 DAKOTA';
+  assert.deepEqual(substitutionEchoLineIndices(exp, obs, subs), [0]);
+  // Shape diferente (prefixo ou tamanho) não é eco.
+  const obsOutro = '*Pedido.....:X741133              E-c:  4 DAKOTA';
+  assert.deepEqual(substitutionEchoLineIndices(exp, obsOutro, subs), []);
+});

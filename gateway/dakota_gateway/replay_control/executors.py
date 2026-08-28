@@ -31,6 +31,7 @@ from .deterministic import (
     _state_for_session,
     _wait_for_expected_observed,
     compare_expected_observed,
+    synthetic_swap_override,
 )
 from .window import _is_replay_input_event, _replay_input_mode, _selected_events
 
@@ -103,6 +104,13 @@ def replay_strict_global_controlled(
             timeout_reached=True,
             concurrent_mode=False,
         )
+        expected_screen = expected_screen_text_from_event(expected_event, session_configs.get(sid) or cfg)
+        observed_screen = observed_screen_text_from_session(s)
+        swap = synthetic_swap_override(
+            match, params, expected_screen=expected_screen, observed_screen=observed_screen
+        )
+        if swap:
+            match, failure_type, severity, reason = swap
         on_failure(
             build_failure_record(
                 session_id=sid,
@@ -119,8 +127,8 @@ def replay_strict_global_controlled(
                     "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                     "mode": "strict-global",
                     "match": match,
-                    "expected_screen": expected_screen_text_from_event(expected_event, session_configs.get(sid) or cfg),
-                    "observed_screen": observed_screen_text_from_session(s),
+                    "expected_screen": expected_screen,
+                    "observed_screen": observed_screen,
                 },
             )
         )
@@ -283,6 +291,13 @@ def replay_parallel_sessions_controlled(
                                 timeout_reached=True,
                                 concurrent_mode=False,
                             )
+                            expected_screen = expected_screen_text_from_event(ev, state.config)
+                            observed_screen = observed_screen_text_from_session(s)
+                            swap = synthetic_swap_override(
+                                match, params, expected_screen=expected_screen, observed_screen=observed_screen
+                            )
+                            if swap:
+                                match, failure_type, severity, reason = swap
                             on_failure(
                                 build_failure_record(
                                     session_id=sid,
@@ -299,8 +314,8 @@ def replay_parallel_sessions_controlled(
                                         "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                                         "mode": "parallel-sessions",
                                         "match": match,
-                                        "expected_screen": expected_screen_text_from_event(ev, state.config),
-                                        "observed_screen": observed_screen_text_from_session(s),
+                                        "expected_screen": expected_screen,
+                                        "observed_screen": observed_screen,
                                     },
                                 )
                             )
@@ -517,6 +532,13 @@ def replay_parallel_sessions_concurrent_controlled(
                                     timeout_reached=True,
                                     concurrent_mode=True,
                                 )
+                                expected_screen = expected_screen_text_from_event(ev, state.config)
+                                observed_screen = observed_screen_text_from_session(s)
+                                swap = synthetic_swap_override(
+                                    match, load_params.__dict__, expected_screen=expected_screen, observed_screen=observed_screen
+                                )
+                                if swap:
+                                    match, failure_type, severity, reason = swap
                                 msg = f"{reason} session={sid}: expected={expected_sig!r} got={got!r}"
                                 on_failure(
                                     build_failure_record(
@@ -534,8 +556,8 @@ def replay_parallel_sessions_concurrent_controlled(
                                             "checkpoint_quiet_ms": cfg.checkpoint_quiet_ms,
                                             "mode": "parallel-sessions-concurrent",
                                             "match": match,
-                                            "expected_screen": expected_screen_text_from_event(ev, state.config),
-                                            "observed_screen": observed_screen_text_from_session(s),
+                                            "expected_screen": expected_screen,
+                                            "observed_screen": observed_screen,
                                         },
                                     )
                                 )

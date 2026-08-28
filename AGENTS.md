@@ -337,7 +337,13 @@ terminal — isso é garantido pelo teste
   eventos da sessão (tipo/seq/arquivo/offset + direção/tamanho decodificado
   dos "bytes"): a janela de replay é materializada por seek e os totais de
   playback saem de somas de arrays, sem reparsear os audit-*.jsonl a cada
-  request (kill-switch `REPLAY_SESSION_INDEX=0`). O
+  request (kill-switch `REPLAY_SESSION_INDEX=0`). Ambos são ligados
+  automaticamente acima de `MAX_FULL_REPLAY_EVENTS` (20000) ou quando a
+  request vem com `stream=1` — a página de replay da captura marca assim
+  as janelas sequenciais do player/timeline, senão cada janela reprocessa
+  do evento 0 e o player fica faminto (v0.8.63). O pacing do player em si
+  (lote por frame, delays proporcionais ao timestamp, piso sensível à
+  velocidade) vive em `static/js/components/playback_pacing.js`. O
   `replay_state_cache.py` também fornece o janitor de caches órfãos
   (`cleanup_orphan_caches` + `CacheJanitor`, thread ligada no boot do
   control plane: kill-switch `REPLAY_CACHE_JANITOR=0`, intervalo

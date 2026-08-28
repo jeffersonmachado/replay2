@@ -255,3 +255,30 @@ def test_sessao_pequena_nao_gera_indice(cache_patches, tmp_path):
     assert resultado["error"] is None
     sig = replay_state_cache.capture_signature(log_dir)
     assert not sic.index_path(cache_dir, sig, sid).exists()
+
+
+def test_stream_liga_indice_e_cache_em_sessao_pequena(cache_patches, tmp_path):
+    """stream=True (varredura em janelas do player) habilita índice + cache
+    de estado mesmo abaixo de MAX_FULL_REPLAY_EVENTS — sem eles, cada
+    janela reprocessa do evento 0 (O(n) por janela) e o playback da UI fica
+    faminto (medido na captura 59 do AIX: 16-32s por janela de 200)."""
+    log_dir = tmp_path / "cap"
+    log_dir.mkdir()
+    sid = _gerar_sessao(str(log_dir), 30)
+    cache_dir = str(tmp_path / "cache")
+
+    frio = cache_patches.prepare_session_replay_data(
+        str(log_dir), sid, offset=0, limit=10, state_cache_dir=cache_dir, stream=True)
+    assert frio["error"] is None
+    sig = replay_state_cache.capture_signature(log_dir)
+    assert sic.index_path(cache_dir, sig, sid).exists()
+
+    morno = cache_patches.prepare_session_replay_data(
+        str(log_dir), sid, offset=10, limit=10, state_cache_dir=cache_dir, stream=True)
+    assert morno["error"] is None
+    assert morno["window"]["session_index"]["hit"] is True
+    assert morno["window"]["state_cache"]["enabled"] is True
+    # Paridade de conteúdo com o caminho sem stream.
+    sem_stream = cache_patches.prepare_session_replay_data(
+        str(log_dir), sid, offset=10, limit=10, state_cache_dir=cache_dir)
+    assert _sumario(morno) == _sumario(sem_stream)

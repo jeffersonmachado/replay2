@@ -45,9 +45,10 @@ MAX_FULL_REPLAY_EVENTS = 20000
 MAX_REPLAY_CHECKPOINTS = 2000
 # Cache de estado em disco (X6): sem ele, uma janela profunda reprocessa o
 # stream desde o evento 0 e a rolagem profunda fica quadrática. Em sessões
-# enormes, o estado completo da TerminalEngine é persistido a cada
-# STATE_CACHE_INTERVAL eventos "bytes" (pontos limpos) e uma janela com
-# offset grande retoma do estado mais próximo. REPLAY_STATE_CACHE=0 desliga.
+# enormes (ou em varreduras com stream=1, ex.: player da UI), o estado
+# completo da TerminalEngine é persistido a cada STATE_CACHE_INTERVAL
+# eventos "bytes" (pontos limpos) e uma janela com offset grande retoma do
+# estado mais próximo. REPLAY_STATE_CACHE=0 desliga.
 STATE_CACHE_INTERVAL = 1000
 STATE_CACHE_ENABLED = os.environ.get("REPLAY_STATE_CACHE", "1") != "0"
 # Índice de sessão em disco (X6): sem ele, cada request de replay relê e
@@ -294,6 +295,7 @@ def prepare_session_replay_data(
     limit: int | None = None,
     state_cache_dir: str | None = None,
     abort_check=None,
+    stream: bool = False,
     _allow_index: bool = True,
 ) -> dict:
     """
@@ -312,6 +314,14 @@ def prepare_session_replay_data(
     passa uma sonda do socket do cliente). Consultado periodicamente nos
     loops de parse e de processamento; requests abandonados pelo cliente
     não queimam CPU até o fim.
+
+    stream=True: o cliente vai varrer a sessão inteira em janelas
+    sequenciais (player/timeline da UI). Habilita índice de sessão e cache
+    de estado MESMO abaixo de MAX_FULL_REPLAY_EVENTS — sem eles, cada
+    janela reparseia os audit-*.jsonl e realimenta a engine desde o evento
+    0 (custo O(n) por janela: ~16-32 s medidos na captura 59 com 6,5k
+    eventos no AIX), e o player consome mais rápido do que o servidor
+    entrega. Com índice + cache o custo total da varredura fica ~O(n).
     """
     clean_dir = str(log_dir or "").strip()
     clean_sid = str(session_id or "").strip()
@@ -543,9 +553,10 @@ def prepare_session_replay_data(
             elif _dir == "out":
                 total_bytes_out_actual += len(_raw)
 
-    # Persiste o índice de sessão para os próximos requests (X6) — apenas
-    # sessões enormes, mesmo critério do cache de estado.
-    if builder is not None and total_bytes_events > MAX_FULL_REPLAY_EVENTS:
+    # Persiste o índice de sessão para os próximos requests (X6) — sessões
+    # enormes ou varreduras em streaming (player da UI), mesmo critério do
+    # cache de estado.
+    if builder is not None and (total_bytes_events > MAX_FULL_REPLAY_EVENTS or stream):
         _novo_indice = builder.build(
             capture_sig=capture_sig, session_id=clean_sid,
             files=[f.name for f in files],
@@ -558,7 +569,7 @@ def prepare_session_replay_data(
     # ponto de retomada para delimitar a materialização por seek; a
     # aplicação do estado na engine acontece na fase B, junto ao parse
     # completo, para manter um único loop principal nos dois caminhos.
-    cache_enabled = bool(STATE_CACHE_ENABLED) and total_bytes_events > MAX_FULL_REPLAY_EVENTS
+    cache_enabled = bool(STATE_CACHE_ENABLED) and (total_bytes_events > MAX_FULL_REPLAY_EVENTS or stream)
     cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
     state_hit = None
     if cache_enabled and win_start > 0:

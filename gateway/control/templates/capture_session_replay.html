@@ -503,7 +503,7 @@ input[type="range"] {
       // totais (offset=0&limit=1) — medido ~20s→~1s em sessões de 400+
       // eventos. Os eventos em si são buscados sob demanda por
       // ensureAllPlaybackEvents() (playback ou timeline).
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=0&limit=1${logDirQuery}`);
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=0&limit=1&stream=1${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -701,7 +701,7 @@ input[type="range"] {
     windowFetchInFlight = true;
     try {
       const limit = Number(replayData.window.limit || 1000);
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}${logDirQuery}`);
+      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.error) return false;
       _mergeReplayWindow(replayData, payload);
@@ -748,12 +748,14 @@ input[type="range"] {
       while (true) {
         const offset = _nextWindowOffset(replayData.window);
         if (offset == null) break;
-        // Sem cache de estado (sessões < 20000 eventos), cada janela
-        // reprocessa do evento 0 — a 1ª é pequena para destravar o player,
-        // as demais equilibram custo total × nº de requests. Sem o limit
+        // stream=1 liga índice + cache de estado no servidor mesmo em
+        // sessões < 20000 eventos — sem eles cada janela reprocessa do
+        // evento 0 (~16-32s medidos na captura 59 no AIX) e o player fica
+        // faminto. A 1ª janela é pequena para destravar o player; as
+        // demais equilibram custo total × nº de requests. Sem o limit
         // explícito, replayData.window.limit=1 faria centenas de requests.
         const limit = offset <= 1 ? REPLAY_STREAM_FIRST_CHUNK : REPLAY_STREAM_CHUNK;
-        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}${logDirQuery}`);
+        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.error) {
           throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));

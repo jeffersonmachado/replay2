@@ -229,6 +229,11 @@ def handle_capture_get_route(
         if offset_raw or limit_raw:
             replay_kwargs["offset"] = parse_int(offset_raw or "0", 0, min_value=0)
             replay_kwargs["limit"] = parse_int(limit_raw or "1000", 1000, min_value=1, max_value=5000)
+        # stream=1: o cliente vai varrer a sessão em janelas sequenciais
+        # (player/timeline) — habilita índice + cache de estado mesmo fora
+        # das sessões enormes, senão cada janela reprocessa do evento 0.
+        if str((qs.get("stream") or [""])[0] or "").strip() == "1":
+            replay_kwargs["stream"] = True
         replay_data = _prepare_session_replay_data(
             log_dir, session_id,
             abort_check=lambda: not client_still_connected(handler),

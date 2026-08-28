@@ -41,10 +41,17 @@ export function planPlaybackTick(events, startIdx, speed) {
   const firstEvent = events[startIdx] || null;
   let i = startIdx;
   let acc = 0;
-  while (i < events.length - 1) {
-    const raw = Math.max(0, (events[i + 1].ts_ms || 0) - (events[i].ts_ms || 0)) / s;
-    if (i > startIdx && acc + raw > TICK_BUDGET_MS) break;
-    acc += raw;
+  // Aplica SEMPRE ao menos um evento por tick. Sem isso, o último evento
+  // da lista (ou uma janela de streaming com 1 só evento) nunca era
+  // aplicado: o tick voltava com applied=0 e o player girava num busy-loop
+  // de 50ms sem avançar — o "stall" observado ao iniciar o playback da
+  // captura 59 a 1x (janela inicial do streaming chega com poucos eventos).
+  while (i < events.length) {
+    if (i > startIdx) {
+      const raw = Math.max(0, (events[i].ts_ms || 0) - (events[i - 1].ts_ms || 0)) / s;
+      if (acc + raw > TICK_BUDGET_MS) break;
+      acc += raw;
+    }
     i++;
     if (i - startIdx >= MAX_EVENTS_PER_TICK) break;
   }

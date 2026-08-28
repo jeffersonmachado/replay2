@@ -50,9 +50,32 @@ test('planPlaybackTick: gap longo isolado aplica 1 evento e espera o gap', () =>
 test('planPlaybackTick: rajada sem delta de tempo entra num tick só', () => {
   const events = [ev(100), ev(100), ev(100), ev(100)];
   const plan = planPlaybackTick(events, 0, 1);
-  assert.equal(plan.applied, 3);
-  assert.equal(plan.nextIndex, 3);
+  assert.equal(plan.applied, 4);
+  assert.equal(plan.nextIndex, 4);
+  assert.equal(plan.nextEvent, null);
   assert.equal(plan.waitMs, MIN_DELAY_MS); // span 0 → piso uma vez só
+});
+
+test('planPlaybackTick: janela de 1 evento aplica o evento (regressão do stall)', () => {
+  // Streaming: a primeira janela pode chegar com 1 só evento. O tick não
+  // pode voltar com applied=0 — senão o player gira em busy-loop de 50ms
+  // sem avançar (stall observado na captura 59 a 1x).
+  const plan = planPlaybackTick([ev(1000)], 0, 1);
+  assert.equal(plan.applied, 1);
+  assert.equal(plan.nextIndex, 1);
+  assert.equal(plan.nextEvent, null);
+  assert.equal(plan.waitMs, MIN_DELAY_MS);
+});
+
+test('planPlaybackTick: último evento da lista é aplicado e encerra', () => {
+  const events = [ev(0), ev(6200), ev(6210)];
+  // Consome o primeiro, depois o tick no índice 1 aplica os 2 restantes.
+  let plan = planPlaybackTick(events, 0, 1);
+  assert.equal(plan.nextIndex, 1);
+  plan = planPlaybackTick(events, plan.nextIndex, 1);
+  assert.equal(plan.applied, 2);
+  assert.equal(plan.nextIndex, 3);
+  assert.equal(plan.nextEvent, null);
 });
 
 test('planPlaybackTick: respeita o teto de eventos por tick', () => {

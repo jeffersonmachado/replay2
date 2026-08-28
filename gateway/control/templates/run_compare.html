@@ -1,0 +1,205 @@
+<div class="space-y-6" data-page-group="run-compare">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao da comparacao">
+    <div class="flex flex-wrap gap-2 text-xs">
+      <a id="compare-back-link" href="/runs" class="r2ctl-btn-soft" data-tab-link="back">← Voltar para a run</a>
+      <span class="text-stone-400 text-xs flex items-center">|</span>
+      <span id="compare-run-label" class="text-stone-400 text-xs font-mono flex items-center">-</span>
+    </div>
+  </nav>
+
+  <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
+    <div class="mb-4">
+      <h2 class="r2ctl-section-title text-lg font-semibold">Comparar sessões — capturada × observada</h2>
+      <p class="r2ctl-section-copy text-sm">Escolha uma falha da run para abrir a sessão capturada (esperada) e a sessão observada (saída real do destino) lado a lado, já posicionadas no ponto da divergência.</p>
+    </div>
+
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <label for="compare-failure-select" class="text-xs uppercase tracking-[0.14em] text-stone-400">Falha</label>
+      <select id="compare-failure-select" class="r2ctl-input text-xs min-w-[22rem]" disabled>
+        <option value="">— escolha a falha —</option>
+      </select>
+      <span id="compare-status" class="text-xs text-stone-400">carregando falhas da run...</span>
+    </div>
+
+    <div id="compare-panels" class="hidden grid gap-4 lg:grid-cols-2">
+      <div class="r2ctl-detail-surface rounded-2xl p-3">
+        <h3 class="r2ctl-section-title mb-2 text-sm font-semibold">Sessão capturada (esperada)</h3>
+        <div id="compare-left-warning" class="hidden rounded-2xl border border-amber-800/50 bg-amber-950/20 px-4 py-3 text-xs text-amber-100"></div>
+        <iframe id="compare-left-frame" title="Sessão capturada" class="w-full rounded-2xl border border-stone-700/60 bg-stone-950/40" style="height: 78vh;"></iframe>
+      </div>
+      <div class="r2ctl-detail-surface rounded-2xl p-3">
+        <h3 class="r2ctl-section-title mb-2 text-sm font-semibold">Sessão observada (run)</h3>
+        <div id="compare-right-warning" class="hidden rounded-2xl border border-amber-800/50 bg-amber-950/20 px-4 py-3 text-xs text-amber-100"></div>
+        <iframe id="compare-right-frame" title="Sessão observada" class="w-full rounded-2xl border border-stone-700/60 bg-stone-950/40" style="height: 78vh;"></iframe>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const runMatch = window.location.pathname.match(/^\/runs\/(\d+)\/compare\/?$/);
+  const runId = runMatch ? runMatch[1] : '';
+  const params = new URLSearchParams(window.location.search);
+
+  const selectEl = document.getElementById('compare-failure-select');
+  const statusEl = document.getElementById('compare-status');
+  const panelsEl = document.getElementById('compare-panels');
+  const leftFrame = document.getElementById('compare-left-frame');
+  const rightFrame = document.getElementById('compare-right-frame');
+  const leftWarning = document.getElementById('compare-left-warning');
+  const rightWarning = document.getElementById('compare-right-warning');
+
+  let failures = [];
+  let captureId = '';
+  let observedAvailable = null; // null = ainda não verificado
+
+  function setStatus(text, klass) {
+    if (!statusEl) return;
+    statusEl.textContent = text || '';
+    statusEl.className = 'text-xs ' + (klass || 'text-stone-400');
+  }
+
+  function showWarning(el, frame, message) {
+    if (!el || !frame) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+    frame.classList.add('hidden');
+    frame.src = 'about:blank';
+  }
+
+  function showFrame(el, frame, url) {
+    if (!el || !frame) return;
+    el.classList.add('hidden');
+    frame.classList.remove('hidden');
+    frame.src = url;
+  }
+
+  function renderFailureOption(f, idx) {
+    const tipo = f.failure_type || 'falha';
+    const seq = f.seq_global ?? '—';
+    return `#${idx + 1} — ${tipo} — seq ${seq}`;
+  }
+
+  async function loadRunContext() {
+    // Captura de origem (params.source_capture_id) para o painel esquerdo.
+    try {
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+      const payload = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        let runParams = {};
+        try { runParams = JSON.parse(payload?.run?.params_json || '{}'); } catch (_err) { runParams = {}; }
+        captureId = String(runParams.source_capture_id || '').trim();
+      }
+    } catch (err) {
+      console.warn('Falha ao identificar a captura de origem da run:', err);
+    }
+    // Disponibilidade da trilha observada (runs antigas não gravam).
+    try {
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/replay`);
+      const payload = await resp.json().catch(() => ({}));
+      observedAvailable = resp.ok;
+      if (!resp.ok && payload?.error?.code === 'no_observed_trail') {
+        showWarning(
+          rightWarning,
+          rightFrame,
+          'Esta run não gravou a sessão observada (gravado a partir da v0.8.66) — rode uma nova run para ter a comparação completa.'
+        );
+      }
+    } catch (err) {
+      observedAvailable = false;
+      console.warn('Falha ao consultar a trilha observada da run:', err);
+    }
+  }
+
+  async function loadFailures() {
+    const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/failures?limit=1000`);
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(payload?.error?.message || payload?.error || `HTTP ${resp.status}`);
+    failures = Array.isArray(payload.failures) ? payload.failures : [];
+    selectEl.innerHTML = '<option value="">— escolha a falha —</option>'
+      + failures.map((f, idx) => `<option value="${idx}">${escapeHtml(renderFailureOption(f, idx))}</option>`).join('');
+    selectEl.disabled = !failures.length;
+    setStatus(
+      failures.length ? `${failures.length} falha(s) registrada(s).` : 'Nenhuma falha registrada nesta run.',
+      failures.length ? 'text-emerald-300' : 'text-stone-400'
+    );
+  }
+
+  function escapeHtml(text) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(text || '').replace(/[&<>"']/g, (m) => map[m]);
+  }
+
+  function compareFailure(idx) {
+    const f = failures[idx];
+    if (!f) return;
+    const sid = String(f.session_id || '').trim();
+    if (!sid) {
+      setStatus('Falha sem sessão associada — não é possível abrir a comparação.', 'text-amber-200');
+      return;
+    }
+    panelsEl.classList.remove('hidden');
+
+    if (captureId) {
+      const leftUrl = `/captures/${encodeURIComponent(captureId)}/replay?capture_id=${encodeURIComponent(captureId)}`
+        + `&session_id=${encodeURIComponent(sid)}&seek_seq=${encodeURIComponent(String(f.seq_global ?? 0))}&embed=1`;
+      showFrame(leftWarning, leftFrame, leftUrl);
+    } else {
+      showWarning(leftWarning, leftFrame, 'Captura de origem não identificada para esta run.');
+    }
+
+    if (observedAvailable === false) {
+      showWarning(
+        rightWarning,
+        rightFrame,
+        'Esta run não gravou a sessão observada (gravado a partir da v0.8.66) — rode uma nova run para ter a comparação completa.'
+      );
+    } else {
+      const observedSeq = Number(f?.evidence?.observed_seq || 0);
+      const rightUrl = `/runs/${encodeURIComponent(runId)}/replay?session_id=${encodeURIComponent(sid)}`
+        + `&seek_seq=${encodeURIComponent(String(observedSeq))}&embed=1`;
+      showFrame(rightWarning, rightFrame, rightUrl);
+    }
+  }
+
+  function preselectFromQuery() {
+    const failureIdx = parseInt(params.get('failure') || '', 10);
+    const wantedSession = (params.get('session_id') || '').trim();
+    let idx = -1;
+    if (Number.isInteger(failureIdx) && failureIdx >= 0 && failureIdx < failures.length) {
+      idx = failureIdx;
+    } else if (wantedSession) {
+      idx = failures.findIndex((f) => String(f.session_id || '') === wantedSession);
+    }
+    if (idx >= 0) {
+      selectEl.value = String(idx);
+      compareFailure(idx);
+    }
+  }
+
+  async function boot() {
+    if (!runId) {
+      setStatus('Run não identificada na URL.', 'text-red-300');
+      return;
+    }
+    document.getElementById('compare-back-link').href = `/runs/${encodeURIComponent(runId)}`;
+    document.getElementById('compare-run-label').textContent = `run #${runId}`;
+    selectEl.addEventListener('change', () => {
+      const idx = parseInt(selectEl.value || '', 10);
+      if (Number.isInteger(idx) && idx >= 0) compareFailure(idx);
+    });
+    await loadRunContext();
+    try {
+      await loadFailures();
+      preselectFromQuery();
+    } catch (err) {
+      setStatus(`Falha ao carregar as falhas da run: ${err.message}`, 'text-red-300');
+    }
+  }
+
+  boot();
+})();
+</script>

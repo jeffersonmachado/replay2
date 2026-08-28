@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+from pathlib import Path
 from urllib.parse import parse_qs
 
+from dakota_gateway.state_db import query_one
+
 from control.routes.route_helpers import parse_int, write_json
+from control.routes.capture_routes import _replay_status_code, client_still_connected
+from control.services.session_replay_service import (
+    prepare_session_replay_data as _prepare_session_replay_data,
+    resolve_seek_offset as _resolve_seek_offset,
+)
 from control.services.run_service import (
     apply_run_action,
     create_run_request_payload,
@@ -214,6 +224,79 @@ def handle_run_get_route(handler, parsed_path) -> bool:
         finally:
             handler._db_release(con)
         write_json(handler, 200, payload)
+        return True
+
+    # GET /api/runs/{id}/replay — replay da sessão OBSERVADA gravada pela run
+    # (v0.8.66). Sem session_id lista as sessões gravadas; com session_id
+    # devolve os dados de replay no mesmo formato da rota de captures.
+    if path.startswith("/api/runs/") and path.endswith("/replay"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        if len(parts) < 5:
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        try:
+            run_id = int(parts[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        con = handler._db()
+        try:
+            run = query_one(con, "SELECT id, observed_dir FROM replay_runs WHERE id=?", (run_id,))
+        finally:
+            handler._db_release(con)
+        if not run:
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        observed_dir = str(run["observed_dir"] or "").strip()
+        if not observed_dir or not os.path.isdir(observed_dir):
+            write_json(handler, 404, {"error": {"code": "no_observed_trail", "message": "Esta run não gravou a sessão observada (gravado a partir da v0.8.66)"}})
+            return True
+        qs = parse_qs(parsed_path.query or "")
+        session_id = str((qs.get("session_id") or [""])[0] or "").strip()
+        if not session_id:
+            sessions = sorted(
+                entry.name
+                for entry in os.scandir(observed_dir)
+                if entry.is_dir() and any(Path(entry.path).glob("audit-*.jsonl"))
+            )
+            write_json(handler, 200, {"run_id": run_id, "sessions": sessions})
+            return True
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", session_id):
+            write_json(handler, 400, {"error": "session_id inválido"})
+            return True
+        session_dir = os.path.join(observed_dir, session_id)
+        # Janela de replay — mesma montagem da rota de captures (offset/limit,
+        # stream, seek_seq com precedência sobre offset, abort por desconexão).
+        replay_kwargs: dict = {}
+        offset_raw = str((qs.get("offset") or [""])[0] or "").strip()
+        limit_raw = str((qs.get("limit") or [""])[0] or "").strip()
+        if offset_raw or limit_raw:
+            replay_kwargs["offset"] = parse_int(offset_raw or "0", 0, min_value=0)
+            replay_kwargs["limit"] = parse_int(limit_raw or "1000", 1000, min_value=1, max_value=5000)
+        seek_seq_raw = str((qs.get("seek_seq") or [""])[0] or "").strip()
+        if seek_seq_raw:
+            replay_kwargs["offset"] = _resolve_seek_offset(
+                session_dir, session_id, parse_int(seek_seq_raw, 0, min_value=0)
+            )
+            if "limit" not in replay_kwargs:
+                replay_kwargs["limit"] = 1000
+        if str((qs.get("stream") or [""])[0] or "").strip() == "1":
+            replay_kwargs["stream"] = True
+        replay_data = _prepare_session_replay_data(
+            session_dir, session_id,
+            abort_check=lambda: not client_still_connected(handler),
+            **replay_kwargs,
+        )
+        if replay_data.get("aborted"):
+            return True
+        status = _replay_status_code(replay_data)
+        write_json(handler, status, {**replay_data, "run_id": run_id, "log_dir": session_dir})
         return True
 
     return False

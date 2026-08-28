@@ -87,6 +87,15 @@ test('renderFailureInlinePlayerHtml mostra telas lado a lado com navegação', (
   assert.match(html, /tela A/);
   assert.match(html, /tela B/);
   assert.match(html, /checkpoint não estabilizou/);
+  // Sem runId, o link de comparação de sessões não aparece.
+  assert.ok(!html.includes('fp_compare'));
+});
+
+test('renderFailureInlinePlayerHtml com runId inclui link ⇄ Comparar sessões', () => {
+  const html = renderFailureInlinePlayerHtml(FAILURE, 3, 226, undefined, 37);
+  assert.match(html, /id="fp_compare"/);
+  assert.match(html, /href="\/runs\/37\/compare\?session_id=abc&failure=2"/);
+  assert.match(html, /⇄ Comparar sessões/);
 });
 
 test('renderFailureInlinePlayerHtml desabilita navegação nas pontas', () => {

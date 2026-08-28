@@ -287,6 +287,44 @@ def _decode_event_bytes(data_b64: str, declared_n: int | None) -> tuple[bytes, d
     return raw, None
 
 
+def resolve_seek_offset(log_dir: str, session_id: str, seek_seq: int, *, context_events: int = 40) -> int:
+    """Offset (índice entre eventos 'bytes' da sessão) para iniciar a janela
+    `context_events` antes do primeiro evento bytes com seq_global >= seek_seq.
+    Varredura em ordem de arquivo com saída antecipada (seqs são crescentes).
+    """
+    try:
+        target = int(seek_seq or 0)
+    except (TypeError, ValueError):
+        target = 0
+    if target <= 0:
+        return 0
+    count = 0
+    for path in sorted(Path(log_dir).glob("audit-*.jsonl")):
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(ev, dict):
+                        continue
+                    if str(ev.get("session_id") or "") != session_id:
+                        continue
+                    if str(ev.get("type") or "") != "bytes":
+                        continue
+                    if int(ev.get("seq_global") or 0) >= target:
+                        return max(0, count - context_events)
+                    count += 1
+        except OSError:
+            continue
+    # seek_seq além do fim: aponta para a cauda com o mesmo contexto.
+    return max(0, count - context_events)
+
+
 def prepare_session_replay_data(
     log_dir: str,
     session_id: str,

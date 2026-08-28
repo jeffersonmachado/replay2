@@ -29,7 +29,7 @@ function stopFailurePlayer() {
 function renderPlayerFrame() {
   const failure = playerFailures[playerIdx];
   if (!failure) return;
-  html("#failure_player", renderFailureInlinePlayerHtml(failure, playerIdx + 1, playerFailures.length, currentSubstitutions));
+  html("#failure_player", renderFailureInlinePlayerHtml(failure, playerIdx + 1, playerFailures.length, currentSubstitutions, currentRun?.id));
 }
 function selectFailurePlayer(idx, { scroll = false } = {}) {
   if (idx < 0 || idx >= playerFailures.length) return;

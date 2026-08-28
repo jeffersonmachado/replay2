@@ -10,7 +10,7 @@
   <!-- Detalhe da sessão -->
   <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="mb-4">
-      <h2 class="r2ctl-section-title text-lg font-semibold">Sessão de Captura - Visualização & Replay</h2>
+      <h2 class="r2ctl-section-title text-lg font-semibold" id="replay-section-title">Sessão de Captura - Visualização & Replay</h2>
       <p class="r2ctl-section-copy text-sm">Interação capturada: entrada do usuário e resposta do servidor.</p>
     </div>
 
@@ -81,7 +81,7 @@
       <button id="playback-start-btn" class="r2ctl-btn-pill r2ctl-btn-pill-success text-xs opacity-50 cursor-not-allowed" disabled>⏳ Carregando dados...</button>
     </div>
 
-    <div class="rounded-2xl px-4 py-3 bg-emerald-900/20 border border-emerald-700/40">
+    <div class="rounded-2xl px-4 py-3 bg-emerald-900/20 border border-emerald-700/40" id="operational-replay-card">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="text-sm text-emerald-100">
           <strong>Replay operacional:</strong> dispare uma run usando a mesma captura em modo bruto ou determinístico.
@@ -348,10 +348,33 @@ input[type="range"] {
   const params = new URLSearchParams(window.location.search);
   const captureId = params.get('capture_id');
   const sessionId = params.get('session_id');
+  // Modo run (v0.8.66): a mesma página serve o replay da sessão OBSERVADA
+  // gravada pela run (/runs/{id}/replay), usando a API /api/runs/{id}/replay.
+  const runMatch = window.location.pathname.match(/^\/runs\/(\d+)\/replay\/?$/);
+  const runId = runMatch ? runMatch[1] : '';
+  const replayApiBase = runId
+    ? `/api/runs/${encodeURIComponent(runId)}/replay`
+    : `/api/captures/${encodeURIComponent(captureId)}/replay`;
+  // Seek direto no ponto da falha: o servidor resolve o offset da janela
+  // (~40 eventos antes) e o cliente posiciona o player no evento exato.
+  const seekSeqParam = parseInt(params.get('seek_seq') || '', 10);
+  const seekSeqQuery = Number.isFinite(seekSeqParam) ? `&seek_seq=${seekSeqParam}` : '';
   // Trilha sintética (replay 1-clique): log_dir alternativo dentro do
   // diretório da captura — validado server-side.
   const logDirParam = (params.get('log_dir') || '').trim();
   const logDirQuery = logDirParam ? `&log_dir=${encodeURIComponent(logDirParam)}` : '';
+
+  // Ajustes de UI quando a página exibe a sessão observada de uma run.
+  function applyRunMode() {
+    if (!runId) return;
+    const backLink = document.querySelector('[data-tab-link="back"]');
+    if (backLink) backLink.href = `/runs/${encodeURIComponent(runId)}`;
+    const title = document.getElementById('replay-section-title');
+    if (title) title.textContent = `Sessão Observada — Run #${runId}`;
+    // Ações que chamam endpoints de captura não fazem sentido aqui.
+    document.getElementById('operational-replay-card')?.classList.add('hidden');
+    document.getElementById('synthetic-origin-banner')?.classList.add('hidden');
+  }
 
   // --- Banner de trilha sintética + modal de→para (replay 1-clique) ---
   let deparaLoaded = false;
@@ -499,8 +522,8 @@ input[type="range"] {
   }
 
   async function loadReplayData() {
-    if (!captureId || !sessionId) {
-      alert('capture_id e session_id são obrigatórios');
+    if ((!captureId && !runId) || !sessionId) {
+      alert('capture_id (ou run via /runs/{id}/replay) e session_id são obrigatórios');
       return;
     }
 
@@ -508,8 +531,9 @@ input[type="range"] {
       // Modo "só player": a carga inicial traz apenas metadados/geometria/
       // totais (offset=0&limit=1) — medido ~20s→~1s em sessões de 400+
       // eventos. Os eventos em si são buscados sob demanda por
-      // ensureAllPlaybackEvents() (playback ou timeline).
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=0&limit=1&stream=1${logDirQuery}`);
+      // ensureAllPlaybackEvents() (playback ou timeline). Com seek_seq, o
+      // servidor move o início da janela para perto do ponto da falha.
+      const response = await fetch(`${replayApiBase}?session_id=${encodeURIComponent(sessionId)}&offset=0&limit=1&stream=1${seekSeqQuery}${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -568,6 +592,23 @@ input[type="range"] {
       ensureAllPlaybackEvents().catch((err) => {
         console.warn('Prefetch de eventos falhou (será retentado sob demanda):', err);
       });
+      // Seek direto no ponto da falha (v0.8.66): com seek_seq na URL, abre o
+      // player já posicionado no primeiro evento com seq_global >= seek_seq.
+      if (seekSeqQuery) {
+        ensureAllPlaybackEvents().then(() => {
+          const events = playbackEvents();
+          let idx = events.findIndex((ev) => Number(ev.seq_global ?? ev.seq ?? 0) >= seekSeqParam);
+          if (idx < 0) idx = events.length ? 0 : -1;
+          if (idx < 0) return;
+          document.getElementById('playback-panel')?.classList.remove('hidden');
+          document.getElementById('playback-start-btn')?.classList.add('hidden');
+          playbackState.isPaused = true;
+          seekToEvent(idx);
+          document.getElementById('playback-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }).catch((err) => {
+          console.warn('Seek no ponto da falha falhou:', err);
+        });
+      }
     } catch (err) {
       console.error('Erro ao carregar dados de replay:', err);
       const startBtn = document.getElementById('playback-start-btn');
@@ -707,7 +748,7 @@ input[type="range"] {
     windowFetchInFlight = true;
     try {
       const limit = Number(replayData.window.limit || 1000);
-      const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
+      const response = await fetch(`${replayApiBase}?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.error) return false;
       _mergeReplayWindow(replayData, payload);
@@ -764,7 +805,7 @@ input[type="range"] {
         // demais equilibram custo total × nº de requests. Sem o limit
         // explícito, replayData.window.limit=1 faria centenas de requests.
         const limit = offset <= 1 ? REPLAY_STREAM_FIRST_CHUNK : REPLAY_STREAM_CHUNK;
-        const response = await fetch(`/api/captures/${captureId}/replay?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
+        const response = await fetch(`${replayApiBase}?session_id=${encodeURIComponent(sessionId)}&offset=${offset}&limit=${limit}&stream=1${logDirQuery}`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.error) {
           throw new Error(replayErrorMessage(payload, `HTTP ${response.status}`));
@@ -1555,6 +1596,7 @@ input[type="range"] {
   loadTimelinePrefs();
   updateViewButtons(eventsViewMode);
   updateFilterButtons(eventsFilterMode);
+  applyRunMode();
   setupSyntheticBanner();
   // Inicia carregamento apos modulos carregarem
   _timelineReady.then(function() { loadReplayData(); });

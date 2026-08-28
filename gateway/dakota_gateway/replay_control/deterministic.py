@@ -36,6 +36,7 @@ def _deterministic_failure(
     expected_screen: str = "",
     observed_screen: str = "",
     expected_event: dict | None = None,
+    observed_seq: int = 0,
 ) -> dict:
     match = match or {
         "comparison_mode_requested": _comparison_mode_from_params(params),
@@ -101,6 +102,10 @@ def _deterministic_failure(
         evidence["expected_screen"] = expected_screen
     if observed_screen:
         evidence["observed_screen"] = observed_screen
+    # seq_global do último evento bytes gravado na trilha observada da run
+    # (v0.8.66) — permite à UI abrir o replay observado no ponto da falha.
+    if observed_seq > 0:
+        evidence["observed_seq"] = int(observed_seq)
     return build_failure_record(
         session_id=sid,
         seq_global=seq_global,

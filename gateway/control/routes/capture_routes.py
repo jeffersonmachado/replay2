@@ -33,6 +33,7 @@ from control.services.gateway_observability_service import (
 )
 from control.services.session_replay_service import (
     prepare_session_replay_data as _prepare_session_replay_data,
+    resolve_seek_offset as _resolve_seek_offset,
 )
 
 
@@ -229,6 +230,17 @@ def handle_capture_get_route(
         if offset_raw or limit_raw:
             replay_kwargs["offset"] = parse_int(offset_raw or "0", 0, min_value=0)
             replay_kwargs["limit"] = parse_int(limit_raw or "1000", 1000, min_value=1, max_value=5000)
+        # seek_seq (v0.8.66): resolve o offset para ~40 eventos antes do
+        # primeiro bytes com seq_global >= seek_seq (seek direto no ponto da
+        # falha). Tem precedência sobre o offset explícito.
+        seek_seq_raw = str((qs.get("seek_seq") or [""])[0] or "").strip()
+        if seek_seq_raw:
+            seek_offset = _resolve_seek_offset(
+                log_dir, session_id, parse_int(seek_seq_raw, 0, min_value=0)
+            )
+            replay_kwargs["offset"] = seek_offset
+            if "limit" not in replay_kwargs:
+                replay_kwargs["limit"] = 1000
         # stream=1: o cliente vai varrer a sessão em janelas sequenciais
         # (player/timeline) — habilita índice + cache de estado mesmo fora
         # das sessões enormes, senão cada janela reprocessa do evento 0.

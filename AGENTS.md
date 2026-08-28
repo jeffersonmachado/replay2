@@ -135,7 +135,14 @@ replay2/
   (ex.: `dk100` do TeraTerm, `ESC[5i`) travam a sessão de replay headless,
   então o replay sintético usa `xterm` por default. Fim de sessão remota
   (slave do PTY fechado após `exit`) é tratado como EOF limpo, sem derrubar
-  a run com `OSError EIO`;
+  a run com `OSError EIO`. Desde v0.8.66, runs determinísticas gravam a
+  sessão observada (saída real do destino) como trilha auditável assinada
+  em `gateway/state/observed_runs/run-<id>/<session_id>/`
+  (`ObservedTrailRecorder`; `params.record_observed=0` desliga; falha na
+  gravação nunca derruba a run). A trilha é reproduzível via
+  `GET /api/runs/{id}/replay` (seek por `seek_seq`, mesma janela da rota de
+  captures) e comparável com a captura na página `/runs/{id}/compare`
+  (captura × observada lado a lado, com seek direto no ponto da falha);
 - `replay_control/` — pacote (decomposto do módulo monolítico em 2026-08-03,
   dívida G2): runner de runs, concorrência, métricas, falhas estruturadas,
   reprocessamento por faixa/sessão/checkpoint. Submódulos: `window.py`

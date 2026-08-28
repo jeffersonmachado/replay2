@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS replay_runs (
   compliance_reason TEXT,
   validated_at_ms INTEGER,
 
+  -- Trilha da sessão observada gravada pela run determinística (v0.8.66)
+  observed_dir TEXT,
+
   parent_run_id INTEGER REFERENCES replay_runs(id),
   error TEXT
 );

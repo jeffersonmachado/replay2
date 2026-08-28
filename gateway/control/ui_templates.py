@@ -184,17 +184,24 @@ def build_layout_context(
     active_submenu: str | None = None,
     page_scripts: list[str] | None = None,
     page_state: dict | None = None,
+    embed: bool = False,
 ) -> dict[str, str]:
-    sidebar = _render_sidebar(active_menu=active_menu, active_submenu=active_submenu or active_menu)
-    topbar = render_template(
-        "partials/topbar.html",
-        {
-            "page_kicker": page_kicker,
-            "page_title": page_title,
-            "page_description": page_description,
-        },
-    )
-    statusbar = _load_template("partials/statusbar.html")
+    if embed:
+        # Modo embed (iframe, ex.: /runs/{id}/compare): sem chrome da UI.
+        sidebar = ""
+        topbar = ""
+        statusbar = ""
+    else:
+        sidebar = _render_sidebar(active_menu=active_menu, active_submenu=active_submenu or active_menu)
+        topbar = render_template(
+            "partials/topbar.html",
+            {
+                "page_kicker": page_kicker,
+                "page_title": page_title,
+                "page_description": page_description,
+            },
+        )
+        statusbar = _load_template("partials/statusbar.html")
     scripts = []
     if page_state:
         # Neutraliza "</" para evitar fechamento prematuro de <script> (ex.: "</script>" nos dados)
@@ -228,6 +235,7 @@ def render_page(
     active_submenu: str | None = None,
     page_scripts: list[str] | None = None,
     page_state: dict | None = None,
+    embed: bool = False,
 ) -> str:
     content = _load_template(template_name)
     context = build_layout_context(
@@ -239,9 +247,10 @@ def render_page(
         active_submenu=active_submenu,
         page_scripts=page_scripts,
         page_state=page_state,
+        embed=embed,
     )
     context["content"] = content
-    return render_template("base.html", context)
+    return render_template("base_embed.html" if embed else "base.html", context)
 
 
 _VERSION = (Path(__file__).resolve().parent.parent.parent / "VERSION").read_text(encoding="utf-8").strip()
@@ -623,6 +632,28 @@ ROUTES_CONFIG = [
         "submenu": "admin_settings",
         "script": "admin.js",
         "page_state": {"section": "settings"},
+    },
+    {
+        "match": lambda path: path.startswith("/runs/") and path.endswith("/compare"),
+        "template": "run_compare.html",
+        "title": "Dakota Calcados | Comparar Sessões",
+        "page_title": "Comparar Sessões",
+        "page_description": "Sessão capturada (esperada) e sessão observada na run, lado a lado, com seek no ponto da falha.",
+        "page_kicker": "Execucoes",
+        "menu": "runs",
+        "submenu": "runs_history",
+        "script": None,  # Script integrado no template
+    },
+    {
+        "match": lambda path: path.startswith("/runs/") and path.endswith("/replay"),
+        "template": "capture_session_replay.html",
+        "title": "Dakota Calcados | Replay da Sessão Observada",
+        "page_title": "Sessão Observada",
+        "page_description": "Reprodução da sessão observada durante a run (saída real do destino).",
+        "page_kicker": "Execucoes",
+        "menu": "runs",
+        "submenu": "runs_history",
+        "script": None,  # Script integrado no template
     },
     {
         "match": lambda path: path.startswith("/runs/") and path.count("/") == 2,

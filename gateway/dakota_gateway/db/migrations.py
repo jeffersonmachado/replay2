@@ -27,6 +27,10 @@ def init_db(con: sqlite3.Connection) -> None:
     # (taxas, IOPS, latência, % tm_act, iowait) — v0.7.22
     for _col in ("iops", "disk_latency_ms", "disk_busy_pct", "cpu_iowait_pct"):
         _add_column_if_missing(con, "host_metrics", _col, "REAL")
+    # replay_runs.observed_dir: diretório da trilha observada gravada pela
+    # run determinística (v0.8.66) — fora de _ensure_default_capture_scope,
+    # que retorna cedo quando o escopo padrão já existe.
+    _add_column_if_missing(con, "replay_runs", "observed_dir", "TEXT")
 
 
 def migrate_benchmark_tables(con: sqlite3.Connection) -> None:

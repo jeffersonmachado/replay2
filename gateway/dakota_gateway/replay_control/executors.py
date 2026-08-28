@@ -167,6 +167,7 @@ def replay_strict_global_controlled(
                         "match": match,
                         "expected_screen": expected_screen,
                         "observed_screen": observed_screen,
+                        "observed_seq": int(getattr(s, "observed_seq", 0) or 0),
                     },
                 )
             )
@@ -213,6 +214,7 @@ def replay_strict_global_controlled(
                             expected_screen=expected_screen_text_from_event(ev, session_configs.get(sid) or cfg),
                             observed_screen=observed_screen_text_from_session(get_sess(sid, ev)),
                             expected_event=ev,
+                            observed_seq=int(getattr(get_sess(sid, ev), "observed_seq", 0) or 0),
                         )
                         if not _should_apply_deterministic_input(on_failure, failure, params=params):
                             on_progress(seq_global, None)
@@ -305,6 +307,7 @@ def replay_parallel_sessions_controlled(
                                 expected_screen=expected_screen_text_from_event(ev, state.config),
                                 observed_screen=observed_screen_text_from_session(s),
                                 expected_event=ev,
+                                observed_seq=int(getattr(s, "observed_seq", 0) or 0),
                             )
                             if not _should_apply_deterministic_input(on_failure, failure, params=params):
                                 on_progress(seq_global, None)
@@ -553,6 +556,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                     expected_screen=expected_screen_text_from_event(ev, state.config),
                                     observed_screen=observed_screen_text_from_session(s),
                                     expected_event=ev,
+                                    observed_seq=int(getattr(s, "observed_seq", 0) or 0),
                                 )
                                 msg = str(failure.get("message") or "")
                                 try:

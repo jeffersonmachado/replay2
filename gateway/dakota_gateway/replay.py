@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import pty
+import re
 import selectors
 import struct
 import subprocess
@@ -19,6 +20,8 @@ except Exception:  # pragma: no cover
 
 from .screen import TerminalScreenState
 from .terminal_config import normalize_encoding, validate_terminal_geometry
+from .audit_writer import AuditWriter, b64, write_manifest
+from .schema import AuditEvent
 from .replay_compare import (
     apply_volatile_mask_fallback,
     event_requires_comparison,
@@ -66,6 +69,13 @@ class ReplayConfig:
     on_deterministic_mismatch: str = "fail-fast"
     comparison_mode: str = "visual"  # visual | text | semantic | hybrid
 
+    # Gravação da sessão observada (v0.8.66): quando `observed_dir` está
+    # preenchido, a saída real do destino é gravada como trilha auditável
+    # assinada (hash-chain + HMAC), no mesmo formato das capturas, em
+    # <observed_dir>/<session_id>/.
+    observed_dir: str = ""
+    observed_hmac_key: bytes = b""
+
     def __post_init__(self) -> None:
         geom = validate_terminal_geometry(int(self.rows), int(self.cols))
         self.rows = geom.rows
@@ -75,6 +85,104 @@ class ReplayConfig:
 
 class ReplayError(Exception):
     pass
+
+
+def _sanitize_session_dir_name(session_id: str) -> str:
+    """Nome de diretório seguro para o session_id (sem '/' nem '..')."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(session_id or "")).strip(".") or "session"
+
+
+class ObservedTrailRecorder:
+    """Gravador da sessão observada da run como trilha auditável assinada.
+
+    Mesmo formato das capturas do gateway (audit-*.jsonl com hash-chain +
+    HMAC via AuditWriter), um diretório por session_id. Falhas de gravação
+    NUNCA derrubam a run: qualquer erro desativa o recorder e o replay
+    segue sem a trilha observada.
+    """
+
+    def __init__(
+        self,
+        observed_dir: str,
+        session_id: str,
+        hmac_key: bytes,
+        *,
+        actor: str,
+        rows: int,
+        cols: int,
+        term: str,
+        encoding: str,
+    ):
+        self.session_id = str(session_id or "")
+        self.actor = str(actor or "")
+        self.rows = int(rows)
+        self.cols = int(cols)
+        self.term = str(term or "")
+        self.encoding = str(encoding or "")
+        self._seq_session = 0
+        self._disabled = False
+        self.last_out_seq = 0
+        session_dir = Path(observed_dir) / _sanitize_session_dir_name(self.session_id)
+        self.session_dir = session_dir
+        self._writer = AuditWriter(str(session_dir), hmac_key)
+
+    def _append(self, ev_type: str, **fields) -> AuditEvent | None:
+        if self._disabled:
+            return None
+        try:
+            self._seq_session += 1
+            ev = AuditEvent(
+                v="",
+                seq_global=0,
+                ts_ms=int(time.time() * 1000),
+                type=ev_type,
+                actor=self.actor,
+                session_id=self.session_id,
+                seq_session=self._seq_session,
+                **fields,
+            )
+            # O writer atribui v/seq_global/prev_hash/hash/hmac.
+            return self._writer.append(ev)
+        except Exception:
+            self._disabled = True
+            return None
+
+    def start(self) -> None:
+        self._append(
+            "session_start",
+            rows=self.rows,
+            cols=self.cols,
+            term=self.term,
+            encoding=self.encoding,
+            geometry_source="replay_config",
+            entry_mode="replay",
+        )
+
+    def record_out(self, data: bytes) -> None:
+        ev = self._append(
+            "bytes",
+            dir="out",
+            data_b64=b64(data),
+            n=len(data),
+            rows=self.rows,
+            cols=self.cols,
+            term=self.term,
+            encoding=self.encoding,
+        )
+        if ev is not None:
+            self.last_out_seq = int(ev.seq_global or 0)
+
+    def end(self) -> None:
+        try:
+            self._append("session_end")
+            for path in sorted(self.session_dir.glob("audit-*.jsonl")):
+                write_manifest(str(path))
+        except Exception:
+            pass
+        try:
+            self._writer.close()
+        except Exception:
+            pass
 
 
 @dataclass
@@ -143,6 +251,25 @@ class _TargetSession:
         os.close(self.slave_fd)
         self.screen_state = TerminalScreenState(rows=cfg.rows, cols=cfg.cols, encoding=cfg.encoding, session_id=session_id)
         self.last_out_ms = int(time.time() * 1000)
+        # Gravação da sessão observada (v0.8.66): trilha auditável da saída
+        # real do destino. Nunca derruba a run — falha vira recorder None.
+        self.observed_recorder: ObservedTrailRecorder | None = None
+        self.observed_seq = 0
+        if str(cfg.observed_dir or "").strip():
+            try:
+                self.observed_recorder = ObservedTrailRecorder(
+                    cfg.observed_dir,
+                    session_id,
+                    cfg.observed_hmac_key,
+                    actor=target_user_override if target_user_override is not None else cfg.target_user,
+                    rows=cfg.rows,
+                    cols=cfg.cols,
+                    term=cfg.term,
+                    encoding=cfg.encoding,
+                )
+                self.observed_recorder.start()
+            except Exception:
+                self.observed_recorder = None
 
     @staticmethod
     def _configure_pty(slave_fd: int, *, rows: int = 25, cols: int = 80) -> None:
@@ -188,6 +315,12 @@ class _TargetSession:
         return argv
 
     def close(self):
+        if self.observed_recorder is not None:
+            try:
+                self.observed_recorder.end()
+            except Exception:
+                pass
+            self.observed_recorder = None
         try:
             os.close(self.master_fd)
         except Exception:
@@ -217,6 +350,9 @@ class _TargetSession:
         if data:
             self.last_out_ms = int(time.time() * 1000)
             self.screen_state.feed_bytes(data)
+            if self.observed_recorder is not None:
+                self.observed_recorder.record_out(data)
+                self.observed_seq = self.observed_recorder.last_out_seq
         return data
 
     def canonical_snapshot_now(self) -> dict:

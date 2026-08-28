@@ -217,10 +217,18 @@ export function renderScreenDiffHtml(expected, observed, substitutions) {
 // salto direto para uma falha (campo "ir para"), entre as falhas em ordem
 // cronológica (seq crescente), para acompanhar onde a divergência começou e
 // como evoluiu. O JS da página controla a troca de falha (ids fp_*).
-export function renderFailureInlinePlayerHtml(failure, position, total, substitutions) {
+// Com runId, mostra o link "⇄ Comparar sessões" para /runs/{id}/compare
+// (sessão capturada × sessão observada no ponto da falha — v0.8.66).
+export function renderFailureInlinePlayerHtml(failure, position, total, substitutions, runId) {
   const item = failure || {};
   const evidence = item.evidence || {};
   const ts = item.ts_ms ? new Date(item.ts_ms).toLocaleString("pt-BR") : "—";
+  const compareHref = runId
+    ? `/runs/${encodeURIComponent(String(runId))}/compare?session_id=${encodeURIComponent(String(item.session_id || ""))}&failure=${Math.max(0, Number(position) - 1)}`
+    : "";
+  const compareBtn = compareHref
+    ? `<a id="fp_compare" href="${compareHref}" class="r2ctl-btn-soft text-xs">⇄ Comparar sessões</a>`
+    : "";
   const meta = `
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <button id="fp_first" type="button" class="r2ctl-btn-soft text-xs"${position <= 1 ? " disabled" : ""}>⏮ Primeira</button>
@@ -228,6 +236,7 @@ export function renderFailureInlinePlayerHtml(failure, position, total, substitu
       <button id="fp_play" type="button" class="r2ctl-btn-soft text-xs">▶ Reproduzir</button>
       <button id="fp_next" type="button" class="r2ctl-btn-soft text-xs"${position >= total ? " disabled" : ""}>Próxima ▶</button>
       <button id="fp_last" type="button" class="r2ctl-btn-soft text-xs"${position >= total ? " disabled" : ""}>Última ⏭</button>
+      ${compareBtn}
       <span class="flex items-center gap-1 text-xs text-stone-400">
         <label for="fp_goto">ir para</label>
         <input id="fp_goto" type="number" min="1" max="${total}" placeholder="${position}"

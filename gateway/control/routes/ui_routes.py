@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from control.ui_templates import LOGIN_HTML, ROUTES_CONFIG, render_page
 
@@ -71,7 +72,7 @@ def _page_scripts(config: dict) -> list[str]:
     return []
 
 
-def render_ui_route(request, config: dict) -> str:
+def render_ui_route(request, config: dict, *, embed: bool = False) -> str:
     page_state = config.get("page_state")
     if config.get("template") == "captures.html":
         # Expõe o padrão do servidor para a UI pré-preencher o source_dir da
@@ -90,6 +91,7 @@ def render_ui_route(request, config: dict) -> str:
         active_submenu=config.get("submenu"),
         page_scripts=_page_scripts(config),
         page_state=page_state,
+        embed=embed,
     )
 
 
@@ -102,12 +104,17 @@ def handle_ui_get_route(handler, parsed_path) -> bool:
         _send_html(handler, LOGIN_HTML)
         return True
 
+    # embed=1: renderiza a página sem chrome (sidebar/topbar/statusbar) para
+    # uso em iframes — ex.: painéis lado a lado de /runs/{id}/compare.
+    qs = parse_qs(parsed_path.query or "")
+    embed = str((qs.get("embed") or [""])[0] or "").strip() == "1"
+
     for route in ROUTES_CONFIG:
         if not _match_route(path, route):
             continue
         if not _require_user_for_page(handler):
             return True
-        _send_html(handler, render_ui_route(handler, route))
+        _send_html(handler, render_ui_route(handler, route, embed=embed))
         return True
 
     return False

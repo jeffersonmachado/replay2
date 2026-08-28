@@ -320,6 +320,22 @@ class Runner:
             cfg.input_mode = _replay_input_mode(params)
             cfg.on_deterministic_mismatch = _on_deterministic_mismatch(params)
 
+            # Gravação da sessão observada (v0.8.66): runs determinísticas
+            # gravam a saída real do destino como trilha auditável assinada
+            # (params.record_observed=0 desliga). Falha na gravação nunca
+            # derruba a run — o recorder se autodesativa em replay.py.
+            record_observed = (
+                cfg.input_mode == "deterministic"
+                and str(params.get("record_observed", "1")).strip().lower()
+                not in ("0", "false", "no", "nao", "não", "off")
+            )
+            if record_observed:
+                observed_dir = Path(self.db_path).resolve().parent / "observed_runs" / f"run-{run_id}"
+                cfg.observed_dir = str(observed_dir)
+                cfg.observed_hmac_key = self.hmac_key
+                with db_lock:
+                    exec1(con, "UPDATE replay_runs SET observed_dir=? WHERE id=?", (str(observed_dir), run_id))
+
             # Metrics aggregation (thread-safe because callbacks can be invoked from worker threads)
             m_lock = Lock()
             metrics = {

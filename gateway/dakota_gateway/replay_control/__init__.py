@@ -40,6 +40,7 @@ from .deterministic import (
     _state_for_session,
     _wait_for_expected_observed,
     compare_expected_observed,
+    stale_reference_override,
     synthetic_swap_override,
 )
 from .executors import (

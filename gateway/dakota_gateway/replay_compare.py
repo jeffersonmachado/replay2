@@ -326,6 +326,74 @@ def _line_diff_explained(line_exp: str, line_obs: str, short_pairs: set) -> bool
     return True
 
 
+# Teclas de controle não ecoam como texto na tela — não servem de candidatas.
+_ECHO_IGNORED_KEYS = {"\r", "\n", "\t", "\x1b", "\x7f", "\x08"}
+
+
+def _line_is_input_echo(line_exp: str, line_obs: str, keys: list) -> bool:
+    """True quando a linha observada é a esperada com o eco de uma tecla.
+
+    O eco costuma aparecer junto ao cursor (fim do texto digitado), então a
+    remoção tenta primeiro a última ocorrência da tecla e depois a primeira.
+    """
+    for key in keys:
+        if key not in line_obs:
+            continue
+        for pos in (line_obs.rfind(key), line_obs.find(key)):
+            candidate = line_obs[:pos] + line_obs[pos + len(key):]
+            if candidate.rstrip() == line_exp.rstrip():
+                return True
+    return False
+
+
+def apply_input_echo_fallback(
+    match: dict,
+    *,
+    expected_event: dict | None,
+    observed_snapshot: dict,
+    session_config=None,
+    recent_keys: list | tuple | None = None,
+) -> dict:
+    """Terceira chance: tolera o eco da tecla recém-enviada na tela observada.
+
+    A tela esperada do checkpoint é a tela estável ANTES do input; logo após
+    o envio, o eco da tecla (ex.: a opção '0' digitada no prompt) é a única
+    diferença legítima possível. Se TODAS as linhas divergentes (após a
+    máscara volátil) são explicadas pelo eco de uma das teclas recentes, o
+    checkpoint é considerado coincidente e o resultado marcado com
+    ``input_echo_tolerance=True``. Teclas de controle (ENTER/ESC/TAB) não
+    ecoam como texto e são ignoradas.
+    """
+    if match.get("matched") or not expected_event:
+        return match
+    keys = [k for k in (recent_keys or []) if k and k.strip() and k not in _ECHO_IGNORED_KEYS]
+    if not keys:
+        return match
+    observed_text = str(observed_snapshot.get("screen_text") or "")
+    if not observed_text:
+        return match
+    expected_text = expected_screen_text_from_event(expected_event, session_config)
+    if not expected_text:
+        return match
+    exp_lines = mask_volatile_screen_text(expected_text).splitlines()
+    obs_lines = mask_volatile_screen_text(observed_text).splitlines()
+    explained = 0
+    for idx in range(max(len(exp_lines), len(obs_lines))):
+        line_exp = exp_lines[idx] if idx < len(exp_lines) else ""
+        line_obs = obs_lines[idx] if idx < len(obs_lines) else ""
+        if line_exp == line_obs:
+            continue
+        if not _line_is_input_echo(line_exp, line_obs, keys):
+            return match
+        explained += 1
+    if not explained:
+        return match
+    tolerated = dict(match)
+    tolerated["matched"] = True
+    tolerated["input_echo_tolerance"] = True
+    return tolerated
+
+
 def apply_synthetic_substitution_fallback(
     match: dict,
     *,

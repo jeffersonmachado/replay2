@@ -5,6 +5,7 @@ import selectors
 
 from ..replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _session_config_from_event  # type: ignore
 from ..replay_compare import (
+    apply_input_echo_fallback,
     apply_synthetic_substitution_fallback,
     apply_volatile_mask_fallback,
     event_requires_comparison,
@@ -33,6 +34,7 @@ def _deterministic_failure(
     match: dict | None = None,
     expected_screen: str = "",
     observed_screen: str = "",
+    expected_event: dict | None = None,
 ) -> dict:
     match = match or {
         "comparison_mode_requested": _comparison_mode_from_params(params),
@@ -56,6 +58,15 @@ def _deterministic_failure(
         # Divergência explicada pelo de→para: é a troca de dado sintético
         # ecoando na tela, não uma divergência funcional.
         match, failure_type, severity, reason = swap
+    else:
+        failure_type, severity, reason = stale_reference_override(
+            failure_type,
+            severity,
+            reason,
+            expected_event=expected_event,
+            expected_screen=expected_screen,
+            observed_screen=observed_screen,
+        )
     mismatch_mode = _on_deterministic_mismatch(params)
     action = "failed"
     if mismatch_mode == "skip":
@@ -133,6 +144,48 @@ def synthetic_swap_override(
     )
 
 
+# Idade mínima do snapshot de referência para suspeitar de contexto envelhecido.
+STALE_REFERENCE_MIN_AGE_MS = 10000
+
+
+def stale_reference_override(
+    failure_type: str,
+    severity: str,
+    reason: str,
+    *,
+    expected_event: dict | None,
+    expected_screen: str,
+    observed_screen: str,
+) -> tuple[str, str, str]:
+    """Rebaixa divergência cuja tela de referência da captura está envelhecida.
+
+    Quando o snapshot esperado foi gravado muito antes do input (o usuário leu
+    a tela por um longo tempo, ou a captura mudou de contexto — ex.: trecho da
+    trilha já no shell do servidor), a comparação não mede comportamento
+    funcional. Critério combinado (medido na run 32 da captura 13: idade alta
+    sozinha é normal em captura humana): idade >= STALE_REFERENCE_MIN_AGE_MS
+    E as telas esperada/observada não compartilham nenhuma linha não-vazia
+    (contexto totalmente diferente). O tipo da falha é mantido e a severidade
+    é rebaixada para low com motivo explicativo.
+    """
+    try:
+        age_ms = int((expected_event or {}).get("screen_snapshot_age_ms") or 0)
+    except (TypeError, ValueError):
+        age_ms = 0
+    if age_ms < STALE_REFERENCE_MIN_AGE_MS:
+        return failure_type, severity, reason
+    exp_lines = {ln.strip() for ln in str(expected_screen or "").splitlines() if ln.strip()}
+    obs_lines = {ln.strip() for ln in str(observed_screen or "").splitlines() if ln.strip()}
+    if not exp_lines or not obs_lines or (exp_lines & obs_lines):
+        return failure_type, severity, reason
+    return (
+        failure_type,
+        "low",
+        "tela de referência da captura desatualizada "
+        f"(snapshot de {age_ms / 1000:.0f}s antes do input) — divergência de contexto, não funcional",
+    )
+
+
 def _legacy_checkpoint_expected(sig: str) -> dict:
     return {"screen_sig": str(sig or "")}
 
@@ -187,6 +240,7 @@ def compare_expected_observed(
     event: dict | None = None,
     session_config: ReplayConfig | SessionReplayState | dict | None = None,
     replay_config: ReplayConfig | dict | None = None,
+    recent_keys: list | tuple | None = None,
 ) -> dict:
     match = compare_signatures(
         expected_snapshot,
@@ -200,6 +254,13 @@ def compare_expected_observed(
         expected_event=event,
         observed_snapshot=observed_snapshot,
         session_config=session_config,
+    )
+    match = apply_input_echo_fallback(
+        match,
+        expected_event=event,
+        observed_snapshot=observed_snapshot,
+        session_config=session_config,
+        recent_keys=recent_keys,
     )
     return apply_synthetic_substitution_fallback(
         match,
@@ -221,6 +282,7 @@ def _wait_for_expected_observed(
     checkpoint_timeout_ms: int,
     session_config: ReplayConfig | SessionReplayState | dict | None = None,
     replay_config: ReplayConfig | dict | None = None,
+    recent_keys: list | tuple | None = None,
 ) -> tuple[bool, dict, dict]:
     expected_snapshot = _expected_snapshot_from_event(expected_event)
 
@@ -232,6 +294,7 @@ def _wait_for_expected_observed(
             event=expected_event,
             session_config=session_config,
             replay_config=replay_config,
+            recent_keys=recent_keys,
         )
 
     return wait_for_signature_match(

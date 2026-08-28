@@ -31,9 +31,20 @@ from .deterministic import (
     _state_for_session,
     _wait_for_expected_observed,
     compare_expected_observed,
+    stale_reference_override,
     synthetic_swap_override,
 )
 from .window import _is_replay_input_event, _replay_input_mode, _selected_events
+
+_MAX_RECENT_KEYS = 3
+
+
+def _remember_key(recent: list, data: bytes) -> None:
+    """Guarda o texto da tecla recém-enviada (janela curta para tolerar o eco)."""
+    text = data.decode("utf-8", errors="ignore")
+    if text:
+        recent.append(text)
+        del recent[:-_MAX_RECENT_KEYS]
 
 def replay_strict_global_controlled(
     cfg: ReplayConfig,
@@ -47,6 +58,7 @@ def replay_strict_global_controlled(
     sessions: dict[str, _TargetSession] = {}
     states: dict[str, SessionReplayState] = {}
     session_configs: dict[str, ReplayConfig] = {}
+    recent_keys: dict[str, list] = {}
     sel = selectors.DefaultSelector()
     input_mode = _replay_input_mode(params)
 
@@ -82,7 +94,7 @@ def replay_strict_global_controlled(
         expected_snapshot = _expected_snapshot_from_event(expected_event)
 
         def compare(observed: dict) -> dict:
-            return compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg)
+            return compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg, recent_keys=recent_keys.get(sid))
 
         matched, match, observed = wait_for_signature_match(
             s,
@@ -111,6 +123,15 @@ def replay_strict_global_controlled(
         )
         if swap:
             match, failure_type, severity, reason = swap
+        else:
+            failure_type, severity, reason = stale_reference_override(
+                failure_type,
+                severity,
+                reason,
+                expected_event=expected_event,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            )
         on_failure(
             build_failure_record(
                 session_id=sid,
@@ -155,7 +176,7 @@ def replay_strict_global_controlled(
                         if input_mode != "deterministic":
                             raise
                         observed_snapshot = _observed_snapshot_from_session(get_sess(sid, ev))
-                        match = compare_expected_observed(expected_snapshot, observed_snapshot, params, event=ev, session_config=session_configs.get(sid), replay_config=cfg)
+                        match = compare_expected_observed(expected_snapshot, observed_snapshot, params, event=ev, session_config=session_configs.get(sid), replay_config=cfg, recent_keys=recent_keys.get(sid))
                         expected_failure_sig, observed_failure_sig = _match_failure_values(match, expected_snapshot, observed_snapshot)
                         failure = _deterministic_failure(
                             sid=sid,
@@ -171,6 +192,7 @@ def replay_strict_global_controlled(
                             match=match,
                             expected_screen=expected_screen_text_from_event(ev, session_configs.get(sid) or cfg),
                             observed_screen=observed_screen_text_from_session(get_sess(sid, ev)),
+                            expected_event=ev,
                         )
                         if not _should_apply_deterministic_input(on_failure, failure, params=params):
                             on_progress(seq_global, None)
@@ -179,6 +201,7 @@ def replay_strict_global_controlled(
                 if data:
                     s = get_sess(sid, ev)
                     s.write_in(data)
+                    _remember_key(recent_keys.setdefault(sid, []), data)
                 on_progress(seq_global, expected_sig or None)
                 drain_output(0.0)
             elif typ == "checkpoint" and sid:
@@ -223,6 +246,7 @@ def replay_parallel_sessions_controlled(
         state.engine = s.screen_state
         sel = selectors.DefaultSelector()
         sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
+        recent_keys: list = []
         try:
             for ev in events:
                 should_pause_or_cancel()
@@ -242,6 +266,7 @@ def replay_parallel_sessions_controlled(
                             checkpoint_timeout_ms=checkpoint_timeout_ms,
                             session_config=state.config,
                             replay_config=cfg,
+                            recent_keys=recent_keys,
                         )
                         if not matched:
                             expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
@@ -259,6 +284,7 @@ def replay_parallel_sessions_controlled(
                                 match=match,
                                 expected_screen=expected_screen_text_from_event(ev, state.config),
                                 observed_screen=observed_screen_text_from_session(s),
+                                expected_event=ev,
                             )
                             if not _should_apply_deterministic_input(on_failure, failure, params=params):
                                 on_progress(seq_global, None)
@@ -266,6 +292,7 @@ def replay_parallel_sessions_controlled(
                     data = _decode_replay_input(ev)
                     if data:
                         s.write_in(data)
+                        _remember_key(recent_keys, data)
                     on_progress(seq_global, expected_sig or None)
                 elif typ == "checkpoint":
                     if _event_requires_deterministic_comparison(ev, params, session_config=state.config, replay_config=cfg):
@@ -279,6 +306,7 @@ def replay_parallel_sessions_controlled(
                             checkpoint_timeout_ms=checkpoint_timeout_ms,
                             session_config=state.config,
                             replay_config=cfg,
+                            recent_keys=recent_keys,
                         )
                         if not matched:
                             expected_snapshot = _expected_snapshot_from_event(ev)
@@ -298,6 +326,15 @@ def replay_parallel_sessions_controlled(
                             )
                             if swap:
                                 match, failure_type, severity, reason = swap
+                            else:
+                                failure_type, severity, reason = stale_reference_override(
+                                    failure_type,
+                                    severity,
+                                    reason,
+                                    expected_event=ev,
+                                    expected_screen=expected_screen,
+                                    observed_screen=observed_screen,
+                                )
                             on_failure(
                                 build_failure_record(
                                     session_id=sid,
@@ -421,6 +458,7 @@ def replay_parallel_sessions_concurrent_controlled(
             sel = selectors.DefaultSelector()
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
             last_in_ts = None
+            recent_keys: list = []
             try:
                 for ev in events:
                     should_pause_or_cancel()
@@ -458,6 +496,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                 checkpoint_timeout_ms=checkpoint_timeout_ms,
                                 session_config=state.config,
                                 replay_config=cfg,
+                                recent_keys=recent_keys,
                             )
                             if not matched:
                                 expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
@@ -479,6 +518,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                     match=match,
                                     expected_screen=expected_screen_text_from_event(ev, state.config),
                                     observed_screen=observed_screen_text_from_session(s),
+                                    expected_event=ev,
                                 )
                                 msg = str(failure.get("message") or "")
                                 try:
@@ -497,6 +537,7 @@ def replay_parallel_sessions_concurrent_controlled(
                         data = _decode_replay_input(ev)
                         if data:
                             s.write_in(data)
+                            _remember_key(recent_keys, data)
                         on_progress(seq_global, expected_sig or None)
                     elif typ == "checkpoint":
                         if _event_requires_deterministic_comparison(ev, load_params.__dict__, session_config=state.config, replay_config=cfg):
@@ -510,6 +551,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                 checkpoint_timeout_ms=checkpoint_timeout_ms,
                                 session_config=state.config,
                                 replay_config=cfg,
+                                recent_keys=recent_keys,
                             )
                             if not matched:
                                 expected_snapshot = _expected_snapshot_from_event(ev)
@@ -539,6 +581,15 @@ def replay_parallel_sessions_concurrent_controlled(
                                 )
                                 if swap:
                                     match, failure_type, severity, reason = swap
+                                else:
+                                    failure_type, severity, reason = stale_reference_override(
+                                        failure_type,
+                                        severity,
+                                        reason,
+                                        expected_event=ev,
+                                        expected_screen=expected_screen,
+                                        observed_screen=observed_screen,
+                                    )
                                 msg = f"{reason} session={sid}: expected={expected_sig!r} got={got!r}"
                                 on_failure(
                                     build_failure_record(

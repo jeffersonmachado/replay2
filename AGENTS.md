@@ -262,7 +262,14 @@ replay2/
   estabilizado com tela observada é classificado `screen_divergence`/
   `medium` (divergência de conteúdo esperada), não `timeout`/`high`, e a
   assinatura do grupo de falhas não inclui o `observed_value` (muda a cada
-  sessão) para a comparação entre runs reconhecer recorrência. A trilha
+  sessão) para a comparação entre runs reconhecer recorrência. A comparação
+  determinística tolera o eco da tecla recém-enviada (a tela esperada é a
+  estável ANTES do input — `apply_input_echo_fallback` em
+  `replay_compare.py`, alimentado pela janela de `recent_keys` dos
+  executores) e rebaixa para `low` divergências cuja tela de referência da
+  captura está envelhecida (`stale_reference_override` em
+  `replay_control/deterministic.py`: `screen_snapshot_age_ms` ≥ 10s E telas
+  sem nenhuma linha em comum — divergência de contexto, não funcional). A trilha
   sintética grava o manifest `trail/de-para.json` (original → sintético por
   tela, com os mantidos marcados); a página de replay da sessão exibe o
   badge "sintético • captura #N" com link para o replay de origem e o botão

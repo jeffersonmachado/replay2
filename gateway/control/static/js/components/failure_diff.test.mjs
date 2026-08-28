@@ -75,9 +75,12 @@ const FAILURE = {
 
 test('renderFailureInlinePlayerHtml mostra telas lado a lado com navegação', () => {
   const html = renderFailureInlinePlayerHtml(FAILURE, 3, 226);
+  assert.match(html, /id="fp_first"/);
   assert.match(html, /id="fp_prev"/);
   assert.match(html, /id="fp_play"/);
   assert.match(html, /id="fp_next"/);
+  assert.match(html, /id="fp_last"/);
+  assert.match(html, /id="fp_goto"[^>]*max="226"/);
   assert.match(html, /falha 3 de 226 · seq 519/);
   assert.match(html, /Tela esperada \(captura\)/);
   assert.match(html, /Tela observada \(run\)/);
@@ -88,11 +91,15 @@ test('renderFailureInlinePlayerHtml mostra telas lado a lado com navegação', (
 
 test('renderFailureInlinePlayerHtml desabilita navegação nas pontas', () => {
   const first = renderFailureInlinePlayerHtml(FAILURE, 1, 226);
+  assert.match(first, /id="fp_first"[^>]*disabled/);
   assert.match(first, /id="fp_prev"[^>]*disabled/);
   assert.ok(!/id="fp_next"[^>]*disabled/.test(first));
+  assert.ok(!/id="fp_last"[^>]*disabled/.test(first));
   const last = renderFailureInlinePlayerHtml(FAILURE, 226, 226);
   assert.match(last, /id="fp_next"[^>]*disabled/);
+  assert.match(last, /id="fp_last"[^>]*disabled/);
   assert.ok(!/id="fp_prev"[^>]*disabled/.test(last));
+  assert.ok(!/id="fp_first"[^>]*disabled/.test(last));
 });
 
 test('renderFailureInlinePlayerHtml cai para sigs em runs antigas sem telas', () => {

@@ -213,7 +213,8 @@ export function renderScreenDiffHtml(expected, observed, substitutions) {
 }
 
 // Player inline da seção "Eventos e falhas": as duas telas lado a lado e a
-// navegação ◀ anterior / ▶ reproduzir / próxima ▶ entre as falhas em ordem
+// navegação ⏮ primeira / ◀ anterior / ▶ reproduzir / próxima ▶ / última ⏭ +
+// salto direto para uma falha (campo "ir para"), entre as falhas em ordem
 // cronológica (seq crescente), para acompanhar onde a divergência começou e
 // como evoluiu. O JS da página controla a troca de falha (ids fp_*).
 export function renderFailureInlinePlayerHtml(failure, position, total, substitutions) {
@@ -222,9 +223,17 @@ export function renderFailureInlinePlayerHtml(failure, position, total, substitu
   const ts = item.ts_ms ? new Date(item.ts_ms).toLocaleString("pt-BR") : "—";
   const meta = `
     <div class="mb-3 flex flex-wrap items-center gap-2">
+      <button id="fp_first" type="button" class="r2ctl-btn-soft text-xs"${position <= 1 ? " disabled" : ""}>⏮ Primeira</button>
       <button id="fp_prev" type="button" class="r2ctl-btn-soft text-xs"${position <= 1 ? " disabled" : ""}>◀ Anterior</button>
       <button id="fp_play" type="button" class="r2ctl-btn-soft text-xs">▶ Reproduzir</button>
       <button id="fp_next" type="button" class="r2ctl-btn-soft text-xs"${position >= total ? " disabled" : ""}>Próxima ▶</button>
+      <button id="fp_last" type="button" class="r2ctl-btn-soft text-xs"${position >= total ? " disabled" : ""}>Última ⏭</button>
+      <span class="flex items-center gap-1 text-xs text-stone-400">
+        <label for="fp_goto">ir para</label>
+        <input id="fp_goto" type="number" min="1" max="${total}" placeholder="${position}"
+          class="w-20 rounded-lg border border-stone-700 bg-stone-900 px-2 py-1 text-xs text-stone-200" />
+        <span>/ ${total}</span>
+      </span>
       <span id="fp_position" class="rounded-full bg-stone-800 px-3 py-1 text-xs text-stone-200">falha ${position} de ${total} · seq ${escapeHtml(String(item.seq_global ?? "—"))}</span>
     </div>
     <div class="mb-3 grid gap-2 text-xs text-stone-400">

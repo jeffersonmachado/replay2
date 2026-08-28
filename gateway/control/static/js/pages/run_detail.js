@@ -244,6 +244,10 @@ window.addEventListener("DOMContentLoaded", () => {
     selectFailurePlayer(playerPos >= 0 ? playerPos : 0, { scroll: true });
   });
   document.getElementById("failure_player")?.addEventListener("click", (ev) => {
+    if (ev.target.closest("#fp_first")) {
+      selectFailurePlayer(0);
+      return;
+    }
     if (ev.target.closest("#fp_prev")) {
       selectFailurePlayer(playerIdx - 1);
       return;
@@ -252,6 +256,20 @@ window.addEventListener("DOMContentLoaded", () => {
       selectFailurePlayer(playerIdx + 1);
       return;
     }
+    if (ev.target.closest("#fp_last")) {
+      selectFailurePlayer(playerFailures.length - 1);
+      return;
+    }
     if (ev.target.closest("#fp_play")) toggleFailurePlayer();
+  });
+  // Salto direto: Enter no campo "ir para" (delegação — o player é re-renderizado a cada frame).
+  document.getElementById("failure_player")?.addEventListener("keydown", (ev) => {
+    const input = ev.target.closest("#fp_goto");
+    if (!input || ev.key !== "Enter") return;
+    ev.preventDefault();
+    const target = Number(input.value);
+    if (Number.isInteger(target) && target >= 1 && target <= playerFailures.length) {
+      selectFailurePlayer(target - 1);
+    }
   });
 });

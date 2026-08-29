@@ -51,13 +51,20 @@ _RE_PICT_LITERAL = re.compile(
     re.IGNORECASE,
 )
 
-# VALID na linha do GET: valid valor > 0 / valid !empty(campo). A expressão
-# vai até o fim da linha, `;` (continuação xBase) ou a próxima cláusula do
-# GET (when/error/message/color). Não reconhecida é ignorada na geração.
+# VALID na linha do GET (ou na continuação `;` da declaração — nos fontes
+# reais o VALID costuma ficar na linha seguinte):
+#   @ 06,13 get nDesconto pict "999.999,99" ;
+#               valid(fValidExit() and nDesconto >= 0)
+# A expressão vai até o fim da linha, `;` (continuação xBase) ou a próxima
+# cláusula do GET (when/error/message/color). Não reconhecida é ignorada na
+# geração.
 _RE_VALID_CLAUSE = re.compile(
-    r"\bvalid\s+(.+?)(?:\s*;|\s+(?:when|error|message|color)\b|$)",
-    re.IGNORECASE,
+    r"\bvalid\s*(?:\(\s*)?(.+?)(?:\s*;|\s+(?:when|error|message|color)\b|$)",
+    re.IGNORECASE | re.MULTILINE,
 )
+
+# Limite de linhas de continuação (`;`) montadas na declaração lógica do GET.
+_MAX_CONTINUATION = 6
 
 # Distância máxima label→GET na mesma linha para associar (colunas).
 _MAX_LABEL_GAP = 40
@@ -152,7 +159,10 @@ def extract_layout(
 
     says: list[tuple[int, int, str]] = []  # (row, col, label)
     gets: list[tuple[int, int, str, str, str]] = []  # (row, col, var, picture, valid)
-    for line in lines:
+    for idx, raw_line in enumerate(lines):
+        line = raw_line.split("&&", 1)[0]  # && = comentário de fim de linha
+        if line.lstrip().startswith("*"):  # * = linha de comentário
+            continue
         m = _RE_SAY_FTRADUZ.search(line) or _RE_SAY_QUOTED.search(line)
         if m:
             label = m.group(3).strip().rstrip(":.").strip()
@@ -160,14 +170,29 @@ def extract_layout(
                 says.append((int(m.group(1)), int(m.group(2)), label))
         g = _RE_GET_POS.search(line)
         if g:
+            # Declaração xBase continua na(s) linha(s) seguinte(s) quando
+            # termina em `;` — PICTURE e VALID costumam estar na
+            # continuação (est361.prg: valid na linha abaixo do GET).
+            stmt = line
+            while stmt.rstrip().endswith(";") \
+                    and idx + 1 < len(lines) \
+                    and stmt.count("\n") < _MAX_CONTINUATION:
+                idx_next = idx + stmt.count("\n") + 1
+                stmt += "\n" + lines[idx_next].split("&&", 1)[0]
+            tail = stmt[g.end():]
             pic = ""
-            pm = _RE_PICT_LITERAL.search(line[g.end():])
+            pm = _RE_PICT_LITERAL.search(tail)
             if pm:
                 pic = pm.group(1) or pm.group(2) or ""
             valid = ""
-            vm = _RE_VALID_CLAUSE.search(line[g.end():])
+            vm = _RE_VALID_CLAUSE.search(tail)
             if vm:
                 valid = vm.group(1).strip()
+                # o regex consome o "(" de valid(...); remove o ")" de
+                # fechamento correspondente no fim, se sobrou
+                if valid.endswith(")") \
+                        and valid.count(")") == valid.count("(") + 1:
+                    valid = valid[:-1].rstrip()
             gets.append((int(g.group(1)), int(g.group(2)), g.group(3), pic,
                          valid))
 

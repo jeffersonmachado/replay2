@@ -87,6 +87,43 @@ def test_picture_literal_extraida(tmp_path):
     assert by_var["cPedido"].picture == ""
 
 
+SAMPLE_VALID_PRG = """\
+* VALID na linha de continuação (estilo real do est361.prg)
+@ 06,13 get nDesconto pict "999.999,99" ;
+            valid(fValidExit() and nDesconto >= 0)
+
+@ 06,60 get nValFrete pict "999.999,99" ;
+            valid(lastkey() = 5 or  nValFrete >= 0)
+
+@ 09,48 get nVolumes pict "999" ;
+            valid(lastkey() = 5 or nVolumes > 0)
+
+@ 10,13 get cEmail && valid(lastkey() = 5 or fValEmail(@cEmail,10,13,.f.))
+@ 11,13 get cLogrado pict "@!" ;
+            valid(lastkey() = 5 or !empty(cLogrado))
+@ 12,13 get nNota valid nNota > 0
+* @ 13,13 get cComent pict "99" valid(cComent > 0)
+"""
+
+
+def test_valid_em_linha_de_continuacao(tmp_path):
+    """VALID após `;` (linha seguinte do GET) é extraído; VALID em
+    comentário `&&`/`*` é ignorado; `valid expr` sem parêntese também."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_VALID_PRG, encoding="utf-8")
+    by_var = {pf.var: pf for pf in extract_layout(prg)}
+    assert by_var["nDesconto"].valid_expr == "fValidExit() and nDesconto >= 0"
+    assert by_var["nValFrete"].valid_expr == "lastkey() = 5 or  nValFrete >= 0"
+    assert by_var["nVolumes"].valid_expr == "lastkey() = 5 or nVolumes > 0"
+    assert by_var["nNota"].valid_expr == "nNota > 0"
+    # comentários não carregam VALID
+    assert by_var["cEmail"].valid_expr == ""
+    assert "cComent" not in by_var
+    assert by_var["cLogrado"].valid_expr == "lastkey() = 5 or !empty(cLogrado)"
+    # PICTURE da própria linha continua sendo extraída
+    assert by_var["nDesconto"].picture == "999.999,99"
+
+
 SAMPLE_GRID_PRG = """\
 * grade de itens (dbedit) + GETs clássicos
 @ 07,13 get cFrete  pict "@!"

@@ -11,6 +11,25 @@ function fmt(ms) {
   try { return new Date(ms).toLocaleString("pt-BR"); } catch (_) { return String(ms); }
 }
 
+// "tabela: valor1, valor2" por linha → {tabela: [valor1, valor2]}
+// Valores reais de cadastro para campos de consulta (FK) que podem variar.
+function parseLookupValuesText(raw) {
+  const out = {};
+  for (const line of String(raw || "").split("\n")) {
+    const m = line.match(/^\s*([\w.-]+)\s*:\s*(.+)$/);
+    if (!m) continue;
+    const vals = m[2].split(",").map((v) => v.trim()).filter(Boolean);
+    if (vals.length) out[m[1].toLowerCase()] = vals;
+  }
+  return out;
+}
+
+function currentLookupValues() {
+  const el = document.getElementById("cap_synth_lookup_values");
+  const parsed = parseLookupValuesText(el?.value || "");
+  return Object.keys(parsed).length ? parsed : undefined;
+}
+
 function statusBadge(status) {
   const map = {
     active: "text-emerald-300 font-semibold",
@@ -346,6 +365,8 @@ function setupSynthesisPanel(captureId, capture) {
   if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || defaultSourceDir;
   if (samplesInput && !samplesInput.value) samplesInput.value = localStorage.getItem("replay2.captureSynth.samples") || "10";
   if (variationInput) variationInput.value = localStorage.getItem("replay2.captureSynth.variation") || "synthetic";
+  const lookupInput = document.getElementById("cap_synth_lookup_values");
+  if (lookupInput && !lookupInput.value) lookupInput.value = localStorage.getItem("replay2.captureSynth.lookupValues") || "";
 
   const btn = document.getElementById("cap_synthesize_btn");
   if (btn) btn.onclick = () => synthesizeCapture(captureId);
@@ -414,6 +435,7 @@ async function syntheticReplay(captureId) {
   const response = await apiJson(`/api/captures/${captureId}/synthetic-replay`, jsonRequest("POST", {
     source_dir: sourceDir,
     skip_fields: skipFields,
+    lookup_values: currentLookupValues(),
   }));
 
   if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
@@ -507,6 +529,8 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
   localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
   localStorage.setItem("replay2.captureSynth.samples", String(samples));
   localStorage.setItem("replay2.captureSynth.variation", variation);
+  localStorage.setItem("replay2.captureSynth.lookupValues",
+    String(document.getElementById("cap_synth_lookup_values")?.value || ""));
 
   if (btn) { btn.disabled = true; btn.textContent = "Gerando..."; }
   if (feedback) {
@@ -524,6 +548,7 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
     variation,
     name: `capture_${captureId}_${variation}`,
     validate: true,
+    lookup_values: currentLookupValues(),
   }));
 
   if (btn) { btn.disabled = false; btn.textContent = "Gerar"; }

@@ -55,11 +55,18 @@ def synthesize_capture(
     include_stress: bool = False,
     concurrency: int = 5,
     variation: str = "synthetic",
+    lookup_values: dict[str, list] | None = None,
 ) -> dict[str, Any]:
     """Transforma uma captura registrada em template + dataset + sessões sintéticas.
 
     ``variation``: "synthetic" (default) — sessões com dados diferentes;
     "equal" — todas as sessões com os mesmos dados (1ª linha do dataset).
+
+    ``lookup_values``: valores reais por entidade/tabela referenciada (FK),
+    digitados pelo usuário (manual). São fundidos com os valores observados
+    nas capturas anteriores deste servidor (harvest dos report.json) — campos
+    de lookup cobertos por valores reais deixam de ser âncora e passam a
+    variar dentro do cadastro (ex.: condição de pagamento).
     """
     capture = get_capture(con, capture_id)
     if not capture:
@@ -106,8 +113,25 @@ def synthesize_capture(
     synthesizer = JourneySynthesizer()
     template = synthesizer.from_capture(
         capture_jsonl, source_path, name=name or run_name, **kb)
+
+    # Valores reais para campos de lookup (FK): harvest das capturas
+    # anteriores do servidor + lista manual do usuário (manual estende).
+    merged_lookup: dict[str, list] = _harvest_lookup_values(
+        Path(log_dir).parent, exclude_log_dir=log_dir)
+    for key, vals in (lookup_values or {}).items():
+        k = str(key or "").strip().lower()
+        if not k:
+            continue
+        bucket = merged_lookup.setdefault(k, [])
+        for v in (vals if isinstance(vals, list) else [vals]):
+            sv = str(v).strip()
+            if sv and sv not in bucket:
+                bucket.append(sv)
+
     result = synthesizer.synthesize(
-        template, samples=samples, out_dir=output_dir, seed=seed, variation=variation)
+        template, samples=samples, out_dir=output_dir, seed=seed,
+        variation=variation,
+        lookup_values={k: v for k, v in merged_lookup.items() if v})
 
     validation = None
     if include_validation:
@@ -127,7 +151,8 @@ def synthesize_capture(
 
     key_fields = suggest_key_fields(
         result.screen_mappings, entities,
-        indexed_fields=_indexed_field_names(data_dirs))
+        indexed_fields=_indexed_field_names(data_dirs),
+        lookup_covered={k for k, v in merged_lookup.items() if v})
 
     # De→para (original → sintético) da 1ª sessão gerada — exibido no modal
     # do detalhe da captura após o "Gerar". Em variation=equal todas as
@@ -135,7 +160,9 @@ def synthesize_capture(
     depara_screens: list[dict] = []
     dataset_row = _first_session_dataset_row(result.dataset_path)
     if dataset_row:
-        depara_screens = _build_depara_screens(result.screen_mappings, dataset_row, key_fields)
+        depara_screens = _build_depara_screens(
+            result.screen_mappings, dataset_row, key_fields,
+            lookup_counts={k: len(v) for k, v in merged_lookup.items() if v})
 
     return {
         "ok": True,
@@ -165,6 +192,10 @@ def synthesize_capture(
         # Campos-âncora detectados na KB (chave de consulta) — mantidos com o
         # valor original no replay sintético, sem intervenção do usuário.
         "key_fields": key_fields,
+        # Cobertura de lookup aplicada nesta síntese (tabela FK → nº de
+        # valores reais disponíveis) — alimenta a nota do de→para e o
+        # replay em 1 clique.
+        "lookup_counts": {k: len(v) for k, v in merged_lookup.items() if v},
         "depara": {
             "session_index": 1,
             "sessions": result.generated_sessions,
@@ -223,10 +254,57 @@ def _matches_indexed(field: str, indexed: set[str]) -> bool:
     return False
 
 
+def _harvest_lookup_values(
+    captures_root: Path,
+    *,
+    exclude_log_dir: str = "",
+    max_per_key: int = 200,
+) -> dict[str, list[str]]:
+    """Valores reais digitados em capturas anteriores, por entidade/tabela.
+
+    Fonte primária dos ``lookup_values``: códigos observados nas trilhas já
+    sintetizadas (ex.: condições de pagamento usadas em outras capturas do
+    mesmo servidor). Chave = ``lookup_table`` (FK) ou ``entity_name`` do
+    input, em minúsculas. A captura atual é excluída (ela é a referência, não
+    fonte de variação).
+    """
+    exclude_name = Path(str(exclude_log_dir or "")).name
+    values: dict[str, dict] = {}  # chave → {valor: None} (dedup ordenado)
+    root = Path(captures_root)
+    if not root.is_dir():
+        return {}
+    for report in sorted(root.glob("*/synthetic/*/report.json")):
+        try:
+            if exclude_name and report.parents[2].name == exclude_name:
+                continue
+            if report.stat().st_size > 10 * 1024 * 1024:
+                continue
+            data = json.loads(report.read_text(encoding="utf-8"))
+        except (OSError, ValueError, IndexError):
+            continue
+        for screen in data.get("screen_mappings") or []:
+            for inp in screen.get("inputs") or []:
+                original = str(inp.get("original") or "").strip()
+                if not original or "{KEY:" in original:
+                    continue
+                keys = (
+                    str(inp.get("lookup_table") or "").strip().lower(),
+                    str(inp.get("entity_name") or "").strip().lower(),
+                )
+                for key in keys:
+                    if not key:
+                        continue
+                    bucket = values.setdefault(key, {})
+                    if len(bucket) < max_per_key:
+                        bucket.setdefault(original, None)
+    return {key: list(bucket) for key, bucket in values.items()}
+
+
 def suggest_key_fields(
     screen_mappings: list[dict] | None,
     entities: list | None,
     indexed_fields: set[str] | None = None,
+    lookup_covered: set[str] | None = None,
 ) -> list[str]:
     """Campos-âncora da navegação a manter com o valor original da captura.
 
@@ -240,7 +318,14 @@ def suggest_key_fields(
     um valor sintético inexistente faz a consulta não encontrar o registro
     e desvia o fluxo (ex.: "Codigo nao cadastrado" e a sessão cai fora da
     jornada gravada).
+
+    ``lookup_covered``: tabelas FK com valores reais disponíveis
+    (``lookup_values``). Campo cuja ÚNICA razão de âncora é o lookup e cuja
+    tabela está coberta deixa de ser âncora — o valor gerado já vem da lista
+    de valores reais, então variar é seguro (ex.: condição de pagamento).
+    Índice/seek/único continuam ancorando: são consultas diretas.
     """
+    covered = {str(t).strip().lower() for t in (lookup_covered or set()) if str(t).strip()}
     by_entity = {str(getattr(e, "name", "") or "").upper(): e for e in (entities or [])}
     keys: list[str] = []
     seen: set[str] = set()
@@ -262,9 +347,13 @@ def suggest_key_fields(
                 continue
             datatype = str(getattr(fld, "datatype", "") or "").strip().lower()
             semantic = str(getattr(fld, "semantic_type", "") or "").strip().lower()
+            lookup_table = str(getattr(fld, "lookup_table", "") or "").strip()
+            # FK coberta por valores reais (lookup_values) não precisa de
+            # âncora — a variação sorteia um valor que existe no cadastro.
+            lookup_anchor = bool(lookup_table) and lookup_table.lower() not in covered
             if (
                 getattr(fld, "unique_flag", False)
-                or str(getattr(fld, "lookup_table", "") or "").strip()
+                or lookup_anchor
                 or identifies_record(datatype)
                 or identifies_record(semantic)
             ):
@@ -526,6 +615,7 @@ def _build_depara_screens(
     screen_mappings: list[dict],
     dataset_row: dict,
     skip_fields: set[str] | list[str],
+    lookup_counts: dict[str, int] | None = None,
 ) -> list[dict]:
     """De→para por tela: campo, valor original da captura, valor na trilha
     sintética e se foi mantido (chave de consulta ou igual ao original).
@@ -589,6 +679,21 @@ def _build_depara_screens(
                     note = "ajustado ao total do pedido"
                 if synthetic == original:
                     kept, note = True, "igual ao original"
+            if not note:
+                # FK coberta por valores reais: o sintético foi sorteado do
+                # cadastro (lookup_values), não gerado livre.
+                lt = str(inp.get("lookup_table") or "").strip().lower()
+                if lt and lookup_counts and lt in lookup_counts:
+                    note = f"valor real do cadastro (1 de {lookup_counts[lt]})"
+            if not note:
+                # Constraint vinda do VALID do fonte (ex.: "valor > 0") —
+                # registrada no schema da geração (validation_rules).
+                valid_expr = str(inp.get("valid_expr") or "").strip()
+                if valid_expr:
+                    from dakota_gateway.synthetic.validation_rules import (
+                        parse_valid_expr)
+                    if parse_valid_expr(valid_expr):
+                        note = f"VALID: {valid_expr}"
             fields.append({
                 "field": field,
                 "original": original,
@@ -837,6 +942,7 @@ def start_synthetic_replay(
     term: str = "",
     skip_fields: list[str] | None = None,
     auto_entry: bool = True,
+    lookup_values: dict[str, list] | None = None,
     runner,
     hmac_key: bytes,
 ) -> dict[str, Any]:
@@ -863,6 +969,7 @@ def start_synthetic_replay(
         seed=seed,
         name=f"capture-{capture_id}-replay",
         include_validation=False,
+        lookup_values=lookup_values,
     )
 
     dataset_path = Path(synth["artifacts"]["dataset"])
@@ -912,7 +1019,8 @@ def start_synthetic_replay(
         "generated_at_ms": now_ms(),
         "key_fields": effective_skip,
         "screens": _build_depara_screens(
-            synth.get("screen_mappings"), dataset_row, effective_skip
+            synth.get("screen_mappings"), dataset_row, effective_skip,
+            lookup_counts=synth.get("lookup_counts") or {}
         ),
     }
     try:

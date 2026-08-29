@@ -36,6 +36,7 @@ from .data_synthesizer import DataSynthesizer
 from .dataset_builder import DatasetBuilder
 from .schema import ScreenSchema, SyntheticSchema, FieldSchema
 from .providers import default_registry
+from .validation_rules import apply_valid_constraints, parse_valid_expr
 
 
 # ── Helpers ──
@@ -134,6 +135,12 @@ class TemplateInput:
     # Origem do campo: grade dbedit (is_grid) e tabela que alimenta a grade.
     is_grid: bool = False
     grid_source: str = ""
+    # Expressão VALID do GET (inputs mapeados por posição) — vira constraint
+    # de geração via synthetic.validation_rules.
+    valid_expr: str = ""
+    # Tabela referenciada pelo campo (FK da KB) — usada para sortear valores
+    # reais quando há lookup_values alimentando o DatasetBuilder.
+    lookup_table: str = ""
 
 
 @dataclass
@@ -275,6 +282,8 @@ class JourneySynthesizer:
                     layout_field=mi.layout_field,
                     is_grid=mi.is_grid,
                     grid_source=mi.grid_source,
+                    valid_expr=getattr(mi, "valid_expr", "") or "",
+                    lookup_table=getattr(mi, "lookup_table", "") or "",
                 ))
 
             # screen_title: binding > screen_context > screen_sample
@@ -312,14 +321,22 @@ class JourneySynthesizer:
         out_dir: Path,
         seed: int | None = None,
         variation: str = "synthetic",
+        lookup_values: dict[str, list] | None = None,
     ) -> SynthesisResult:
         """Gera N sessoes sinteticas a partir do template.
 
         ``variation``: "synthetic" (default) — cada sessão usa uma linha
         diferente do dataset; "equal" — todas as sessões usam a primeira
         linha (N pedidos com os mesmos dados, útil p/ carga repetitiva).
+
+        ``lookup_values``: valores reais por entidade referenciada (FK) —
+        campos com ``lookup_table`` sorteiam dessas listas em vez de gerar
+        um valor que pode não existir no cadastro (ex.: condição de
+        pagamento). Ausente/vazio, o campo segue a geração normal e o
+        campo-âncora (``suggest_key_fields``) preserva o original no replay.
         """
         variation = "equal" if str(variation or "").strip().lower() == "equal" else "synthetic"
+        lookup_values = lookup_values or {}
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         sessions_dir = out_dir / "sessions"
@@ -404,6 +421,10 @@ class JourneySynthesizer:
                             datatype=dtype,
                             format=fmt if fmt else None,
                             required=True,
+                            # lookup em minúsculas: as listas de valores
+                            # reais (lookup_values) são indexadas assim.
+                            lookup=(inp.lookup_table.strip().lower()
+                                    if inp.lookup_table else None),
                         )
                         # PICTURE do GET (inputs mapeados por posição de
                         # cursor) limita a geração à largura real do campo.
@@ -414,6 +435,16 @@ class JourneySynthesizer:
                         if pic:
                             CaptureKnowledgeIntegrator._picture_to_constraints(
                                 fs, pic)
+                        # VALID do fonte ("valor > 0", "!empty(campo)",
+                        # inlist/$) vira constraint executável — aplicada por
+                        # interseção (só endurece, nunca relaxa PICTURE nem o
+                        # clamp de magnitude que vem a seguir).
+                        valid_expr = (getattr(inp, "valid_expr", "") or "").strip()
+                        if valid_expr:
+                            if apply_valid_constraints(
+                                    fs, parse_valid_expr(valid_expr)):
+                                fs.validation_rules.append(
+                                    f"VALID: {valid_expr}")
                         # Célula de grade numérica: limita a magnitude pela
                         # quantidade de dígitos do valor original. A PICTURE
                         # define a largura máxima da coluna (qtd "9.999,99"
@@ -460,7 +491,8 @@ class JourneySynthesizer:
             )
 
             try:
-                dataset = self.dataset_builder.build(synth_schema)
+                dataset = self.dataset_builder.build(
+                    synth_schema, lookup_values=lookup_values)
                 for rec in dataset.records:
                     rec_data = dict(rec.data)
                     rec_data["_entity"] = entity_name
@@ -576,6 +608,8 @@ class JourneySynthesizer:
                             "layout_field": i.layout_field,
                             "is_grid": i.is_grid,
                             "grid_source": i.grid_source,
+                            "valid_expr": i.valid_expr,
+                            "lookup_table": i.lookup_table,
                         }
                         for i in s.inputs
                     ],
@@ -789,6 +823,8 @@ class JourneySynthesizer:
                             "layout_field": i.layout_field,
                             "is_grid": i.is_grid,
                             "grid_source": i.grid_source,
+                            "valid_expr": i.valid_expr,
+                            "lookup_table": i.lookup_table,
                         }
                         for i in s.inputs
                     ],
@@ -824,6 +860,8 @@ class JourneySynthesizer:
                         layout_field=i.get("layout_field", ""),
                         is_grid=bool(i.get("is_grid", False)),
                         grid_source=i.get("grid_source", ""),
+                        valid_expr=i.get("valid_expr", ""),
+                        lookup_table=i.get("lookup_table", ""),
                     )
                     for i in s.get("inputs", [])
                 ],

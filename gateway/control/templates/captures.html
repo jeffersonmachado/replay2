@@ -162,6 +162,11 @@
           </div>
           <span class="mt-1 block text-[11px] text-stone-500">Campos que o replay sintético NÃO substitui, agrupados por tela da trilha. Chaves de consulta (índice/seek/único na base de conhecimento) já vêm marcadas e não podem ser desmarcadas — marque aqui só as exceções.</span>
         </div>
+        <label class="block lg:col-span-3">
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Valores válidos de cadastro (opcional)</span>
+          <textarea id="cap_synth_lookup_values" rows="2" class="r2ctl-input w-full font-mono text-xs" placeholder="tabela: valor1, valor2 — ex.: est366: 02, 15, 28"></textarea>
+          <span class="mt-1 block text-[11px] text-stone-500">Para campos de consulta (FK) que podem variar: uma linha por tabela, valores separados por vírgula. O gerador sorteia desses valores reais em vez de manter o original. Códigos já digitados em capturas anteriores entram automaticamente.</span>
+        </label>
       </div>
       <div id="cap_synthesis_feedback" class="mt-3 text-sm text-stone-400"></div>
       <div id="cap_synthesis_result" class="mt-3 hidden rounded-2xl border border-emerald-800/50 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-100"></div>

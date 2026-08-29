@@ -31,6 +31,12 @@ function renderDeparaFieldRow(field) {
   const keptBadge = field.kept
     ? `<span class="inline-flex items-center rounded-full border border-amber-900/60 bg-amber-950/50 px-2 py-0.5 text-xs text-amber-200">mantido${field.note === "chave de consulta" ? " (chave)" : ""}</span>`
     : "";
+  // Nota de regra aplicada à substituição (VALID do fonte, valor real do
+  // cadastro via lookup, ajuste ao total do pedido) — visível também em
+  // campo substituído, não só nos mantidos.
+  const noteBadge = !field.kept && field.note
+    ? `<span class="inline-flex items-center rounded-full border border-stone-700 bg-stone-900/60 px-2 py-0.5 text-xs text-stone-400">${escapeHtml(field.note)}</span>`
+    : "";
   const synthClass = field.kept ? "text-stone-400" : "text-emerald-300";
   return `<tr class="border-b border-stone-800/60">
     <td class="px-3 py-2 font-mono text-stone-200">${escapeHtml(field.field || "-")}</td>
@@ -38,7 +44,7 @@ function renderDeparaFieldRow(field) {
     <td class="px-3 py-2 font-mono text-stone-300 break-all">${escapeHtml(field.original || "")}</td>
     <td class="px-1 py-2 text-stone-500">→</td>
     <td class="px-3 py-2 font-mono ${synthClass} break-all">${escapeHtml(field.synthetic || "")}</td>
-    <td class="px-3 py-2">${keptBadge}</td>
+    <td class="px-3 py-2">${keptBadge}${noteBadge}</td>
   </tr>`;
 }
 

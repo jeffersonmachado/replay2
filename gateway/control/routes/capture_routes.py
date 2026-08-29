@@ -484,6 +484,8 @@ def handle_capture_post_route(
                 include_validation=bool(body.get("validate", True)),
                 include_stress=bool(body.get("stress", False)),
                 concurrency=parse_int(body.get("concurrency", 5), 5, min_value=1),
+                lookup_values=body.get("lookup_values")
+                if isinstance(body.get("lookup_values"), dict) else None,
             )
         except ValueError as exc:
             message = str(exc)
@@ -535,6 +537,8 @@ def handle_capture_post_route(
                 term=str(body.get("term") or "").strip(),
                 skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else [],
                 auto_entry=auto_entry,
+                lookup_values=body.get("lookup_values")
+                if isinstance(body.get("lookup_values"), dict) else None,
                 runner=handler.server.runner,
                 hmac_key=handler.server.runner.hmac_key,
             )

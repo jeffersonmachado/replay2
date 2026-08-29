@@ -173,7 +173,13 @@ class FieldClassifier:
             cls._parse_constraints(fc, field.constraints_json)
 
         # ── Validacao ──
-        cls._parse_validation_rules(fc, field.validation_rules)
+        # O valid_expr extraído do GET (screen_extractor) entra junto das
+        # regras — o tradutor de VALID reconhece comparações, !empty e
+        # inlist/$ (synthetic.validation_rules).
+        rules = list(field.validation_rules or [])
+        if field.valid_expr:
+            rules.append(field.valid_expr)
+        cls._parse_validation_rules(fc, rules)
 
         # ── Resolucao final ──
         fc.inferred_datatype = cls._resolve_datatype(fc)
@@ -284,12 +290,32 @@ class FieldClassifier:
 
     @classmethod
     def _parse_validation_rules(cls, fc: FieldClassification, rules: list[str]) -> None:
+        # Reusa o tradutor de VALID do synthetic (comparações, !empty,
+        # inlist/$) — uma única regra para os dois fluxos (KB e geração).
+        from ..synthetic.validation_rules import parse_valid_expr
+
         for rule in rules:
             r = rule.lower()
             if "not null" in r or "required" in r or "obrigat" in r:
                 fc.is_required = True
             if "unique" in r or "unico" in r or "primary key" in r:
                 fc.has_unique_constraint = True
+
+            parsed = parse_valid_expr(rule)
+            if not parsed:
+                continue
+            if parsed.get("required"):
+                fc.is_required = True
+            if "min_value" in parsed:
+                mn = parsed["min_value"] + (1 if parsed.get("min_exclusive") else 0)
+                if fc.min_value == 0.0 or fc.min_value < mn:
+                    fc.min_value = mn
+            if "max_value" in parsed:
+                mx = parsed["max_value"] - (1 if parsed.get("max_exclusive") else 0)
+                if fc.max_value == 0.0 or fc.max_value > mx:
+                    fc.max_value = mx
+            if parsed.get("choices") and not fc.domain_values:
+                fc.domain_values = [str(c) for c in parsed["choices"]]
 
     @classmethod
     def _resolve_datatype(cls, fc: FieldClassification) -> str:

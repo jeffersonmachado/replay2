@@ -41,6 +41,12 @@ class MappedInput:
     evidence: list[str] = field(default_factory=list)
     method: str = ""  # by_semantic_type, by_screen_order, by_matched_fields, by_field_name, unmapped
     picture: str = ""  # PICTURE literal do GET (quando mapeado por posição)
+    # Expressão VALID do GET (quando mapeado por posição) — vira constraint
+    # de geração via synthetic.validation_rules (ex.: "valor > 0").
+    valid_expr: str = ""
+    # lookup_table da entidade da KB (FK) quando o campo referencia outra
+    # entidade — usada para sortear valores reais quando há lookup_values.
+    lookup_table: str = ""
     # Campo do layout do fonte encontrado pela posição do cursor mesmo quando
     # a entidade da KB não tem esse campo (valor mantido, não substituído).
     layout_field: str = ""
@@ -762,6 +768,8 @@ class CaptureKnowledgeIntegrator:
                                       f"({position[0]},{position[1]})→"
                                       f"{pf.var}→{target.name}"],
                             picture=pf.picture,
+                            valid_expr=getattr(pf, "valid_expr", "") or "",
+                            lookup_table=str(getattr(target, "lookup_table", "") or ""),
                             is_grid=pf.is_grid_cell,
                             grid_source=getattr(pf, "grid_source", ""))
                     # O cursor estava num GET do fonte, mas o campo não existe
@@ -776,6 +784,7 @@ class CaptureKnowledgeIntegrator:
                         method="kept_layout_field",
                         layout_field=pf.field,
                         picture=pf.picture,
+                        valid_expr=getattr(pf, "valid_expr", "") or "",
                         is_grid=pf.is_grid_cell,
                         grid_source=getattr(pf, "grid_source", ""),
                         evidence=[f"cursor ({position[0]},{position[1]})→"
@@ -806,6 +815,7 @@ class CaptureKnowledgeIntegrator:
                     field_name=field.name, field_datatype=field.datatype,
                     semantic_type=fs, method="by_semantic_type",
                     placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.95,
+                    lookup_table=str(getattr(field, "lookup_table", "") or ""),
                     evidence=[f"by_semantic_type: {val_type}→{field.name}"])
 
         # 1.5: posição do cursor × layout posicional do fonte (@ row,col GET).
@@ -837,6 +847,8 @@ class CaptureKnowledgeIntegrator:
                                   f"({position[0]},{position[1]})→"
                                   f"{pf.var}→{target.name}"],
                         picture=pf.picture,
+                        valid_expr=getattr(pf, "valid_expr", "") or "",
+                        lookup_table=str(getattr(target, "lookup_table", "") or ""),
                         is_grid=pf.is_grid_cell,
                         grid_source=getattr(pf, "grid_source", ""))
 
@@ -858,6 +870,7 @@ class CaptureKnowledgeIntegrator:
                             semantic_type=self._infer_semantic_type(field.name),
                             method="by_matched_fields",
                             placeholder=f"{{{{{entity.name}.{field.name}}}}}", confidence=0.85,
+                            lookup_table=str(getattr(field, "lookup_table", "") or ""),
                             evidence=[f"by_matched_fields[{data_index}]: {val_type}→{field.name}"])
 
         # 2.5: (passo de cursor movido para 1.5, antes do matched_fields)

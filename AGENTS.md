@@ -279,7 +279,20 @@ replay2/
   `source_analyzer/semantic_types.py` centraliza `IDENTIFIER_TYPES`/
   `identifies_record`, hoje cpf/cnpj, extensível por declaração) são
   detectados automaticamente por `suggest_key_fields` e mantidos com o
-  valor original — o `skip_fields` manual é só para exceções. Campos de
+  valor original — o `skip_fields` manual é só para exceções. Exceção da
+  âncora FK (v0.8.73): campo cuja ÚNICA razão de âncora é `lookup_table`
+  deixa de ser âncora quando há valores reais disponíveis para aquela
+  tabela (`lookup_covered`) — o gerador sorteia um valor que existe no
+  cadastro em vez de manter o original (ex.: condição de pagamento). Os
+  valores reais (`lookup_values`) vêm de duas fontes fundidas em
+  `capture_synthesis_service.synthesize_capture`: harvest dos `report.json`
+  das capturas anteriores do servidor (`_harvest_lookup_values` — códigos
+  já digitados em outras trilhas, por `lookup_table`/`entity_name`) e a
+  lista manual da UI do detalhe da captura ("Valores válidos de cadastro",
+  uma linha `tabela: v1, v2` — paridade na API via `lookup_values` no body
+  de `/synthesize` e `/synthetic-replay`). O sorteio usa o mecanismo já
+  existente `dataset_builder.build(lookup_values=...)` (FieldSchema.lookup
+  em minúsculas). Campos de
   grade sem entrada na KB (a KB da captura 13/62 tem est361/est366 sem
   campos) também são ancorados quando casam com algum campo das expressões
   de chave lidas dos `i<TABELA>.00N` (`_indexed_field_names` +
@@ -296,6 +309,15 @@ replay2/
   (1 casa) → "763,0", não "763,05": o GET do Recital com PICTURE de 2 casas
   não comita valor de 1 casa no ENTER e a grade de pagamento fica pendente,
   desalinhando a sequência de ESCs do replay — captura 62, run 40); a
+  expressão VALID do GET (ex.: `valid valor > 0`, `!empty(campo)`,
+  `inlist(...)`/`$`) vira constraint executável desde a v0.8.73:
+  `screen_layout.py` a extrai da linha do GET (`PositionedField.valid_expr`),
+  `synthetic/validation_rules.py` traduz para min/max/required/choices e o
+  `journey_synthesizer.synthesize` a aplica por interseção (só endurece
+  PICTURE/clamp, nunca relaxa; `>`/`<` usam passo 1 em inteiro e 0,01 em
+  decimal); o mesmo tradutor é reusado pelo `field_classifier` (KB) e a
+  regra aplicada aparece como nota no de→para ("VALID: valor > 0",
+  "valor real do cadastro (1 de N)"); a
   rota
   `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
   detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)

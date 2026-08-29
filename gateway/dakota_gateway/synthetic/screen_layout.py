@@ -51,6 +51,14 @@ _RE_PICT_LITERAL = re.compile(
     re.IGNORECASE,
 )
 
+# VALID na linha do GET: valid valor > 0 / valid !empty(campo). A expressão
+# vai até o fim da linha, `;` (continuação xBase) ou a próxima cláusula do
+# GET (when/error/message/color). Não reconhecida é ignorada na geração.
+_RE_VALID_CLAUSE = re.compile(
+    r"\bvalid\s+(.+?)(?:\s*;|\s+(?:when|error|message|color)\b|$)",
+    re.IGNORECASE,
+)
+
 # Distância máxima label→GET na mesma linha para associar (colunas).
 _MAX_LABEL_GAP = 40
 
@@ -104,6 +112,7 @@ class PositionedField:
     field: str = ""    # nome normalizado (ex.: pedido)
     label: str = ""    # label associado por proximidade (ex.: "Pedido")
     picture: str = ""  # PICTURE literal do GET (ex.: "99", "999.999,99")
+    valid_expr: str = ""  # expressão VALID do GET (ex.: "valor > 0")
     # Célula de grade dbedit: row_end/col_end delimitam o span da célula
     # (row..row_end × col..col_end). None em GETs clássicos.
     row_end: int | None = None
@@ -142,7 +151,7 @@ def extract_layout(
         lines = lines[max(0, line_start - 1):line_end]
 
     says: list[tuple[int, int, str]] = []  # (row, col, label)
-    gets: list[tuple[int, int, str, str]] = []  # (row, col, var, picture)
+    gets: list[tuple[int, int, str, str, str]] = []  # (row, col, var, picture, valid)
     for line in lines:
         m = _RE_SAY_FTRADUZ.search(line) or _RE_SAY_QUOTED.search(line)
         if m:
@@ -155,11 +164,16 @@ def extract_layout(
             pm = _RE_PICT_LITERAL.search(line[g.end():])
             if pm:
                 pic = pm.group(1) or pm.group(2) or ""
-            gets.append((int(g.group(1)), int(g.group(2)), g.group(3), pic))
+            valid = ""
+            vm = _RE_VALID_CLAUSE.search(line[g.end():])
+            if vm:
+                valid = vm.group(1).strip()
+            gets.append((int(g.group(1)), int(g.group(2)), g.group(3), pic,
+                         valid))
 
     fields: list[PositionedField] = []
     seen: set[tuple[int, int, str]] = set()
-    for row, col, var, picture in gets:
+    for row, col, var, picture, valid in gets:
         label = ""
         best_col = -1
         for srow, scol, slabel in says:
@@ -174,7 +188,7 @@ def extract_layout(
         fields.append(PositionedField(
             row=row, col=col, var=var,
             field=_normalize_field_name(var), label=label,
-            picture=picture,
+            picture=picture, valid_expr=valid,
         ))
     fields.extend(_extract_grids(lines))
     return fields

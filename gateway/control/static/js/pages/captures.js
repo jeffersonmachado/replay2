@@ -437,12 +437,14 @@ async function syntheticReplay(captureId) {
     feedback.textContent = `Run ${data.run_id} disparada — ${formatCount(data.substitutions_count || 0)} campo(s) substituído(s).`;
   }
   if (resultEl) {
+    const entryPoint = data.entry_point || null;
     resultEl.classList.remove("hidden");
     resultEl.innerHTML = `
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>run: <a class="font-mono text-emerald-50 underline" href="/runs/${escapeHtml(String(data.run_id))}">#${escapeHtml(String(data.run_id))}</a></span>
         <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
         ${kept.length ? `<span class="md:col-span-2">mantidos (chave de consulta): <span class="font-mono text-emerald-50">${escapeHtml(kept.join(", "))}</span></span>` : ""}
+        ${entryPoint ? `<span class="md:col-span-2 text-amber-200/90">entrada automática: ${escapeHtml(entryPoint.summary || "")}</span>` : ""}
         <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>
         ${viewHref ? `<span class="md:col-span-2"><a class="underline decoration-emerald-400/60 underline-offset-2 hover:text-emerald-100" href="${viewHref}">Ver sessão sintética no terminal virtual</a></span>` : ""}
       </div>

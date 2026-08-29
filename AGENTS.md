@@ -235,7 +235,19 @@ replay2/
   (`build_synthetic_trail`) regrava a trilha da captura com os valores
   substituídos pelos dados sintéticos (respeitando `skip_fields`, que vira
   substituição identidade para preservar a posição do cursor), remove o
-  banner pré-sessão e re-assina hash-chain + HMAC. A substituição casa o
+  banner pré-sessão e re-assina hash-chain + HMAC. Quando a captura começou
+  fora do sistema (preâmbulo de login/shell — ex.: profile quebrado derrubou
+  o usuário no shell e ele navegou manualmente até o ERP, capturas 13/62), o
+  replay no ambiente são começaria em outro estado (menu wrapper
+  auto-iniciado) e a trilha desalinha desde a primeira tecla:
+  `detect_session_entry` reconhece o padrão (prompt shell/erro de
+  /etc/profile + wrapper antes do runtime Recital subir — `ESC[?7l`), corta
+  o preâmbulo (`start_seq`) e deriva das próprias teclas gravadas o
+  `entry_preamble` (menu wrapper → shell → ERP, com âncoras de espera),
+  gravado nos params da run e executado por `_run_entry_preamble`
+  (`replay_control/executors.py`) uma vez por sessão, antes do primeiro
+  checkpoint; default ligado no 1-clique (`auto_entry`, `0` desliga). A
+  substituição casa o
   valor original como evento único ou como **run de teclas de 1 caractere**
   (campo digitado tecla a tecla — dígitos de máscara e também
   alfanuméricos/decimais de grade, ex.: 'g2511'/'229,9' da captura 13;

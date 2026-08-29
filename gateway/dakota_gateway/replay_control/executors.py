@@ -48,6 +48,86 @@ def _remember_key(recent: list, data: bytes) -> None:
         recent.append(text)
         del recent[:-_MAX_RECENT_KEYS]
 
+
+def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[str]:
+    """Executa os passos de entrada (login → primeira tela do sistema).
+
+    Usado quando a trilha teve o preâmbulo de shell cortado
+    (``synthetic_trail.detect_session_entry``): a sessão de replay começa no
+    login do destino e precisa atravessar menu wrapper/shell até a primeira
+    tela do sistema antes do primeiro checkpoint. Cada passo é um dict com
+    ``wait_text`` (âncora na saída), ``send`` (teclas), ``wait_stable_ms``
+    (drenar até ficar quieto), ``timeout_s`` e ``optional``. Um wait que
+    estoura NÃO envia o ``send`` do passo (a tecla cairia no contexto errado)
+    e o preamble segue para o próximo passo com warning — se a entrada falhar,
+    o primeiro checkpoint registra a divergência com as telas na UI.
+
+    A saída lida alimenta a ``screen_state`` e a trilha observada da sessão
+    normalmente (o preâmbulo fica visível no replay observado). Retorna a
+    lista de avisos.
+    """
+    warnings: list[str] = []
+    tail = bytearray()
+
+    def pump(timeout: float) -> None:
+        try:
+            events = sel.select(timeout=max(0.0, timeout))
+        except Exception:
+            return
+        for key, _ in events:
+            if key.data != s.session_id:
+                continue
+            try:
+                data = s.read_out()
+            except Exception:
+                data = b""
+            if data:
+                tail.extend(data)
+
+    def wait_for(text: str, timeout_s: float) -> bool:
+        needle = str(text).encode("utf-8", "replace")
+        deadline = time.monotonic() + max(0.2, float(timeout_s))
+        while time.monotonic() < deadline:
+            if needle in tail:
+                return True
+            if should_pause_or_cancel is not None:
+                should_pause_or_cancel()
+            pump(min(0.2, max(0.02, deadline - time.monotonic())))
+        return needle in tail
+
+    def wait_stable(stable_ms: int, timeout_s: float) -> None:
+        deadline = time.monotonic() + max(0.2, float(timeout_s))
+        while time.monotonic() < deadline:
+            quiet_ms = int(time.time() * 1000) - int(getattr(s, "last_out_ms", 0) or 0)
+            if quiet_ms >= stable_ms:
+                return
+            if should_pause_or_cancel is not None:
+                should_pause_or_cancel()
+            pump(min(0.2, max(0.02, deadline - time.monotonic())))
+
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        timeout_s = float(step.get("timeout_s") or 20)
+        ok = True
+        wait_text = str(step.get("wait_text") or "").strip()
+        if wait_text:
+            ok = wait_for(wait_text, timeout_s)
+            if not ok:
+                warnings.append(
+                    f"entrada automática: âncora {wait_text!r} não apareceu em {timeout_s:.0f}s"
+                )
+        send = step.get("send")
+        if send and ok:
+            try:
+                s.write_in(str(send).encode("utf-8"))
+            except Exception:
+                warnings.append("entrada automática: falha ao enviar teclas do passo")
+        stable_ms = int(step.get("wait_stable_ms") or 0)
+        if stable_ms and ok:
+            wait_stable(stable_ms, timeout_s)
+    return warnings
+
 def replay_strict_global_controlled(
     cfg: ReplayConfig,
     params: dict | None = None,
@@ -63,6 +143,11 @@ def replay_strict_global_controlled(
     recent_keys: dict[str, list] = {}
     sel = selectors.DefaultSelector()
     input_mode = _replay_input_mode(params)
+    # Entrada automática no sistema (trilha com preâmbulo de shell cortado —
+    # ver synthetic_trail.detect_session_entry): executada uma vez por sessão,
+    # logo após a conexão, antes do primeiro checkpoint.
+    preamble_steps = list((params or {}).get("entry_preamble") or [])
+    preamble_done: set[str] = set()
 
     def remember_session_start(sid: str, ev: dict) -> None:
         if sid not in session_configs:
@@ -80,6 +165,16 @@ def replay_strict_global_controlled(
             states[sid].engine = s.screen_state
             sessions[sid] = s
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
+            if preamble_steps and sid not in preamble_done:
+                preamble_done.add(sid)
+                try:
+                    warnings = _run_entry_preamble(
+                        s, sel, preamble_steps, should_pause_or_cancel=should_pause_or_cancel
+                    )
+                except Exception as exc:
+                    warnings = [f"entrada automática falhou: {exc}"]
+                if warnings:
+                    states[sid].warnings.extend(warnings)
         return sessions[sid]
 
     def drain_output(timeout: float = 0.05):

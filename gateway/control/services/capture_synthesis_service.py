@@ -666,6 +666,7 @@ def start_synthetic_replay(
     target_user: str = "",
     term: str = "",
     skip_fields: list[str] | None = None,
+    auto_entry: bool = True,
     runner,
     hmac_key: bytes,
 ) -> dict[str, Any]:
@@ -675,6 +676,12 @@ def start_synthetic_replay(
     na trilha real da captura (banner pré-sessão removido, cadeia HMAC
     re-assinada) → run determinístico ``send-anyway`` via replay_control.
     Retorna o payload da run criada + estatísticas da trilha.
+
+    ``auto_entry`` (default ligado): quando a captura começou fora do sistema
+    (preâmbulo de login/shell — capturas 13/62), corta a trilha no início do
+    ERP e grava nos params da run o ``entry_preamble`` (passos de entrada
+    derivados das próprias teclas da captura), executado pelo replay antes do
+    primeiro checkpoint.
     """
     from control.services.run_service import create_run_request_payload
 
@@ -720,7 +727,11 @@ def start_synthetic_replay(
         substitutions,
         trail_dir,
         hmac_key=hmac_key,
+        start_seq="auto" if auto_entry else None,
     )
+    entry = trail.get("entry") if auto_entry else None
+    if entry:
+        synth_warnings.append(str(entry.get("summary") or ""))
 
     # Manifest do de→para (original → sintético por tela) — alimenta o modal
     # "De→para" da página de replay da sessão sintética sem reprocessar nada.
@@ -768,6 +779,11 @@ def start_synthetic_replay(
             "synthetic_substitutions": [[o, s] for o, s in substitutions if o != s],
         },
     }
+    if entry:
+        # Passos de entrada (menu wrapper → shell → ERP) executados pelo
+        # replay antes do primeiro checkpoint, e o seq de corte do preâmbulo.
+        run_body["params"]["entry_preamble"] = entry["preamble"]
+        run_body["params"]["entry_trimmed_seq"] = entry["start_seq"]
     created = create_run_request_payload(con, created_by=created_by, body=run_body)
     run_id = int(created["id"])
     runner.start_run_async(run_id)
@@ -784,6 +800,16 @@ def start_synthetic_replay(
         "key_fields_suggested": suggested_skip,
         "skip_fields": effective_skip,
         "dropped_banner_events": trail["dropped_banner"],
+        "dropped_entry_events": trail.get("dropped_entry") or 0,
+        "entry_point": (
+            {
+                "start_seq": entry["start_seq"],
+                "dropped": entry["dropped"],
+                "summary": entry["summary"],
+            }
+            if entry
+            else None
+        ),
         "trail_events": trail["events"],
         "trail_dir": str(trail_dir),
         "warnings": trail["warnings"] + synth_warnings,

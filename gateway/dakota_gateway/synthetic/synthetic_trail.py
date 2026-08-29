@@ -9,6 +9,13 @@ trilha derivada que:
   ``deterministic_input`` com tela real — ex.: registro TeraTerm
   ``NOME = .../WINDOWS = ...`` que só aparece na 1ª conexão do terminal e
   poluiria o prompt do menu no replay);
+- opcionalmente corta o preâmbulo de login/shell (``start_seq``): quando a
+  captura começou fora do sistema (ex.: profile quebrado derrubou o usuário
+  no shell e ele navegou manualmente até o ERP), o replay no ambiente são
+  começa em outro estado (menu wrapper auto-iniciado) e a trilha inteira
+  desalinha. ``detect_session_entry`` reconhece esse padrão, aponta o evento
+  em que o sistema inicia (runtime Recital: ``ESC[?7l``) e deriva os passos
+  de entrada (menu → shell → ERP) das próprias teclas gravadas;
 - substitui os inputs mapeados pelos valores sintéticos — campos com
   máscara digitados dígito a dígito (ex.: CPF ``@R 999.999.999-99``) são
   trocados dígito a dígito, preservando 1 evento por tecla;
@@ -20,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 from ..audit_writer import b64
@@ -30,6 +38,174 @@ from ..schema import AuditEvent
 # Assinatura de tela "vazia" — marca o banner pré-sessão (registro de
 # terminal) que não faz parte do fluxo da aplicação.
 _EMPTY_SIGS = ("", "L=0;W=0")
+
+# Início do runtime Recital: o ERP desliga o autowrap (ESC[?7l) e limpa a
+# tela ao carregar — marca o fim do preâmbulo de login/shell.
+_ERP_INIT_MARKER = "\x1b[?7l"
+# Prompt do menu wrapper de login do ambiente Dakota ("0 - Fim" sai p/ shell).
+_WRAPPER_PROMPT = "Digite a sua opcao"
+# Erro típico de profile quebrado (derruba o login no shell em vez de abrir
+# o menu/sistema — capturas 13 e 62).
+_PROFILE_ERROR = "/etc/profile"
+# Prompt de shell ksh do ambiente: "(ferblo)MIG24:/dakota1/u/ferblo >".
+_SHELL_PROMPT_RE = re.compile(r"\(\w+\)[\w.\-]+:[/\w.\-~ ]*>")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][0-9A-Z]|\x1b.")
+# Registro de identificação do terminal (TeraTerm responde ao ESC[5i com
+# "NOME = .../WINDOWS = .../TERATERM = ...") — não é tecla de menu/shell.
+_TERMINAL_ID_RE = re.compile(r"^(NOME|WINDOWS|TERATERM|MACs)\s*=", re.M)
+# ERP logo no início da sessão (até este seq) não é preâmbulo — é o fluxo
+# normal de quem já cai dentro do sistema.
+_MIN_ERP_SEQ = 15
+
+
+def _decode_b64(ev: dict) -> str:
+    try:
+        return base64.b64decode(str(ev.get("data_b64") or "")).decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _first_printable_anchor(text: str) -> str:
+    """Primeira âncora de texto visível de um draw ANSI (ex.: 'DAKOTA S/A')."""
+    clean = _ANSI_RE.sub("", text)
+    for line in clean.splitlines():
+        line = re.sub(r"\s+", " ", line).strip()
+        if len(line) < 4:
+            continue
+        anchor = " ".join(line.split(" ")[:2])[:24].strip()
+        if len(anchor) >= 4:
+            return anchor
+    return ""
+
+
+def detect_session_entry(events: list[dict]) -> dict | None:
+    """Detecta captura que começa fora do sistema (preâmbulo shell/wrapper).
+
+    Reconhece o padrão das capturas 13/62: erros de /etc/profile ou prompt de
+    shell + menu wrapper antes do runtime Recital subir (``ESC[?7l``). Nesse
+    cenário o replay no ambiente são começa em outro estado (o wrapper
+    auto-inicia no login) e a trilha desalinha desde a primeira tecla.
+
+    Retorna ``{"start_seq", "preamble", "dropped", "summary"}`` — o corte da
+    trilha (``start_seq``) e os passos de entrada derivados das próprias
+    teclas gravadas: o que o usuário digitou para sair do wrapper (ex.:
+    ``0\\r``) e o comando shell que abriu o sistema (ex.: ``k\\r``), com
+    âncoras de espera extraídas da gravação. ``None`` quando não há evidência
+    de preâmbulo (nunca cortar às cegas).
+    """
+    outs: list[tuple[int, str]] = []
+    ins: list[tuple[int, str]] = []
+    det_seqs: list[int] = []
+    for ev in events:
+        seq = int(ev.get("seq_global") or 0)
+        typ = ev.get("type")
+        if typ == "bytes":
+            text = _decode_b64(ev)
+            (ins if ev.get("dir") == "in" else outs).append((seq, text))
+        elif typ == "deterministic_input":
+            det_seqs.append(seq)
+
+    erp_seq = next((seq for seq, text in outs if _ERP_INIT_MARKER in text), None)
+    if erp_seq is None or erp_seq <= _MIN_ERP_SEQ:
+        return None
+    pre_text = "".join(text for seq, text in outs if seq < erp_seq)
+    has_wrapper = _WRAPPER_PROMPT in pre_text
+    has_shell = bool(_SHELL_PROMPT_RE.search(pre_text)) or _PROFILE_ERROR in pre_text
+    if not (has_wrapper and has_shell):
+        return None
+
+    # Teclas digitadas após o ÚLTIMO prompt do wrapper antes do ERP, até o
+    # shell aparecer — no ambiente são o wrapper auto-inicia no login e as
+    # mesmas teclas (ex.: "0\r") o atravessam. O registro de identificação
+    # do terminal (TeraTerm, resposta ao ESC[5i) nunca é tecla de menu —
+    # na captura 13 a sessão reconectou e o bloco caiu entre dois wrappers.
+    last_wrap_seq = max(
+        (seq for seq, text in outs if seq < erp_seq and _WRAPPER_PROMPT in text),
+        default=None,
+    )
+    wrapper_keys: list[str] = []
+    if last_wrap_seq is not None:
+        for ev in events:
+            seq = int(ev.get("seq_global") or 0)
+            if seq <= last_wrap_seq or seq >= erp_seq or ev.get("type") != "bytes":
+                continue
+            text = _decode_b64(ev)
+            if ev.get("dir") == "out":
+                if wrapper_keys and _SHELL_PROMPT_RE.search(text):
+                    break
+            elif not _TERMINAL_ID_RE.search(text):
+                wrapper_keys.append(text)
+    wrapper_send = "".join(wrapper_keys)
+
+    # Último comando shell antes do ERP subir — é o que abre o sistema
+    # (ex.: "k\r"). Registro de terminal filtrado pelo mesmo motivo.
+    shell_prompts = [(seq, text) for seq, text in outs if seq < erp_seq and _SHELL_PROMPT_RE.search(text)]
+    shell_send = ""
+    shell_wait = ""
+    if shell_prompts:
+        last_prompt_seq, last_prompt_text = shell_prompts[-1]
+        shell_send = "".join(
+            text for seq, text in ins
+            if last_prompt_seq < seq < erp_seq and not _TERMINAL_ID_RE.search(text)
+        )
+        m = _SHELL_PROMPT_RE.search(last_prompt_text)
+        if m:
+            shell_wait = m.group(0).strip()
+
+    # Âncora da primeira tela do sistema: primeiro texto visível do draw pós-init.
+    first_det_after = next((s for s in det_seqs if s > erp_seq), erp_seq + 30)
+    anchor = ""
+    for seq, text in outs:
+        if seq < erp_seq or seq > first_det_after:
+            continue
+        anchor = _first_printable_anchor(text)
+        if anchor:
+            break
+    if not anchor:
+        return None
+
+    steps: list[dict] = []
+    if wrapper_send:
+        steps.append({
+            "wait_text": _WRAPPER_PROMPT,
+            "send": wrapper_send,
+            "timeout_s": 20,
+            "optional": True,
+            "label": "menu inicial do login",
+        })
+    if shell_send:
+        step: dict = {"send": shell_send, "timeout_s": 20, "label": "shell do servidor"}
+        if shell_wait:
+            step["wait_text"] = shell_wait
+        else:
+            step["wait_stable_ms"] = 1000
+        steps.append(step)
+    steps.append({"wait_text": anchor, "timeout_s": 30, "label": "primeira tela do sistema"})
+    steps.append({"wait_stable_ms": 800, "timeout_s": 10})
+
+    dropped = sum(
+        1 for ev in events
+        if int(ev.get("seq_global") or 0) < erp_seq and ev.get("type") != "session_start"
+    )
+    caminho = " → ".join(str(s.get("label") or "estabilizar") for s in steps)
+    summary = (
+        f"preâmbulo de login/shell detectado ({dropped} eventos antes do sistema); "
+        f"o replay entra sozinho: {caminho}"
+    )
+    return {"start_seq": erp_seq, "preamble": steps, "dropped": dropped, "summary": summary}
+
+
+def _trim_before_seq(events: list[dict], start_seq: int) -> tuple[list[dict], int]:
+    """Corta eventos anteriores a ``start_seq`` (mantém ``session_start``)."""
+    keep: list[dict] = []
+    dropped = 0
+    for ev in events:
+        seq = int(ev.get("seq_global") or 0)
+        if seq < start_seq and ev.get("type") != "session_start":
+            dropped += 1
+            continue
+        keep.append(ev)
+    return keep, dropped
 
 
 def det_key(ev: dict) -> str:
@@ -150,12 +326,16 @@ def build_synthetic_trail(
     *,
     hmac_key: bytes,
     drop_banner: bool = True,
+    start_seq: int | str | None = None,
 ) -> dict:
     """Gera trilha auditável derivada da captura com dados sintéticos.
 
     ``substitutions``: pares ``(valor_original, valor_sintético)`` na ordem
-    em que os inputs aparecem na captura. Retorna dict com ``out``,
-    ``events``, ``dropped_banner``, ``applied`` e ``warnings``.
+    em que os inputs aparecem na captura. ``start_seq``: corte do preâmbulo
+    de login/shell — um ``int`` (seq_global do primeiro evento mantido) ou
+    ``"auto`` para detectar (``detect_session_entry``). Retorna dict com
+    ``out``, ``events``, ``dropped_banner``, ``dropped_entry``, ``entry``
+    (detecção de entrada, quando ``auto``), ``applied`` e ``warnings``.
     """
     capture_path = Path(capture_jsonl)
     events = [
@@ -164,9 +344,23 @@ def build_synthetic_trail(
         if line.strip()
     ]
 
+    entry = None
+    if start_seq == "auto":
+        entry = detect_session_entry(events)
+        start_seq = int(entry["start_seq"]) if entry else None
+    elif start_seq is not None:
+        start_seq = int(start_seq)
+
     dropped = 0
     if drop_banner:
         events, dropped = _drop_pre_session_banner(events)
+
+    # O trim do preâmbulo roda DEPOIS do banner drop: ambos usam os
+    # seq_global originais; se o trim viesse antes, o banner drop poderia
+    # cortar o draw inicial do sistema (primeiro DET real fica depois dele).
+    dropped_entry = 0
+    if isinstance(start_seq, int) and start_seq > 1:
+        events, dropped_entry = _trim_before_seq(events, start_seq)
 
     warnings, applied = _apply_substitutions(events, list(substitutions))
 
@@ -193,6 +387,8 @@ def build_synthetic_trail(
         "out": str(out_file),
         "events": len(events),
         "dropped_banner": dropped,
+        "dropped_entry": dropped_entry,
+        "entry": entry,
         "applied": applied,
         "warnings": warnings,
     }

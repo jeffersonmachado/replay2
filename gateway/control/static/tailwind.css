@@ -1796,6 +1796,10 @@ video {
   color: rgb(253 230 138 / 0.7);
 }
 
+.text-amber-200\/90 {
+  color: rgb(253 230 138 / 0.9);
+}
+
 .text-amber-300 {
   --tw-text-opacity: 1;
   color: rgb(252 211 77 / var(--tw-text-opacity, 1));

@@ -518,6 +518,10 @@ def handle_capture_post_route(
             write_json(handler, 400, {"error": "source_dir obrigatório (ou configure DAKOTA_SOURCE_ROOT no servidor)"})
             return True
 
+        # Entrada automática no sistema (corte do preâmbulo login/shell +
+        # preamble de entrada) — default ligada; body.auto_entry=0 desliga.
+        auto_entry = str(body.get("auto_entry", "1")).strip().lower() not in ("0", "false", "no")
+
         con = handler._db()
         try:
             payload = _start_synthetic_replay(
@@ -530,6 +534,7 @@ def handle_capture_post_route(
                 target_user=str(body.get("target_user") or "").strip(),
                 term=str(body.get("term") or "").strip(),
                 skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else [],
+                auto_entry=auto_entry,
                 runner=handler.server.runner,
                 hmac_key=handler.server.runner.hmac_key,
             )

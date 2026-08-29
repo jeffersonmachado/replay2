@@ -24,6 +24,14 @@ from .providers import ProviderRegistry, default_registry
 from .dataset_builder import DatasetBuilder
 from .template_engine import TemplateEngine
 from .screen_layout import extract_layout, layout_labels, field_at
+from .validation_rules import valid_lookup_table
+
+
+def _lookup_of(field_or_target: Any, valid_expr: str = "") -> str:
+    """lookup_table do campo: KB primeiro; senão, a tabela do fValida da
+    VALID do fonte (ex.: frete → arqfrete, situacao → est281)."""
+    kb = str(getattr(field_or_target, "lookup_table", "") or "").strip()
+    return kb or valid_lookup_table(valid_expr)
 
 
 @dataclass
@@ -769,7 +777,8 @@ class CaptureKnowledgeIntegrator:
                                       f"{pf.var}→{target.name}"],
                             picture=pf.picture,
                             valid_expr=getattr(pf, "valid_expr", "") or "",
-                            lookup_table=str(getattr(target, "lookup_table", "") or ""),
+                            lookup_table=_lookup_of(
+                                target, getattr(pf, "valid_expr", "") or ""),
                             is_grid=pf.is_grid_cell,
                             grid_source=getattr(pf, "grid_source", ""))
                     # O cursor estava num GET do fonte, mas o campo não existe
@@ -785,6 +794,8 @@ class CaptureKnowledgeIntegrator:
                         layout_field=pf.field,
                         picture=pf.picture,
                         valid_expr=getattr(pf, "valid_expr", "") or "",
+                        lookup_table=valid_lookup_table(
+                            getattr(pf, "valid_expr", "") or ""),
                         is_grid=pf.is_grid_cell,
                         grid_source=getattr(pf, "grid_source", ""),
                         evidence=[f"cursor ({position[0]},{position[1]})→"
@@ -848,7 +859,8 @@ class CaptureKnowledgeIntegrator:
                                   f"{pf.var}→{target.name}"],
                         picture=pf.picture,
                         valid_expr=getattr(pf, "valid_expr", "") or "",
-                        lookup_table=str(getattr(target, "lookup_table", "") or ""),
+                        lookup_table=_lookup_of(
+                            target, getattr(pf, "valid_expr", "") or ""),
                         is_grid=pf.is_grid_cell,
                         grid_source=getattr(pf, "grid_source", ""))
 

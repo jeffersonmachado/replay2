@@ -10,7 +10,11 @@ padrões simples e seguros das VALIDs xBase/Recital:
   e 0,01 em decimais);
 - obrigatoriedade: ``!empty(campo)`` / ``.not. empty(campo)`` → required;
 - domínio fechado: ``inlist(campo, "A", "B")`` ou ``campo $ "SN"`` →
-  ``choices``.
+  ``choices``;
+- relacionamento (FK): ``fValida(chave, chave, [tabela], ...)`` — o valor
+  deve existir cadastrado na ``tabela`` → ``valid_lookup_table`` extrai o
+  nome da tabela (não é constraint de faixa; alimenta ``lookup_table`` do
+  campo, usado para sortear valores reais do cadastro).
 
 Expressões não reconhecidas (chamadas de função, subconsultas, ``.or.``
 entre condições) são parcialmente aproveitadas ou ignoradas — nunca
@@ -38,6 +42,12 @@ _RE_INLIST = re.compile(r"inlist\s*\([^,)]+,([^)]*)\)", re.IGNORECASE)
 
 # campo $ "SN" → contenção de caractere: domínio = caracteres da string.
 _RE_CONTAINS = re.compile(r"[\w.()\[\]]+\s*\$\s*\"([^\"]+)\"")
+
+# fValida(chave, chave, [tabela], [descricao], ...) — validação de cadastro
+# (FK) do Recital: o 1º colchete não vazio é a tabela onde o valor deve
+# existir. Ex.: fValida(strzero(cFrete,2),strzero(cFrete,2),[arqfrete],...).
+_RE_FVALIDA_TABLE = re.compile(r"fvalida\s*\(", re.IGNORECASE)
+_RE_BRACKET_NAME = re.compile(r"\[\s*(\w+)\s*\]")
 
 _RE_QUOTED = re.compile(r"\"([^\"]*)\"|'([^']*)'")
 
@@ -107,6 +117,23 @@ def parse_valid_expr(expr: str) -> dict[str, Any]:
             out["choices"] = chars
 
     return out
+
+
+def valid_lookup_table(expr: str) -> str:
+    """Tabela de cadastro referenciada por um ``fValida(...)`` na VALID.
+
+    ``fValida(valor, valor, [tabela], [descricao], ...)`` valida que o valor
+    existe cadastrado na ``tabela`` — é o relacionamento (FK) do Recital.
+    Retorna o nome em minúsculas (ex.: ``arqfrete``) ou ``""`` quando a
+    expressão não tem fValida com tabela declarada.
+    """
+    text = (expr or "").strip()
+    m = _RE_FVALIDA_TABLE.search(text)
+    if not m:
+        return ""
+    for bm in _RE_BRACKET_NAME.finditer(text, m.end()):
+        return bm.group(1).lower()  # 1º colchete não vazio = tabela
+    return ""
 
 
 def apply_valid_constraints(fs: Any, constraints: dict[str, Any]) -> bool:

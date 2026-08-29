@@ -694,6 +694,12 @@ def _build_depara_screens(
                         parse_valid_expr)
                     if parse_valid_expr(valid_expr):
                         note = f"VALID: {valid_expr}"
+            if not note:
+                # FK sem valores reais colhidos ainda: o VALID do fonte
+                # exige valor cadastrado na tabela (fValida).
+                lt = str(inp.get("lookup_table") or "").strip().lower()
+                if lt:
+                    note = f"VALID: valor deve existir em {lt}"
             fields.append({
                 "field": field,
                 "original": original,

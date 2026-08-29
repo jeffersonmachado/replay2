@@ -21,8 +21,36 @@ from tempfile import TemporaryDirectory
 from dakota_gateway.synthetic.validation_rules import (
     apply_valid_constraints,
     parse_valid_expr,
+    valid_lookup_table,
 )
 from dakota_gateway.synthetic.schema import FieldSchema
+
+
+class ValidLookupTableTests(unittest.TestCase):
+    """fValida(chave, chave, [tabela], ...) → tabela de cadastro (FK)."""
+
+    def test_extrai_tabela_do_fvalida(self):
+        expr = ("lastkey() = 5 or fValida(strzero(cFrete,2),"
+                "strzero(cFrete,2),[arqfrete],[descricao],7,16,[])")
+        self.assertEqual(valid_lookup_table(expr), "arqfrete")
+
+    def test_primeiro_colchete_nao_vazio(self):
+        expr = "fValida(cCod, cCod, [est281], [descricao], 8, 16, [], 20)"
+        self.assertEqual(valid_lookup_table(expr), "est281")
+
+    def test_sem_fvalida_retorna_vazio(self):
+        self.assertEqual(valid_lookup_table("nVolumes > 0"), "")
+        self.assertEqual(valid_lookup_table(""), "")
+
+    def test_fvalida_sem_tabela_retorna_vazio(self):
+        self.assertEqual(valid_lookup_table("fValida(cCod, cCod, [])"), "")
+
+    def test_nao_e_constraint_de_faixa(self):
+        # fValida é FK, não regra de faixa — parse_valid_expr não inventa
+        # min/max a partir dela
+        expr = ("lastkey() = 5 or fValida(strzero(cFrete,2),"
+                "strzero(cFrete,2),[arqfrete],[descricao],7,16,[])")
+        self.assertEqual(parse_valid_expr(expr), {})
 
 
 class ParseValidExprTests(unittest.TestCase):

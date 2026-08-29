@@ -290,7 +290,12 @@ replay2/
   Células numéricas de grade (`is_grid`) têm a magnitude limitada pela
   quantidade de dígitos do valor original (`journey_synthesizer.synthesize`
   — a PICTURE define a largura máxima, mas qtd=7042 ou 4755 parcelas
-  quebrariam validações do ERP): qtd "2"→1..9, valor "229,9"→≤999,99; a
+  quebrariam validações do ERP): qtd "2"→1..9, valor "229,9"→≤999,99; e o
+  float gerado é formatado com o MESMO nº de casas decimais do original
+  (`_format_synthetic_value` em `capture_synthesis_service.py` — "229,9"
+  (1 casa) → "763,0", não "763,05": o GET do Recital com PICTURE de 2 casas
+  não comita valor de 1 casa no ENTER e a grade de pagamento fica pendente,
+  desalinhando a sequência de ESCs do replay — captura 62, run 40); a
   rota
   `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
   detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)
@@ -317,7 +322,13 @@ replay2/
   (`context_switch_override`: telas disjuntas + prompt ksh/`not found` em um
   dos lados) e avanços além da referência (`content_present_override`: toda
   linha não-vazia da tela esperada presente na observada, verbatim ou como
-  prefixo com eco ≥ 4 chars — eco/rolagem, a sessão avançou sem divergir). A
+  prefixo com eco ≥ 4 chars — eco/rolagem, a sessão avançou sem divergir). Nas
+  runs sintéticas, a divergência explicada pelo de→para vira
+  `synthetic_data_swap`/`low` (`replay_compare.py`): placeholder de par longo
+  só conta como eco quando presente nas DUAS linhas (só na esperada = campo
+  ausente na observada: divergência estrutural, não troca — regressão da
+  run 40, em que a linha da grade do item casava com a linha de menu
+  "0. Finalizacao"). A
   falha de checkpoint de um `deterministic_input` é registrada UMA vez só
   (o `wait_checkpoint` do strict-global recebe `record_failure=False`; o
   registro definitivo com a ação skip/send-anyway é o do

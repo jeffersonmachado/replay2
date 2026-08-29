@@ -37,6 +37,7 @@ from control.services.capture_synthesis_service import (
     _dataset_lookup,
     _extract_substitutions,
     _first_session_dataset_row,
+    _format_synthetic_value,
     synthetic_substitutions_payload,
 )
 
@@ -497,6 +498,42 @@ class TestDatasetRowMultiEntidade(unittest.TestCase):
         dataset_row = {"arq.codigo": 70, "est366.codigo": 30, "codigo": 70}
         screens = _build_depara_screens(screen_mappings, dataset_row, set())
         self.assertEqual(screens[0]["fields"][0]["synthetic"], "30")
+
+
+class TestFormatSyntheticValueDecimals(unittest.TestCase):
+    """Float sintético preserva o Nº de casas decimais do original.
+
+    Regressão da run 40 (captura 62): o valor da grade de pagamento foi gerado
+    como "763,05" (2 casas) sobre o original "229,9" (1 casa). O GET do
+    Recital com PICTURE de 2 casas NÃO comita "229,9" no ENTER (falta o último
+    dígito — a grade fica pendente até o "+" forçar), mas comita "763,05"
+    direto — a grade fechou um ESC antes, a sessão saiu da tela do pedido no
+    meio da sequência de ESCs e o pedido nunca foi finalizado."""
+
+    def test_preserva_uma_casa_decimal_do_original(self):
+        self.assertEqual(_format_synthetic_value("229,9", 763.05), "763,0")
+
+    def test_preserva_duas_casas_decimais(self):
+        self.assertEqual(_format_synthetic_value("10,50", 763.05), "763,05")
+
+    def test_original_sem_separador_mantem_duas_casas(self):
+        # Defensivo: float sem decimal no original (ex.: campo money digitado
+        # como inteiro) conserva o comportamento anterior (2 casas).
+        self.assertEqual(_format_synthetic_value("15", 763.05), "763,05")
+
+    def test_substituicao_decimal_segue_shape_do_original(self):
+        screen_mappings = [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "229,9", "placeholder": "{{est366.valor}}",
+                 "field_name": "valor", "entity_name": "est366",
+                 "method": "by_grid_column", "is_grid": True,
+                 "grid_source": "est366"},
+            ],
+        }]
+        dataset_row = {"est366.valor": 763.05, "valor": 763.05}
+        subs = _extract_substitutions(screen_mappings, dataset_row)
+        self.assertIn(("229,9", "763,0"), subs)
 
 
 if __name__ == "__main__":

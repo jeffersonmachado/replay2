@@ -296,12 +296,20 @@ def suggest_key_fields(
 def _format_synthetic_value(original: str, value: Any) -> str:
     """Alinha o valor sintético ao formato esperado pelo campo na tela.
 
-    - float → decimal pt-BR com vírgula (o Recital usa vírgula: "229,9");
+    - float → decimal pt-BR com vírgula (o Recital usa vírgula: "229,9"),
+      preservando o Nº de casas decimais do original: um GET com PICTURE de
+      2 casas não comita "229,9" no ENTER (fica aguardando o último dígito),
+      mas comita "763,05" — gerar com 2 casas quando o original tinha 1 muda
+      o estado do campo e desalinha a navegação do replay (captura 62, run 40:
+      a grade de pagamento fechou um ESC antes e a sessão saiu do pedido sem
+      finalizar);
     - int → string direta;
     - string com máscara (original só dígitos, ex.: CPF) → só dígitos.
     """
     if isinstance(value, float):
-        return f"{value:.2f}".replace(".", ",")
+        m = re.fullmatch(r"\d+[,.](\d+)", original.strip())
+        decimals = len(m.group(1)) if m else 2
+        return f"{value:.{decimals}f}".replace(".", ",")
     if isinstance(value, int):
         return str(value)
     text = str(value)

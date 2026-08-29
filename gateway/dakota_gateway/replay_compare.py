@@ -213,13 +213,22 @@ def _chunks_have_generated_id_echo(line_exp: str, line_obs: str) -> bool:
 def _line_has_substitution_echo(line_exp: str, line_obs: str, short_pairs: set) -> bool:
     """True quando algum trecho divergente da linha é eco do de→para.
 
-    Eco = placeholder de par longo, par curto nos trechos divergentes (exato
-    ou numérico sem zeros à esquerda) ou identificador gerado pela aplicação
-    com o mesmo shape na mesma posição (consequência da troca, ex.: número
-    do pedido recém-criado).
+    Eco = placeholder de par longo presente nas DUAS linhas (o valor ecoou
+    nas duas telas — placeholder só na esperada significa que o campo não
+    apareceu na observada: divergência estrutural, não troca. Regressão da
+    run 40: a linha da grade do item '...229,90...' foi mascarada com
+    placeholder e casou com a linha do menu '0. Finalizacao', mascarando a
+    saída prematura da tela do pedido), par curto nos trechos divergentes
+    (exato ou numérico sem zeros à esquerda) ou identificador gerado pela
+    aplicação com o mesmo shape na mesma posição (consequência da troca,
+    ex.: número do pedido recém-criado).
     """
-    if SUBSTITUTION_PLACEHOLDER in line_exp or SUBSTITUTION_PLACEHOLDER in line_obs:
+    ph_exp = SUBSTITUTION_PLACEHOLDER in line_exp
+    ph_obs = SUBSTITUTION_PLACEHOLDER in line_obs
+    if ph_exp and ph_obs:
         return True
+    if ph_exp or ph_obs:
+        return False
     if _chunks_have_short_pair_echo(line_exp, line_obs, short_pairs):
         return True
     if _numeric_tokens_echo(line_exp, line_obs, short_pairs):

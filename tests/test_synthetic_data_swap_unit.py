@@ -263,3 +263,30 @@ def test_swap_override_detecta_eco_nas_telas_e_sem_eco_retorna_none():
         expected_screen="Codigo: g2511\n", observed_screen="Codigo: n9580\n",
     )
     assert sem_params is None
+
+
+def test_placeholder_so_na_esperada_nao_e_eco():
+    """Regressão da run 40 (captura 62): a linha da grade do item
+    ('...229,90...') era mascarada com o placeholder do par longo
+    ('229,9'→'763,05') e casava com a linha do menu '0. Finalizacao' —
+    classificando como troca uma divergência estrutural (a sessão saiu da
+    tela do pedido antes do fim da trilha). Placeholder presente só na
+    linha esperada significa que o campo NÃO ecoou na observada."""
+    from dakota_gateway.replay_compare import substitution_echo_line_indices
+
+    pairs = [("229,9", "763,05"), ("1", "2"), ("2", "7")]
+    expected = (
+        "  REDE DE LOJAS                    | 3.6.1 PEDIDO E-COMMERCE\n"
+        "│01│G2511 │00002│  36│   2│  229,90│    0,00│E-COMMERCE\n"
+    )
+    observed = (
+        "  REDE DE LOJAS                    | 3 MOVIMENTOS\n"
+        "   0. Finalizacao\n"
+    )
+    assert substitution_echo_line_indices(expected, observed, pairs) == []
+    # eco legítimo: o valor sintético aparece na mesma linha das duas telas
+    observed_swap = observed.replace(
+        "   0. Finalizacao",
+        "│01│G2511 │00002│  36│   7│ 763,05 │    0,00│E-COMMERCE")
+    echo = substitution_echo_line_indices(expected, observed_swap, pairs)
+    assert echo == [1]

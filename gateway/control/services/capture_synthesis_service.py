@@ -728,6 +728,7 @@ def start_synthetic_replay(
         trail_dir,
         hmac_key=hmac_key,
         start_seq="auto" if auto_entry else None,
+        source_dir=source_dir if auto_entry else None,
     )
     entry = trail.get("entry") if auto_entry else None
     if entry:
@@ -784,6 +785,14 @@ def start_synthetic_replay(
         # replay antes do primeiro checkpoint, e o seq de corte do preâmbulo.
         run_body["params"]["entry_preamble"] = entry["preamble"]
         run_body["params"]["entry_trimmed_seq"] = entry["start_seq"]
+        if entry.get("fallback"):
+            # Entrada alternativa pelo módulo Recital — o replay a tenta
+            # quando o comando shell gravado não abre o sistema (artefato
+            # volátil ausente no destino, ex.: ferblo.dbo da captura 62).
+            run_body["params"]["entry_fallback"] = entry["fallback"]
+            synth_warnings.append(
+                f"entrada alternativa disponível se o caminho gravado falhar: {entry['fallback']['send'].strip()}"
+            )
     created = create_run_request_payload(con, created_by=created_by, body=run_body)
     run_id = int(created["id"])
     runner.start_run_async(run_id)
@@ -806,6 +815,7 @@ def start_synthetic_replay(
                 "start_seq": entry["start_seq"],
                 "dropped": entry["dropped"],
                 "summary": entry["summary"],
+                "fallback": entry.get("fallback"),
             }
             if entry
             else None

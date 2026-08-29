@@ -49,7 +49,7 @@ def _remember_key(recent: list, data: bytes) -> None:
         del recent[:-_MAX_RECENT_KEYS]
 
 
-def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[str]:
+def _run_entry_preamble(s, sel, steps, fallback=None, *, should_pause_or_cancel=None) -> list[str]:
     """Executa os passos de entrada (login → primeira tela do sistema).
 
     Usado quando a trilha teve o preâmbulo de shell cortado
@@ -61,6 +61,12 @@ def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[s
     estoura NÃO envia o ``send`` do passo (a tecla cairia no contexto errado)
     e o preamble segue para o próximo passo com warning — se a entrada falhar,
     o primeiro checkpoint registra a divergência com as telas na UI.
+
+    ``fallback`` (``derive_module_entry``): entrada alternativa pelo módulo
+    Recital, tentada quando a âncora final não apareceu — o comando gravado
+    pode depender de artefato que já não existe no destino (ex.: ``dbrt
+    ferblo`` sem ``ferblo.dbo`` → FATAL ERROR com Confirm, que um ENTER
+    derruba de volta ao shell antes de enviar o comando do módulo).
 
     A saída lida alimenta a ``screen_state`` e a trilha observada da sessão
     normalmente (o preâmbulo fica visível no replay observado). Retorna a
@@ -105,7 +111,13 @@ def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[s
                 should_pause_or_cancel()
             pump(min(0.2, max(0.02, deadline - time.monotonic())))
 
-    for step in steps or []:
+    # A âncora final (último passo com wait_text) é a que decide o fallback.
+    anchor_idx = max(
+        (i for i, st in enumerate(steps or []) if isinstance(st, dict) and st.get("wait_text")),
+        default=None,
+    )
+    anchor_ok = True
+    for idx, step in enumerate(steps or []):
         if not isinstance(step, dict):
             continue
         timeout_s = float(step.get("timeout_s") or 20)
@@ -117,6 +129,8 @@ def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[s
                 warnings.append(
                     f"entrada automática: âncora {wait_text!r} não apareceu em {timeout_s:.0f}s"
                 )
+        if idx == anchor_idx:
+            anchor_ok = ok
         send = step.get("send")
         if send and ok:
             try:
@@ -126,6 +140,30 @@ def _run_entry_preamble(s, sel, steps, *, should_pause_or_cancel=None) -> list[s
         stable_ms = int(step.get("wait_stable_ms") or 0)
         if stable_ms and ok:
             wait_stable(stable_ms, timeout_s)
+
+    if fallback and anchor_idx is not None and not anchor_ok:
+        label = str(fallback.get("label") or "entrada do módulo")
+        warnings.append(f"entrada automática: caminho gravado falhou — tentando {label}")
+        # Um Confirm de FATAL ERROR (programa ausente no home) segura a
+        # sessão; ENTER o derruba de volta ao shell.
+        if b"onfirm" in bytes(tail):
+            try:
+                s.write_in(b"\r")
+            except Exception:
+                pass
+            prompt = str(fallback.get("prompt") or "")
+            if prompt:
+                wait_for(prompt, 10)
+        try:
+            s.write_in(str(fallback.get("send") or "").encode("utf-8"))
+        except Exception:
+            warnings.append("entrada automática: falha ao enviar a entrada do módulo")
+            return warnings
+        fb_wait = str(fallback.get("wait_text") or "").strip()
+        if fb_wait and wait_for(fb_wait, float(fallback.get("timeout_s") or 60)):
+            warnings.append(f"entrada automática: sistema aberto via {label}")
+        else:
+            warnings.append(f"entrada automática: {label} também não abriu o sistema")
     return warnings
 
 def replay_strict_global_controlled(
@@ -147,6 +185,7 @@ def replay_strict_global_controlled(
     # ver synthetic_trail.detect_session_entry): executada uma vez por sessão,
     # logo após a conexão, antes do primeiro checkpoint.
     preamble_steps = list((params or {}).get("entry_preamble") or [])
+    preamble_fallback = (params or {}).get("entry_fallback") or None
     preamble_done: set[str] = set()
 
     def remember_session_start(sid: str, ev: dict) -> None:
@@ -169,7 +208,8 @@ def replay_strict_global_controlled(
                 preamble_done.add(sid)
                 try:
                     warnings = _run_entry_preamble(
-                        s, sel, preamble_steps, should_pause_or_cancel=should_pause_or_cancel
+                        s, sel, preamble_steps, preamble_fallback,
+                        should_pause_or_cancel=should_pause_or_cancel,
                     )
                 except Exception as exc:
                     warnings = [f"entrada automática falhou: {exc}"]

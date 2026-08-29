@@ -17,6 +17,7 @@ from pathlib import Path
 
 from dakota_gateway.synthetic.synthetic_trail import (
     build_synthetic_trail,
+    derive_module_entry,
     detect_session_entry,
     det_key,
 )
@@ -336,3 +337,156 @@ def test_preamble_wait_estourado_nao_envia_send():
     assert sess.sent == []
     assert len(warnings) == 1
     assert "Digite a sua opcao" in warnings[0]
+
+
+def _source_tree(tmp_path: Path) -> Path:
+    """Árvore mínima do layout Dakota: prg/<mod>/<fontes>.prg + <mod>.dbo e
+    <mod>/config.<mod> no diretório de dados (irmão de prg/)."""
+    prg = tmp_path / "prg"
+    (prg / "est").mkdir(parents=True)
+    (prg / "est" / "est361.prg").write_text("&& pedido e-commerce", encoding="utf-8")
+    (prg / "est" / "est366.prg").write_text("&& pagamento", encoding="utf-8")
+    (prg / "est" / "est.dbo").write_bytes(b"dbo")
+    (tmp_path / "est").mkdir()
+    (tmp_path / "est" / "config.est").write_text("cfg", encoding="utf-8")
+    return prg
+
+
+def test_derive_module_entry_layout_dados_separados(tmp_path):
+    """config.<mod> no diretório de dados → 'cd <dados>; dbrt <prg>/<mod>/<mod>'."""
+    prg = _source_tree(tmp_path)
+    events = [
+        _out(100, "\x1b[?7l\x1b[H\x1b[2J DAKOTA S/A  MENU PRINCIPAL"),
+        _out(120, "| 3.6.1 PEDIDO E-COMMERCE"),
+        _out(140, "| 3.6.6 PAGAMENTO"),
+    ]
+    step = derive_module_entry(events, 82, prg, anchor="DAKOTA S/A", shell_prompt="(ferblo)MIG24:/dakota1/u/ferblo >")
+    assert step is not None
+    assert step["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"
+    assert step["wait_text"] == "DAKOTA S/A"
+    assert step["prompt"].startswith("(ferblo)MIG24:")
+    assert "est" in step["label"]
+
+
+def test_derive_module_entry_config_junto_aos_fontes(tmp_path):
+    """config.<mod> junto aos fontes (layout do loj) → 'cd <prg>/<mod>; dbrt <mod>'."""
+    prg = _source_tree(tmp_path)
+    (tmp_path / "est" / "config.est").unlink()
+    (prg / "est" / "config.est").write_text("cfg", encoding="utf-8")
+    events = [_out(100, "| 3.6.1 PEDIDO E-COMMERCE")]
+    step = derive_module_entry(events, 82, prg)
+    assert step is not None
+    assert step["send"] == f"cd {prg}/est; dbrt est\r"
+
+
+def test_derive_module_entry_sem_config_retorna_none(tmp_path):
+    """Sem config.<mod> em nenhum layout não há entrada alternativa confiável."""
+    prg = _source_tree(tmp_path)
+    (tmp_path / "est" / "config.est").unlink()
+    events = [_out(100, "| 3.6.1 PEDIDO E-COMMERCE")]
+    assert derive_module_entry(events, 82, prg) is None
+
+
+def test_derive_module_entry_sem_codigo_menu_retorna_none(tmp_path):
+    prg = _source_tree(tmp_path)
+    events = [_out(100, "DAKOTA S/A  MENU PRINCIPAL sem codigo")]
+    assert derive_module_entry(events, 82, prg) is None
+
+
+def test_detect_entry_com_source_dir_inclui_fallback(tmp_path):
+    """Captura 62 + árvore de fontes → entry carrega o fallback do módulo."""
+    prg = _source_tree(tmp_path)
+    events, erp_seq = _capture62_like_events()
+    # tela de negócio com código de menu após a entrada no sistema
+    last = events[-1]["seq_global"]
+    events.insert(-1, _out(last, "| 3.6.1 PEDIDO E-COMMERCE"))
+    entry = detect_session_entry(events, source_dir=prg)
+    assert entry is not None
+    fb = entry.get("fallback")
+    assert fb is not None
+    assert fb["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"
+    assert fb["wait_text"] == "DAKOTA S/A"
+
+
+class _ReactiveSession:
+    """Sessão fake reativa: cada tecla enviada produz a saída correspondente
+    (wrapper → shell → FATAL ERROR → ENTER → shell → dbrt do módulo → ERP)."""
+
+    def __init__(self):
+        self.session_id = "sess-fake"
+        self.sent: list[str] = []
+        self.last_out_ms = 0
+        self._queue: list[str] = ["Menu de opcoes\r\nDigite a sua opcao: "]
+
+    def write_in(self, data: bytes):
+        text = data.decode("utf-8")
+        self.sent.append(text)
+        if text == "0\r":
+            self._queue.append("\r\n(ferblo)MIG24:/dakota1/u/ferblo > ")
+        elif text == "k\r":
+            self._queue.append("\r\nFATAL ERROR Cannot open file ferblo.dbo  Confirm")
+        elif text == "\r":
+            self._queue.append("\r\n(ferblo)MIG24:/dakota1/u/ferblo > ")
+        elif text.startswith("cd "):
+            self._queue.append("\r\n\x1b[?7l\x1b[H\x1b[2J DAKOTA S/A  MENU PRINCIPAL")
+        self.last_out_ms = int(time.time() * 1000)
+
+    def read_out(self) -> bytes:
+        if not self._queue:
+            return b""
+        out = "".join(self._queue)
+        self._queue.clear()
+        self.last_out_ms = int(time.time() * 1000)
+        return out.encode("utf-8")
+
+
+def test_preamble_fallback_abre_sistema_quando_caminho_gravado_falha():
+    """Caminho gravado ('k') cai no FATAL ERROR; o fallback confirma o diálogo
+    com ENTER e entra pelo módulo (cd dados; dbrt prg/mod/mod)."""
+    sess = _ReactiveSession()
+    steps = [
+        {"wait_text": "Digite a sua opcao", "send": "0\r", "timeout_s": 2, "optional": True},
+        {"wait_text": "MIG24:", "send": "k\r", "timeout_s": 2},
+        {"wait_text": "DAKOTA S/A", "timeout_s": 0.5},
+    ]
+    fallback = {
+        "send": "cd /dakota11/est; dbrt /dakota11/prg/est/est\r",
+        "wait_text": "DAKOTA S/A",
+        "prompt": "(ferblo)MIG24:",
+        "timeout_s": 2,
+        "label": "entrada do módulo est",
+    }
+    warnings = _run_entry_preamble(sess, _FakeSelector(), steps, fallback)
+    assert sess.sent == ["0\r", "k\r", "\r", "cd /dakota11/est; dbrt /dakota11/prg/est/est\r"]
+    assert any("sistema aberto via entrada do módulo est" in w for w in warnings)
+
+
+def test_preamble_fallback_nao_dispara_quando_ancora_ok():
+    """Âncora final presente → o fallback nunca é tentado."""
+    sess = _FakeSession([
+        (0.05, "Digite a sua opcao: "),
+        (0.10, "(ferblo)MIG24:/dakota1/u/ferblo > "),
+        (0.15, "DAKOTA S/A  MENU PRINCIPAL"),
+    ])
+    steps = [
+        {"wait_text": "Digite a sua opcao", "send": "0\r", "timeout_s": 2, "optional": True},
+        {"wait_text": "MIG24:", "send": "k\r", "timeout_s": 2},
+        {"wait_text": "DAKOTA S/A", "timeout_s": 2},
+    ]
+    fallback = {"send": "cd /x; dbrt y\r", "wait_text": "DAKOTA S/A", "timeout_s": 1}
+    warnings = _run_entry_preamble(sess, _FakeSelector(), steps, fallback)
+    assert sess.sent == ["0\r", "k\r"]
+    assert warnings == []
+
+
+def test_preamble_sem_fallback_mantem_comportamento():
+    """Sem fallback, âncora estourada vira só warning (comportamento 0.8.68)."""
+    sess = _FakeSession([(0.05, "(ferblo)MIG24:/dakota1/u/ferblo > ")])
+    steps = [
+        {"wait_text": "MIG24:", "send": "k\r", "timeout_s": 2},
+        {"wait_text": "DAKOTA S/A", "timeout_s": 0.3},
+    ]
+    warnings = _run_entry_preamble(sess, _FakeSelector(), steps)
+    assert sess.sent == ["k\r"]
+    assert len(warnings) == 1
+    assert "DAKOTA S/A" in warnings[0]

@@ -246,7 +246,19 @@ replay2/
   `entry_preamble` (menu wrapper → shell → ERP, com âncoras de espera),
   gravado nos params da run e executado por `_run_entry_preamble`
   (`replay_control/executors.py`) uma vez por sessão, antes do primeiro
-  checkpoint; default ligado no 1-clique (`auto_entry`, `0` desliga). A
+  checkpoint; default ligado no 1-clique (`auto_entry`, `0` desliga). Se a
+  âncora final do preamble falha (ex.: o comando de entrada gravado depende
+  de artefato que não existe mais no servidor — o `k` da captura 62 roda
+  `dbrt ferblo` e o `ferblo.dbo` sumiu, caindo num Confirm de FATAL ERROR),
+  o `_run_entry_preamble` drena o Confirm (ENTER quando o tail tem
+  "onfirm"), volta ao prompt do shell e dispara o `entry_fallback` derivado
+  por `derive_module_entry`: os códigos de menu das telas OUT (3.6.1 → 361 →
+  est361.prg) apontam o diretório do módulo sob `source_dir` e a presença de
+  `<mod>.dbo`/`config.<mod>` decide o comando (`cd <dados>; dbrt
+  <prg_mod>/<mod>` quando o config está no diretório de dados irmão de prg,
+  senão `cd <prg_mod>; dbrt <mod>`), com espera pela mesma âncora do
+  preamble. O fallback vai em `params.entry_fallback` e na resposta
+  `entry_point.fallback` do `POST .../synthetic-replay`. A
   substituição casa o
   valor original como evento único ou como **run de teclas de 1 caractere**
   (campo digitado tecla a tecla — dígitos de máscara e também

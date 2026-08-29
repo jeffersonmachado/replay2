@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+from collections import Counter
 from pathlib import Path
 
 from ..audit_writer import b64
@@ -56,6 +58,81 @@ _TERMINAL_ID_RE = re.compile(r"^(NOME|WINDOWS|TERATERM|MACs)\s*=", re.M)
 # ERP logo no início da sessão (até este seq) não é preâmbulo — é o fluxo
 # normal de quem já cai dentro do sistema.
 _MIN_ERP_SEQ = 15
+# Código de menu Recital no cabeçalho das telas (ex.: "3.6.1") — os dígitos
+# apontam o fonte ``<modulo><digitos>.prg`` (ex.: est361.prg).
+_MENU_CODE_RE = re.compile(r"\b\d{1,2}(?:\.\d{1,2}){1,2}\b")
+
+
+def derive_module_entry(
+    events: list[dict],
+    start_seq: int,
+    source_dir: str | Path | None,
+    *,
+    anchor: str = "",
+    shell_prompt: str = "",
+) -> dict | None:
+    """Entrada alternativa pelo módulo Recital, derivada dos fontes.
+
+    O comando shell gravado na captura pode depender de artefato volátil do
+    home do usuário — na captura 62, ``k`` rodava ``dbrt ferblo`` e o
+    ``ferblo.dbo`` não existia mais no destino na hora do replay (FATAL ERROR
+    "Cannot open file ferblo.dbo"). A entrada estável do ambiente Dakota é
+    pelo módulo: os códigos de menu das telas (``3.6.1``) localizam os fontes
+    (``est361.prg``) sob ``source_dir``; o diretório de módulo mais frequente
+    vence e o passo é ``cd <dados>/<mod>; dbrt <prg>/<mod>/<mod>`` (layout
+    com config.<mod> no diretório de dados — ex.: est) ou
+    ``cd <prg>/<mod>; dbrt <mod>`` (config.<mod> junto aos fontes — ex.: loj).
+
+    Só retorna um passo quando ``<mod>.dbo`` e ``config.<mod>`` existem de
+    fato no destino — caso contrário não há entrada alternativa confiável.
+    """
+    if not source_dir:
+        return None
+    root = Path(str(source_dir))
+    if not root.is_dir():
+        return None
+    digits: list[str] = []
+    for ev in events:
+        seq = int(ev.get("seq_global") or 0)
+        if seq < start_seq or ev.get("type") != "bytes" or ev.get("dir") == "in":
+            continue
+        for code in _MENU_CODE_RE.findall(_decode_b64(ev)):
+            d = code.replace(".", "")
+            if len(d) >= 3:
+                digits.append(d)
+    if not digits:
+        return None
+    # Índice único dos fontes: stem do .prg → diretório do módulo.
+    stems: dict[str, str] = {}
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            if name.lower().endswith(".prg"):
+                stems.setdefault(name[:-4].lower(), base)
+    counts: Counter[str] = Counter()
+    for d in set(digits):
+        for stem, base in stems.items():
+            if stem.endswith(d) and stem[: -len(d)].isalpha():
+                counts[base] += 1
+    if not counts:
+        return None
+    mod_dir = counts.most_common(1)[0][0]
+    mod = Path(mod_dir).name
+    if not (Path(mod_dir) / f"{mod}.dbo").is_file():
+        return None
+    data_cfg = root.parent / mod / f"config.{mod}"
+    prg_cfg = Path(mod_dir) / f"config.{mod}"
+    if data_cfg.is_file():
+        send = f"cd {root.parent / mod}; dbrt {mod_dir}/{mod}\r"
+    elif prg_cfg.is_file():
+        send = f"cd {mod_dir}; dbrt {mod}\r"
+    else:
+        return None
+    step: dict = {"send": send, "timeout_s": 60, "label": f"entrada do módulo {mod}"}
+    if anchor:
+        step["wait_text"] = anchor
+    if shell_prompt:
+        step["prompt"] = shell_prompt
+    return step
 
 
 def _decode_b64(ev: dict) -> str:
@@ -78,7 +155,7 @@ def _first_printable_anchor(text: str) -> str:
     return ""
 
 
-def detect_session_entry(events: list[dict]) -> dict | None:
+def detect_session_entry(events: list[dict], source_dir: str | Path | None = None) -> dict | None:
     """Detecta captura que começa fora do sistema (preâmbulo shell/wrapper).
 
     Reconhece o padrão das capturas 13/62: erros de /etc/profile ou prompt de
@@ -90,8 +167,10 @@ def detect_session_entry(events: list[dict]) -> dict | None:
     trilha (``start_seq``) e os passos de entrada derivados das próprias
     teclas gravadas: o que o usuário digitou para sair do wrapper (ex.:
     ``0\\r``) e o comando shell que abriu o sistema (ex.: ``k\\r``), com
-    âncoras de espera extraídas da gravação. ``None`` quando não há evidência
-    de preâmbulo (nunca cortar às cegas).
+    âncoras de espera extraídas da gravação. Com ``source_dir``, inclui
+    ``fallback`` — a entrada pelo módulo (``derive_module_entry``) para quando
+    o comando gravado depende de artefato que já não existe no destino.
+    ``None`` quando não há evidência de preâmbulo (nunca cortar às cegas).
     """
     outs: list[tuple[int, str]] = []
     ins: list[tuple[int, str]] = []
@@ -192,7 +271,14 @@ def detect_session_entry(events: list[dict]) -> dict | None:
         f"preâmbulo de login/shell detectado ({dropped} eventos antes do sistema); "
         f"o replay entra sozinho: {caminho}"
     )
-    return {"start_seq": erp_seq, "preamble": steps, "dropped": dropped, "summary": summary}
+    result: dict = {"start_seq": erp_seq, "preamble": steps, "dropped": dropped, "summary": summary}
+    if source_dir:
+        fallback = derive_module_entry(
+            events, erp_seq, source_dir, anchor=anchor, shell_prompt=shell_wait
+        )
+        if fallback:
+            result["fallback"] = fallback
+    return result
 
 
 def _trim_before_seq(events: list[dict], start_seq: int) -> tuple[list[dict], int]:
@@ -327,13 +413,16 @@ def build_synthetic_trail(
     hmac_key: bytes,
     drop_banner: bool = True,
     start_seq: int | str | None = None,
+    source_dir: str | Path | None = None,
 ) -> dict:
     """Gera trilha auditável derivada da captura com dados sintéticos.
 
     ``substitutions``: pares ``(valor_original, valor_sintético)`` na ordem
     em que os inputs aparecem na captura. ``start_seq``: corte do preâmbulo
     de login/shell — um ``int`` (seq_global do primeiro evento mantido) ou
-    ``"auto`` para detectar (``detect_session_entry``). Retorna dict com
+    ``"auto`` para detectar (``detect_session_entry``). ``source_dir`` (raiz
+    dos fontes Recital) habilita o ``fallback`` de entrada pelo módulo na
+    detecção automática. Retorna dict com
     ``out``, ``events``, ``dropped_banner``, ``dropped_entry``, ``entry``
     (detecção de entrada, quando ``auto``), ``applied`` e ``warnings``.
     """
@@ -346,7 +435,7 @@ def build_synthetic_trail(
 
     entry = None
     if start_seq == "auto":
-        entry = detect_session_entry(events)
+        entry = detect_session_entry(events, source_dir=source_dir)
         start_seq = int(entry["start_seq"]) if entry else None
     elif start_seq is not None:
         start_seq = int(start_seq)

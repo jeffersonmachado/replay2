@@ -340,7 +340,8 @@ terminal — isso é garantido pelo teste
   sessão/replay, observabilidade, analytics, ambiente). Inclui
   `replay_state_cache.py` — cache em disco de estados da TerminalEngine
   (janela profunda de replay em sessões enormes, dívida X6; kill-switch
-  `REPLAY_STATE_CACHE=0`) e `session_index_cache.py` — índice em disco dos
+  `REPLAY_STATE_CACHE=0`; estado gravado a cada 1000 eventos bytes, ou a
+  cada 100 em sessões de até 5000 eventos — intervalo dinâmico v0.8.67) e `session_index_cache.py` — índice em disco dos
   eventos da sessão (tipo/seq/arquivo/offset + direção/tamanho decodificado
   dos "bytes"): a janela de replay é materializada por seek e os totais de
   playback saem de somas de arrays, sem reparsear os audit-*.jsonl a cada

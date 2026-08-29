@@ -217,6 +217,29 @@ def test_reconexoes_no_meio_do_stream_nao_bloqueiam_retomada(cache_patches, tmp_
         _checkpoints_na_janela(referencia, seq_primeiro_evento)
 
 
+def test_sessao_pequena_usa_intervalo_reduzido(monkeypatch, tmp_path):
+    """Sessões menores que o intervalo fixo (1000) nunca gravariam estado e
+    toda janela profunda reprocessaria do zero (caso real: trilha observada
+    da run 37, 433 eventos). O intervalo dinâmico (100) garante retomada."""
+    monkeypatch.setattr(svc, "MAX_FULL_REPLAY_EVENTS", 50)
+    monkeypatch.setattr(svc, "STATE_CACHE_INTERVAL", 1000)
+    monkeypatch.setattr(svc, "STATE_CACHE_ENABLED", True)
+    log_dir = tmp_path / "cap"
+    log_dir.mkdir()
+    sid = _gerar_sessao(str(log_dir), 250)
+    cache_dir = str(tmp_path / "cache")
+
+    frio = svc.prepare_session_replay_data(str(log_dir), sid, offset=150, limit=20, state_cache_dir=cache_dir)
+    assert frio["error"] is None
+    assert frio["window"]["state_cache"]["stored"] >= 1  # índice 100
+
+    morno = svc.prepare_session_replay_data(str(log_dir), sid, offset=150, limit=20, state_cache_dir=cache_dir)
+    assert morno["error"] is None
+    assert morno["window"]["state_cache"]["hit"] is True
+    assert morno["window"]["state_cache"]["resumed_from"] == 100
+    assert _sumario(morno) == _sumario(frio)
+
+
 def test_alteracao_na_captura_invalida_cache(cache_patches, tmp_path):
     log_dir = tmp_path / "cap"
     log_dir.mkdir()

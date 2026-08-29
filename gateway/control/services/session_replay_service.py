@@ -46,9 +46,11 @@ MAX_REPLAY_CHECKPOINTS = 2000
 # Cache de estado em disco (X6): sem ele, uma janela profunda reprocessa o
 # stream desde o evento 0 e a rolagem profunda fica quadrática. Em sessões
 # enormes (ou em varreduras com stream=1, ex.: player da UI), o estado
-# completo da TerminalEngine é persistido a cada STATE_CACHE_INTERVAL
-# eventos "bytes" (pontos limpos) e uma janela com offset grande retoma do
-# estado mais próximo. REPLAY_STATE_CACHE=0 desliga.
+# completo da TerminalEngine é persistido em pontos limpos a cada
+# STATE_CACHE_INTERVAL eventos "bytes" — ou a cada 100 em sessões pequenas
+# (<=5000 eventos, v0.8.67), que nunca atingiriam o intervalo fixo — e uma
+# janela com offset grande retoma do estado mais próximo.
+# REPLAY_STATE_CACHE=0 desliga.
 STATE_CACHE_INTERVAL = 1000
 STATE_CACHE_ENABLED = os.environ.get("REPLAY_STATE_CACHE", "1") != "0"
 # Índice de sessão em disco (X6): sem ele, cada request de replay relê e
@@ -609,6 +611,15 @@ def prepare_session_replay_data(
     # completo, para manter um único loop principal nos dois caminhos.
     cache_enabled = bool(STATE_CACHE_ENABLED) and (total_bytes_events > MAX_FULL_REPLAY_EVENTS or stream)
     cache_info: dict = {"enabled": cache_enabled, "hit": False, "resumed_from": None, "stored": 0}
+    # Intervalo dinâmico (v0.8.67): em sessões pequenas o intervalo fixo de
+    # 1000 nunca é atingido e nenhum estado é gravado — toda janela profunda
+    # (ex.: seek no ponto da falha na trilha observada da run) reprocessa do
+    # zero a cada request. Abaixo de 5000 eventos bytes, grava a cada 100.
+    state_cache_interval = (
+        STATE_CACHE_INTERVAL
+        if total_bytes_events > 5000
+        else min(STATE_CACHE_INTERVAL, 100)
+    )
     state_hit = None
     if cache_enabled and win_start > 0:
         state_hit = replay_state_cache.load_nearest_state(
@@ -1029,11 +1040,11 @@ def prepare_session_replay_data(
             bytes_event_index += 1
 
             # Persiste o estado completo da engine em pontos limpos a cada
-            # STATE_CACHE_INTERVAL eventos (X6) — base da retomada de
-            # janelas profundas em sessões enormes.
+            # state_cache_interval eventos (X6; dinâmico desde v0.8.67) —
+            # base da retomada de janelas profundas.
             if (
                 cache_enabled
-                and bytes_event_index % STATE_CACHE_INTERVAL == 0
+                and bytes_event_index % state_cache_interval == 0
                 and bytes_event_index != resume_from
                 and engine.is_state_clean()
             ):

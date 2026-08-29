@@ -333,6 +333,84 @@ def _dataset_lookup(dataset_row: dict, entity: str, field: str) -> tuple[bool, A
     return False, None
 
 
+def _parse_br_number(text: str) -> float | None:
+    """Número pt-BR da tela ("1.609,30" / "229,9" / "2") → float, ou None."""
+    t = re.sub(r"[^\d,.-]", "", str(text or "").strip())
+    if not t or not re.search(r"\d", t):
+        return None
+    t = t.replace(".", "").replace(",", ".") if "," in t else t
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _payment_total_overrides(
+    screen_mappings: list[dict],
+    dataset_row: dict,
+    skip: set[str],
+) -> dict[str, str]:
+    """Valor da grade de pagamento → total sintético do pedido.
+
+    O pedido do Recital (est361) só grava quando a soma da grade de
+    pagamento (est366) é igual ao total do pedido (qtd × valor unitário):
+    pagamento parcial dispara o aviso "Valor do pedido difere do valor dos
+    pagamentos" e a sequência de ESCs seguinte abandona a tela sem gravar.
+    A captura 62 só persistiu no 2º passe, quando o pagamento era o total
+    cheio — e a run 41 mostrou que o replay não volta ao ERP depois da
+    saída do 1º passe (typeahead de menu/shell dessincroniza). Como a qtd
+    sintética muda o total, TODOS os valores da grade de pagamento são
+    igualados ao total sintético (maior valor original × fator
+    qtd_sintética/qtd_original): o replay confirma a inclusão já no 1º
+    passe, sem depender do retorno ao ERP.
+
+    Retorna ``{original: novo_valor}``; vazio quando a trilha não tem o
+    padrão qtd (grade de itens) × valor (grade de pagamento) ou os valores
+    não são numéricos.
+    """
+    qtd_ratio = None
+    pagamentos: list[str] = []
+    for screen in screen_mappings or []:
+        for inp in screen.get("inputs") or []:
+            if not (inp.get("is_grid") or str(inp.get("grid_source") or "").strip()):
+                continue
+            placeholder = str(inp.get("placeholder") or "")
+            original = str(inp.get("original") or "")
+            if not placeholder or not original or "{KEY:" in original:
+                continue
+            field = str(inp.get("field_name") or "").strip().lower()
+            if not field:
+                m = re.match(r"^\{\{[^.]+\.([^}]+)\}\}$", placeholder)
+                field = m.group(1).lower() if m else ""
+            if not field or field in skip:
+                continue
+            ent = str(inp.get("entity_name") or screen.get("entity_name") or "")
+            found, raw_value = _dataset_lookup(dataset_row, ent, field)
+            if not found:
+                continue
+            if field == "qtd" and qtd_ratio is None:
+                orig_q = _parse_br_number(original)
+                synth_q = _parse_br_number(_format_synthetic_value(original, raw_value))
+                if orig_q and synth_q and orig_q > 0:
+                    qtd_ratio = synth_q / orig_q
+            elif field == "valor":
+                if _parse_br_number(original):
+                    pagamentos.append(original)
+    if not qtd_ratio or not pagamentos:
+        return {}
+    total = max(_parse_br_number(p) for p in pagamentos) * qtd_ratio
+    overrides: dict[str, str] = {}
+    for original in pagamentos:
+        m = re.fullmatch(r"\d+[,.](\d+)", original.strip())
+        decimals = len(m.group(1)) if m else 0
+        formatted = f"{total:.{decimals}f}"
+        if "," in original:
+            formatted = formatted.replace(".", ",")
+        if formatted != original:
+            overrides[original] = formatted
+    return overrides
+
+
 def _extract_substitutions(
     screen_mappings: list[dict],
     dataset_row: dict,
@@ -345,6 +423,7 @@ def _extract_substitutions(
     o fluxo para o cadastro em vez de seguir a jornada gravada).
     """
     skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
+    pay_overrides = _payment_total_overrides(screen_mappings, dataset_row, skip)
     subs: list[tuple[str, str]] = []
     for screen in screen_mappings or []:
         for inp in screen.get("inputs") or []:
@@ -370,6 +449,10 @@ def _extract_substitutions(
                 subs.append((original, original))
                 continue
             value = _format_synthetic_value(original, raw_value)
+            if field.lower() == "valor" and (
+                inp.get("is_grid") or str(inp.get("grid_source") or "").strip()
+            ):
+                value = pay_overrides.get(original, value)
             if value and value != original:
                 subs.append((original, value))
     return subs
@@ -454,6 +537,7 @@ def _build_depara_screens(
     contabilizados, não só os substituídos.
     """
     skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
+    pay_overrides = _payment_total_overrides(screen_mappings, dataset_row, skip)
     screens: list[dict] = []
     for screen in screen_mappings or []:
         fields: list[dict] = []
@@ -498,6 +582,11 @@ def _build_depara_screens(
                 kept, note, synthetic = True, "chave de consulta", original
             else:
                 synthetic = _format_synthetic_value(original, raw_value)
+                if field.lower() == "valor" and (
+                    inp.get("is_grid") or str(inp.get("grid_source") or "").strip()
+                ) and original in pay_overrides:
+                    synthetic = pay_overrides[original]
+                    note = "ajustado ao total do pedido"
                 if synthetic == original:
                     kept, note = True, "igual ao original"
             fields.append({

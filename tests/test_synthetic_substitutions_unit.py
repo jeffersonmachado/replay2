@@ -536,5 +536,103 @@ class TestFormatSyntheticValueDecimals(unittest.TestCase):
         self.assertIn(("229,9", "763,0"), subs)
 
 
+class TestPaymentTotalOverrides(unittest.TestCase):
+    """Valor da grade de pagamento é igualado ao total sintético do pedido.
+
+    Regressão da run 41 (captura 62): o pedido só grava quando a soma da
+    grade de pagamento (est366) é igual ao total do pedido — pagamento
+    parcial ("229,9" com qtd 2 = total 459,80) dispara o aviso "Valor do
+    pedido difere..." e a sequência de ESCs abandona a tela sem gravar; a
+    captura só persistiu no 2º passe (pagamento "459,8" = total), mas a run
+    saiu do ERP no fim do 1º passe e nunca chegou lá. Com qtd 2→7, o total
+    sintético é 459,8 × 3,5 = 1609,3 — todos os pagamentos viram "1609,3",
+    confirmando a inclusão já no 1º passe.
+    """
+
+    @staticmethod
+    def _mappings():
+        return [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "2", "placeholder": "{{est361.qtd}}",
+                 "field_name": "qtd", "entity_name": "est361",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est361"},
+                {"original": "229,9", "placeholder": "{{est366.valor}}",
+                 "field_name": "valor", "entity_name": "est366",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est366"},
+            ],
+        }, {
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "2", "placeholder": "{{est361.qtd}}",
+                 "field_name": "qtd", "entity_name": "est361",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est361"},
+                {"original": "459,8", "placeholder": "{{est366.valor}}",
+                 "field_name": "valor", "entity_name": "est366",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est366"},
+            ],
+        }]
+
+    def test_pagamentos_viram_total_sintetico(self):
+        row = {"est361.qtd": 7, "est366.valor": 763.05, "qtd": 7, "valor": 763.05}
+        subs = _extract_substitutions(self._mappings(), row)
+        self.assertIn(("2", "7"), subs)
+        self.assertIn(("229,9", "1609,3"), subs)
+        self.assertIn(("459,8", "1609,3"), subs)
+        self.assertNotIn(("229,9", "763,0"), subs)
+
+    def test_depara_marca_ajuste_ao_total(self):
+        row = {"est361.qtd": 7, "est366.valor": 763.05, "qtd": 7, "valor": 763.05}
+        screens = _build_depara_screens(self._mappings(), row, set())
+        valores = [
+            f for s in screens for f in s["fields"] if f["field"] == "valor"
+        ]
+        self.assertEqual(len(valores), 2)
+        for f in valores:
+            self.assertEqual(f["synthetic"], "1609,3")
+            self.assertEqual(f["note"], "ajustado ao total do pedido")
+
+    def test_sem_qtd_nao_ajusta(self):
+        mappings = [self._mappings()[1]]  # só a tela do pagamento
+        row = {"est366.valor": 763.05, "valor": 763.05}
+        subs = _extract_substitutions(mappings, row)
+        self.assertIn(("459,8", "763,0"), subs)
+
+    def test_qtd_igual_mantem_total_original(self):
+        row = {"est361.qtd": 2, "est366.valor": 459.8, "qtd": 2, "valor": 459.8}
+        subs = _extract_substitutions(self._mappings(), row)
+        # qtd 2→2 (ratio 1): total = 459,8 — o 1º passe (229,9) também vira
+        # o total e confirma a inclusão sem aviso.
+        self.assertIn(("229,9", "459,8"), subs)
+        self.assertNotIn(("459,8", "459,8"), subs)  # já igual: sem par
+
+    def test_valor_em_skip_nao_ajusta(self):
+        row = {"est361.qtd": 7, "est366.valor": 763.05, "qtd": 7, "valor": 763.05}
+        subs = _extract_substitutions(self._mappings(), row, skip_fields={"valor"})
+        self.assertIn(("229,9", "229,9"), subs)
+        self.assertIn(("459,8", "459,8"), subs)
+
+    def test_valor_de_formulario_nao_ajusta(self):
+        mappings = [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "2", "placeholder": "{{est361.qtd}}",
+                 "field_name": "qtd", "entity_name": "est361",
+                 "method": "by_grid_source", "is_grid": True,
+                 "grid_source": "est361"},
+                {"original": "10,0", "placeholder": "{{arq.valor}}",
+                 "field_name": "valor", "entity_name": "arq",
+                 "method": "by_cursor_position"},
+            ],
+        }]
+        row = {"est361.qtd": 7, "arq.valor": 42.5, "qtd": 7, "valor": 42.5}
+        subs = _extract_substitutions(mappings, row)
+        self.assertIn(("10,0", "42,5"), subs)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

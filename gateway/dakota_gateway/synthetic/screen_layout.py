@@ -197,7 +197,7 @@ def extract_layout(
                          valid))
 
     fields: list[PositionedField] = []
-    seen: set[tuple[int, int, str]] = set()
+    seen: dict[tuple[int, int, str], PositionedField] = {}
     for row, col, var, picture, valid in gets:
         label = ""
         best_col = -1
@@ -207,14 +207,25 @@ def extract_layout(
                 best_col = scol
                 label = slabel
         key = (row, col, var.upper())
-        if key in seen:
+        dup = seen.get(key)
+        if dup is not None:
+            # Mesmo GET redeclarado em outra rotina do arquivo (est361.prg:
+            # tela de consulta ~747 e de inclusão ~1071 com os mesmos
+            # `@ row,col get`). O primeiro vence a posição, mas herda o
+            # VALID/label da redeclaração quando não tem — a inclusão é
+            # onde o VALID existe.
+            if not dup.valid_expr and valid:
+                dup.valid_expr = valid
+            if not dup.label and label:
+                dup.label = label
             continue
-        seen.add(key)
-        fields.append(PositionedField(
+        pf = PositionedField(
             row=row, col=col, var=var,
             field=_normalize_field_name(var), label=label,
             picture=picture, valid_expr=valid,
-        ))
+        )
+        seen[key] = pf
+        fields.append(pf)
     fields.extend(_extract_grids(lines))
     return fields
 

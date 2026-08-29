@@ -124,6 +124,31 @@ def test_valid_em_linha_de_continuacao(tmp_path):
     assert by_var["nDesconto"].picture == "999.999,99"
 
 
+SAMPLE_DUP_PRG = """\
+* rotina de consulta (sem VALID) — mesmas coordenadas da inclusão
+   @ 06,13 get nDesconto pict "999.999,99"
+   @ 07,13 get cFrete    pict "@!"
+* rotina de inclusão (com VALID) — est361.prg: ~747 x ~1071
+@ 06,13 get nDesconto pict "999.999,99" ;
+            valid(fValidExit() and nDesconto >= 0)
+@ 07,13 get cFrete pict "99" prefield pCons postfield pFecha ;
+            valid(lastkey() = 5 or fValida(strzero(cFrete,2),strzero(cFrete,2),[arqfrete],[descricao],7,16,[]))
+"""
+
+
+def test_get_duplicado_herda_valid_da_redeclaracao(tmp_path):
+    """O mesmo `@ row,col get` redeclarado em outra rotina (consulta x
+    inclusão) é dedupado pela 1ª ocorrência, mas herda o VALID da 2ª."""
+    prg = tmp_path / "xx361.prg"
+    prg.write_text(SAMPLE_DUP_PRG, encoding="utf-8")
+    layout = extract_layout(prg)
+    by_var = {pf.var: pf for pf in layout}
+    assert by_var["nDesconto"].valid_expr == "fValidExit() and nDesconto >= 0"
+    assert by_var["cFrete"].valid_expr.startswith("lastkey() = 5 or fValida(")
+    # posição e PICTURE da 1ª ocorrência são preservadas
+    assert by_var["cFrete"].picture == "@!"
+
+
 SAMPLE_GRID_PRG = """\
 * grade de itens (dbedit) + GETs clássicos
 @ 07,13 get cFrete  pict "@!"

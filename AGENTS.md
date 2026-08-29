@@ -292,7 +292,12 @@ replay2/
   uma linha `tabela: v1, v2` — paridade na API via `lookup_values` no body
   de `/synthesize` e `/synthetic-replay`). O sorteio usa o mecanismo já
   existente `dataset_builder.build(lookup_values=...)` (FieldSchema.lookup
-  em minúsculas). Campos de
+  em minúsculas). O `lookup_table` vem da KB ou, como fallback, do VALID do
+  GET no fonte: `fValida(chave, chave, [tabela], ...)` é o idioma Recital de
+  "valor deve existir cadastrado" — `validation_rules.valid_lookup_table`
+  extrai a tabela (ex.: frete→arqfrete, situacao→est281); sem valores reais
+  disponíveis o de→para registra "VALID: valor deve existir em <tabela>".
+  Campos de
   grade sem entrada na KB (a KB da captura 13/62 tem est361/est366 sem
   campos) também são ancorados quando casam com algum campo das expressões
   de chave lidas dos `i<TABELA>.00N` (`_indexed_field_names` +

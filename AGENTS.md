@@ -279,7 +279,19 @@ replay2/
   `source_analyzer/semantic_types.py` centraliza `IDENTIFIER_TYPES`/
   `identifies_record`, hoje cpf/cnpj, extensível por declaração) são
   detectados automaticamente por `suggest_key_fields` e mantidos com o
-  valor original — o `skip_fields` manual é só para exceções; a rota
+  valor original — o `skip_fields` manual é só para exceções. Campos de
+  grade sem entrada na KB (a KB da captura 13/62 tem est361/est366 sem
+  campos) também são ancorados quando casam com algum campo das expressões
+  de chave lidas dos `i<TABELA>.00N` (`_indexed_field_names` +
+  `_matches_indexed`, com casamento por prefixo ≥3 — comb↔combinacao,
+  tam↔tamanho): códigos sintéticos de modelo/comb/codigo não existem no
+  cadastro de produtos (seek no cad2d1 do est361.prg) e o ERP rejeita o
+  item ("Codigo nao cadastrado"), impedindo a persistência do pedido.
+  Células numéricas de grade (`is_grid`) têm a magnitude limitada pela
+  quantidade de dígitos do valor original (`journey_synthesizer.synthesize`
+  — a PICTURE define a largura máxima, mas qtd=7042 ou 4755 parcelas
+  quebrariam validações do ERP): qtd "2"→1..9, valor "229,9"→≤999,99; a
+  rota
   `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
   detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)
   encadeia síntese → trilha → run real determinística `send-anyway`. Runs

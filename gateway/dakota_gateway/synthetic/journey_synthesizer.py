@@ -414,6 +414,29 @@ class JourneySynthesizer:
                         if pic:
                             CaptureKnowledgeIntegrator._picture_to_constraints(
                                 fs, pic)
+                        # Célula de grade numérica: limita a magnitude pela
+                        # quantidade de dígitos do valor original. A PICTURE
+                        # define a largura máxima da coluna (qtd "9.999,99"
+                        # aceitaria 7042), mas valores fora da ordem de
+                        # grandeza do real quebram validações do ERP
+                        # (estoque, nº de parcelas) e destoam do pedido.
+                        if inp.is_grid and dtype in ("number", "decimal"):
+                            odig = re.sub(
+                                r"\D", "",
+                                re.split(r"[,.]", inp.original.strip())[0])
+                            if odig:
+                                cap = 10 ** len(odig) - 1
+                                if fs.max_value is None or fs.max_value > cap:
+                                    fs.max_value = cap
+                                if fs.min_value is None or fs.min_value < 1:
+                                    fs.min_value = 1
+                                # datatype inteiro exige limites int
+                                # (randint recusa float)
+                                if dtype == "number":
+                                    if fs.max_value is not None:
+                                        fs.max_value = int(fs.max_value)
+                                    if fs.min_value is not None:
+                                        fs.min_value = int(fs.min_value)
                         if fs.min_value is None and fs.max_value is None:
                             fs.min_value, fs.max_value = _value_range_for_field(
                                 inp.field_name)

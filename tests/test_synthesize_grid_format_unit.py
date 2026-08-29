@@ -108,6 +108,45 @@ class SynthesizeGridFormatTest(unittest.TestCase):
             self.assertGreaterEqual(v, 0.0)
             self.assertLessEqual(v, 9999.99)
 
+    def test_grade_numerica_limita_magnitude_pelo_original(self):
+        """Célula numérica de grade: magnitude limitada pelos dígitos do
+        original. A PICTURE '9.999,99' aceitaria qtd=7042, mas valores fora
+        da ordem de grandeza do real quebram validações do ERP (estoque,
+        parcelas). qtd original '1' → 1..9; valor '229,9' → até 999,99."""
+        def _grid_input(field, original, picture):
+            return TemplateInput(
+                original=original, placeholder="{{PED." + field + "}}",
+                field_name=field, entity_name="PED",
+                method="by_grid_column", confidence=0.9,
+                original_type="number", picture=picture,
+                is_grid=True, grid_source="est361")
+
+        template = JourneyTemplate(
+            journey_id="tg2", name="grade2", capture_source="cap.jsonl",
+            entities_involved=["PED"],
+            steps=[JourneyStep(
+                screen_title="itens", screen_signature="L=1;W=10",
+                entity_name="PED", operation="", binding_confidence=0.9,
+                inputs=[
+                    _grid_input("QTD", "1", "9999"),
+                    _grid_input("VALOR", "229,9", "9.999,99"),
+                ],
+                matched_fields=["QTD", "VALOR"],
+            )],
+            evidence=[],
+        )
+        with TemporaryDirectory() as td:
+            result = JourneySynthesizer().synthesize(
+                template, samples=8, out_dir=Path(td), seed=42)
+            records = _records(result)
+        self.assertTrue(records)
+        for r in records:
+            self.assertGreaterEqual(int(r["QTD"]), 1)
+            self.assertLessEqual(int(r["QTD"]), 9)
+            v = float(r["VALOR"])
+            self.assertGreaterEqual(v, 1.0)
+            self.assertLessEqual(v, 999.99)
+
     def test_pattern_deterministico_por_seed(self):
         """Mesma semente → mesmos valores pattern (reprodutibilidade)."""
         with TemporaryDirectory() as td1, TemporaryDirectory() as td2:

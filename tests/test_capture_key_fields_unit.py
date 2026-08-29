@@ -135,6 +135,48 @@ class SuggestKeyFieldsTests(unittest.TestCase):
         self.assertEqual(suggest_key_fields([{"entity_name": "INEXISTENTE", "inputs": [{"field_name": "cpf", "original": "1"}]}], [_entity_clientes()]), [])
         self.assertEqual(suggest_key_fields(None, None), [])
 
+    def test_campo_indexado_e_ancora_mesmo_sem_entidade_na_kb(self):
+        """Campo que compõe chave de i<TABELA>.00N é código consultado pelo
+        ERP — mantido mesmo quando a entidade da tela não tem metadados na
+        KB (células de grade est361/est366, captura 62: modelo g2511→n9580
+        caía em "Codigo nao cadastrado")."""
+        indexed = {"rede", "loja", "modelo", "combinacao", "tamanho",
+                   "sequencia", "codigo", "data"}
+        mappings = [
+            {"entity_name": "est361", "inputs": [
+                {"original": "g2511", "field_name": "modelo", "method": "by_grid_source"},
+                {"original": "0000235", "field_name": "comb", "method": "by_grid_source"},
+                {"original": "2", "field_name": "qtd", "method": "by_grid_source"},
+            ]},
+            {"entity_name": "est366", "inputs": [
+                {"original": "15", "field_name": "codigo", "method": "by_grid_source"},
+                {"original": "229,9", "field_name": "valor", "method": "by_grid_source"},
+                {"original": "1", "field_name": "parcelas", "method": "by_grid_source"},
+            ]},
+        ]
+        self.assertEqual(
+            suggest_key_fields(mappings, [], indexed_fields=indexed),
+            ["modelo", "comb", "codigo"])
+
+    def test_prefixo_casa_nome_abreviado_da_grade(self):
+        """A grade abrevia a coluna (comb←combinacao, tam←tamanho); prefixo
+        com ≥3 caracteres casa. Nomes curtos demais não casam por prefixo."""
+        from control.services.capture_synthesis_service import _matches_indexed
+
+        indexed = {"combinacao", "tamanho", "modelo"}
+        self.assertTrue(_matches_indexed("comb", indexed))
+        self.assertTrue(_matches_indexed("tam", indexed))
+        self.assertTrue(_matches_indexed("modelo", indexed))
+        self.assertFalse(_matches_indexed("qtd", indexed))
+        self.assertFalse(_matches_indexed("mo", indexed))  # <3 chars
+
+    def test_sem_indexed_fields_mantem_comportamento_anterior(self):
+        mappings = [{
+            "entity_name": "est361",
+            "inputs": [{"original": "g2511", "field_name": "modelo", "method": "by_grid_source"}],
+        }]
+        self.assertEqual(suggest_key_fields(mappings, []), [])
+
     def test_dedup_preserva_ordem_da_captura(self):
         mappings = [
             {"entity_name": "CLIENTES", "inputs": [{"original": "1", "field_name": "cpf", "placeholder": "{{clientes.cpf}}"}]},

@@ -125,7 +125,9 @@ def synthesize_capture(
         except Exception:
             report = {}
 
-    key_fields = suggest_key_fields(result.screen_mappings, entities)
+    key_fields = suggest_key_fields(
+        result.screen_mappings, entities,
+        indexed_fields=_indexed_field_names(data_dirs))
 
     # De→para (original → sintético) da 1ª sessão gerada — exibido no modal
     # do detalhe da captura após o "Gerar". Em variation=equal todas as
@@ -184,17 +186,60 @@ def synthesize_capture(
 _LOOKUP_OPS = {"seek", "locate", "dbseek", "find"}
 
 
-def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None) -> list[str]:
+def _indexed_field_names(data_dirs: list[str] | None) -> set[str]:
+    """Nomes de campos que compõem chaves de índice (i<TABELA>.00N).
+
+    Varre as expressões de chave em texto claro dos arquivos de índice dos
+    diretórios de dados descobertos — um campo indexado é, por definição,
+    um código que o ERP consulta (seek), e substituí-lo por um valor
+    sintético inexistente faz a validação falhar ("Codigo nao cadastrado")
+    e o fluxo desviar. Vale inclusive para células de grade cuja entidade
+    não tem campos na KB (est361/est366 da captura 62).
+    """
+    from dakota_gateway.source_analyzer.index_file_reader import scan_index_files
+
+    names: set[str] = set()
+    for data_dir in data_dirs or []:
+        for table_keys in scan_index_files(data_dir).values():
+            for fields in table_keys:
+                names.update(f.lower() for f in fields if f)
+    return names
+
+
+def _matches_indexed(field: str, indexed: set[str]) -> bool:
+    """Casa o nome do campo com um campo indexado.
+
+    Exato ou prefixo (a grade abrevia o nome da coluna: ``comb`` ←
+    ``combinacao``, ``tam`` ← ``tamanho`` — convenção dos vCampos do
+    legado). Prefixo exige ≥3 caracteres para não ancorar demais.
+    """
+    f = field.lower()
+    if f in indexed:
+        return True
+    if len(f) >= 3:
+        for name in indexed:
+            if name.startswith(f) or (len(name) >= 3 and f.startswith(name)):
+                return True
+    return False
+
+
+def suggest_key_fields(
+    screen_mappings: list[dict] | None,
+    entities: list | None,
+    indexed_fields: set[str] | None = None,
+) -> list[str]:
     """Campos-âncora da navegação a manter com o valor original da captura.
 
     Generalista — vale para qualquer captura/entidade: um campo mapeado é
     âncora quando compõe índice da entidade, aparece em operação de busca
     (seek/locate/dbseek/find), é único, tem lookup_table (FK — o valor
-    precisa existir na entidade referenciada), ou tem tipo semântico
-    identificador de registro (`source_analyzer.semantic_types`).
-    Substituir uma âncora por um valor sintético inexistente faz a consulta
-    não encontrar o registro e desvia o fluxo (ex.: cair no cadastro em vez
-    de seguir a jornada gravada).
+    precisa existir na entidade referenciada), tem tipo semântico
+    identificador de registro (`source_analyzer.semantic_types`), ou compõe
+    chave de algum índice dos diretórios de dados (``indexed_fields`` —
+    cobre células de grade sem metadados na KB). Substituir uma âncora por
+    um valor sintético inexistente faz a consulta não encontrar o registro
+    e desvia o fluxo (ex.: "Codigo nao cadastrado" e a sessão cai fora da
+    jornada gravada).
     """
     by_entity = {str(getattr(e, "name", "") or "").upper(): e for e in (entities or [])}
     keys: list[str] = []
@@ -231,6 +276,20 @@ def suggest_key_fields(screen_mappings: list[dict] | None, entities: list | None
             if field and field.upper() in anchors and field.lower() not in seen:
                 seen.add(field.lower())
                 keys.append(field)
+    if indexed_fields:
+        # Passada por índice: campo que compõe chave de algum i<TABELA>.00N
+        # é código consultado pelo ERP — mantido mesmo sem entidade na KB
+        # (células de grade est361/est366, captura 62).
+        for screen in screen_mappings or []:
+            for inp in screen.get("inputs") or []:
+                field = str(inp.get("field_name") or "").strip()
+                if not field or field.lower() in seen:
+                    continue
+                if str(inp.get("method") or "") == "command":
+                    continue
+                if _matches_indexed(field, indexed_fields):
+                    seen.add(field.lower())
+                    keys.append(field)
     return keys
 
 
@@ -606,7 +665,21 @@ def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[s
         screen_mappings = _screen_mappings_from_template(template)
         source = "computed"
 
-    key_fields = suggest_key_fields(screen_mappings, entities)
+    # Campos indexados (chaves i<TABELA>.00N) também ancoram células de
+    # grade sem metadados na KB — melhor esforço: sem source_dir válido,
+    # segue só com as âncoras da KB.
+    indexed_fields: set[str] = set()
+    try:
+        from dakota_gateway.source_analyzer.index_file_reader import (
+            discover_data_dirs as _discover_data_dirs,
+        )
+        _sp = Path(str(source_dir or "").strip())
+        if _sp.is_dir():
+            indexed_fields = _indexed_field_names(_discover_data_dirs(_sp))
+    except Exception:
+        indexed_fields = set()
+
+    key_fields = suggest_key_fields(screen_mappings, entities, indexed_fields=indexed_fields)
     key_set = {f.lower() for f in key_fields}
     screens: list[dict] = []
     all_fields: list[str] = []

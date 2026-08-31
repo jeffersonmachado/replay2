@@ -256,7 +256,10 @@ replay2/
   o `_run_entry_preamble` drena o Confirm (ENTER quando o tail tem
   "onfirm"), volta ao prompt do shell e dispara o `entry_fallback` derivado
   por `derive_module_entry`: os códigos de menu das telas OUT (3.6.1 → 361 →
-  est361.prg) apontam o diretório do módulo sob `source_dir` e a presença de
+  est361.prg; menus de 2 níveis usam o candidato zero-padded — 3.3 → 330) e o
+  desempate entre módulos com o mesmo sufixo numérico (330 existe em todo
+  módulo: ace330, cad330, est330...) é o `numrot` declarado no fonte;
+  apontam o diretório do módulo sob `source_dir` e a presença de
   `<mod>.dbo`/`config.<mod>` decide o comando (`cd <dados>; dbrt
   <prg_mod>/<mod>` quando o config está no diretório de dados irmão de prg,
   senão `cd <prg_mod>; dbrt <mod>`), com espera pela mesma âncora do

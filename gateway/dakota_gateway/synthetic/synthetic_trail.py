@@ -61,6 +61,9 @@ _MIN_ERP_SEQ = 15
 # Código de menu Recital no cabeçalho das telas (ex.: "3.6.1") — os dígitos
 # apontam o fonte ``<modulo><digitos>.prg`` (ex.: est361.prg).
 _MENU_CODE_RE = re.compile(r"\b\d{1,2}(?:\.\d{1,2}){1,2}\b")
+# Declaração do código de menu dentro do fonte (``numrot = "3.3"`` ou lista)
+# — desempata stems com o mesmo sufixo numérico (330 existe em todo módulo).
+_NUMROT_RE = re.compile(r'numrot\s*=\s*(?:\[([^\]]+)\]|"([^"]+)")', re.I)
 
 
 def derive_module_entry(
@@ -118,7 +121,32 @@ def derive_module_entry(
                 counts[base] += 1
     if not counts:
         return None
-    mod_dir = counts.most_common(1)[0][0]
+    # Desempate pelo ``numrot`` declarado no fonte: códigos curtos (ex.: 330
+    # do menu "3.3") existem em todo módulo (ace330, cad330, est330...) e a
+    # contagem de sufixos empata — sem isso o vencedor arbitrário podia não
+    # ter config e o fallback vinha null (run 50 da captura 73).
+    menu_digits = set(digits)
+    numrot_hit: tuple[int, str] | None = None
+    for stem, base in stems.items():
+        if base not in counts:
+            continue
+        try:
+            text = (Path(base) / f"{stem}.prg").read_text(
+                encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = _NUMROT_RE.search(text)
+        if not m:
+            continue
+        raw = (m.group(1) or m.group(2) or "").strip().strip("[]")
+        for piece in re.split(r"[,\s]+", raw):
+            nd = piece.strip().strip('"').replace(".", "")
+            cands = [nd, nd + "0"] if len(nd) == 2 else [nd]
+            if any(c in menu_digits for c in cands):
+                score = counts[base]
+                if numrot_hit is None or score > numrot_hit[0]:
+                    numrot_hit = (score, base)
+    mod_dir = numrot_hit[1] if numrot_hit else counts.most_common(1)[0][0]
     mod = Path(mod_dir).name
     if not (Path(mod_dir) / f"{mod}.dbo").is_file():
         return None

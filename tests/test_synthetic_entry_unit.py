@@ -420,6 +420,28 @@ def test_derive_module_entry_codigo_menu_dois_niveis(tmp_path):
     assert "est" in step["label"]
 
 
+def test_derive_module_entry_desempata_por_numrot(tmp_path):
+    """Código curto ('3.3'→'330') existe em TODO módulo (ace330, cad330,
+    est330...) — o sufixo empata e a contagem elege um módulo arbitrário sem
+    config, derrubando o fallback (run 50 da captura 73). Vence o .prg cujo
+    numrot declara o código de menu da tela, mesmo com menos votos."""
+    prg = _source_tree(tmp_path)
+    (prg / "est" / "est330.prg").write_text(
+        'numrot = "3.3"\n&& notas fiscais emitidas', encoding="utf-8")
+    # Módulo concorrente com DOIS stems casando o sufixo (venceria a contagem)
+    (prg / "ace").mkdir(parents=True)
+    (prg / "ace" / "ace330.prg").write_text("&& controle de acesso", encoding="utf-8")
+    (prg / "ace" / "xace330.prg").write_text("&& outra rotina", encoding="utf-8")
+    (prg / "ace" / "ace.dbo").write_bytes(b"dbo")
+    (tmp_path / "ace").mkdir()
+    (tmp_path / "ace" / "config.ace").write_text("cfg", encoding="utf-8")
+    events = [_out(100, "| 3.3 NOTAS FISCAIS EMITIDA")]
+    step = derive_module_entry(events, 82, prg)
+    assert step is not None
+    assert step["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"
+    assert "est" in step["label"]
+
+
 def test_detect_entry_com_source_dir_inclui_fallback(tmp_path):
     """Captura 62 + árvore de fontes → entry carrega o fallback do módulo."""
     prg = _source_tree(tmp_path)

@@ -421,10 +421,8 @@ def test_derive_module_entry_codigo_menu_dois_niveis(tmp_path):
 
 
 def test_derive_module_entry_desempata_por_numrot(tmp_path):
-    """Código curto ('3.3'→'330') existe em TODO módulo (ace330, cad330,
-    est330...) — o sufixo empata e a contagem elege um módulo arbitrário sem
-    config, derrubando o fallback (run 50 da captura 73). Vence o .prg cujo
-    numrot declara o código de menu da tela, mesmo com menos votos."""
+    """Só um dos módulos candidatos declara o numrot do menu → vence ele,
+    mesmo com menos votos de sufixo."""
     prg = _source_tree(tmp_path)
     (prg / "est" / "est330.prg").write_text(
         'numrot = "3.3"\n&& notas fiscais emitidas', encoding="utf-8")
@@ -436,6 +434,36 @@ def test_derive_module_entry_desempata_por_numrot(tmp_path):
     (tmp_path / "ace").mkdir()
     (tmp_path / "ace" / "config.ace").write_text("cfg", encoding="utf-8")
     events = [_out(100, "| 3.3 NOTAS FISCAIS EMITIDA")]
+    step = derive_module_entry(events, 82, prg)
+    assert step is not None
+    assert step["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"
+    assert "est" in step["label"]
+
+
+def test_derive_module_entry_desempata_por_labels_quando_numrot_empata(tmp_path):
+    """No servidor real TODO módulo tem uma ponte <mod>330 com o MESMO numrot
+    (ace330/cad330/est330... todos declaram '3.3') — o numrot empata e o
+    módulo arbitrário podia não ter config, derrubando o fallback (run 50).
+    O desempate final é pelas labels visíveis da tela (mínimo 2), mesmo
+    critério do capture_knowledge_integrator."""
+    prg = _source_tree(tmp_path)
+    (prg / "est" / "est330.prg").write_text(
+        'numrot = "3.3"\n'
+        '@ 5, 2 SAY "Notas Fiscais"\n'
+        '@ 5, 20 GET vNf\n'
+        '@ 6, 2 SAY "CFOP"\n'
+        '@ 6, 20 GET vCfop\n',
+        encoding="utf-8")
+    (prg / "ace").mkdir(parents=True)
+    (prg / "ace" / "ace330.prg").write_text(
+        'numrot = "3.3"\n'
+        '@ 5, 2 SAY "Controle de Acesso"\n'
+        '@ 5, 25 GET vAce\n',
+        encoding="utf-8")
+    (prg / "ace" / "ace.dbo").write_bytes(b"dbo")
+    (tmp_path / "ace").mkdir()
+    (tmp_path / "ace" / "config.ace").write_text("cfg", encoding="utf-8")
+    events = [_out(100, "| 3.3 NOTAS FISCAIS EMITIDA\n| CFOP: 5102")]
     step = derive_module_entry(events, 82, prg)
     assert step is not None
     assert step["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"

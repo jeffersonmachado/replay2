@@ -36,6 +36,7 @@ from ..audit_writer import b64
 from ..canonical import payload_for_event
 from ..crypto import hmac_sha256_hex, sha256_hex
 from ..schema import AuditEvent
+from .screen_layout import extract_layout, layout_labels
 
 # Assinatura de tela "vazia" — marca o banner pré-sessão (registro de
 # terminal) que não faz parte do fluxo da aplicação.
@@ -121,12 +122,16 @@ def derive_module_entry(
                 counts[base] += 1
     if not counts:
         return None
-    # Desempate pelo ``numrot`` declarado no fonte: códigos curtos (ex.: 330
-    # do menu "3.3") existem em todo módulo (ace330, cad330, est330...) e a
-    # contagem de sufixos empata — sem isso o vencedor arbitrário podia não
-    # ter config e o fallback vinha null (run 50 da captura 73).
+    # Desempate em 2 níveis: (1) ``numrot`` declarado no fonte — códigos
+    # curtos (ex.: 330 do menu "3.3") existem em todo módulo (ace330,
+    # cad330, est330...) e a contagem de sufixos empata; (2) quando o
+    # próprio numrot empata (todo módulo tem uma ponte <mod>330 com o
+    # mesmo numrot), vence o fonte com mais labels posicionados visíveis
+    # nas telas da captura (mínimo 2, mesmo critério do integrator) —
+    # sem isso o módulo arbitrário podia não ter config e o fallback
+    # vinha null (run 50 da captura 73).
     menu_digits = set(digits)
-    numrot_hit: tuple[int, str] | None = None
+    numrot_hits: list[tuple[int, str, str]] = []  # (votos, base, stem)
     for stem, base in stems.items():
         if base not in counts:
             continue
@@ -143,10 +148,27 @@ def derive_module_entry(
             nd = piece.strip().strip('"').replace(".", "")
             cands = [nd, nd + "0"] if len(nd) == 2 else [nd]
             if any(c in menu_digits for c in cands):
-                score = counts[base]
-                if numrot_hit is None or score > numrot_hit[0]:
-                    numrot_hit = (score, base)
-    mod_dir = numrot_hit[1] if numrot_hit else counts.most_common(1)[0][0]
+                numrot_hits.append((counts[base], base, stem))
+                break
+    mod_dir = ""
+    hit_bases = {base for _v, base, _s in numrot_hits}
+    if len(hit_bases) == 1:
+        mod_dir = numrot_hits[0][1]
+    elif numrot_hits:
+        screen_text = _ANSI_RE.sub("", " ".join(
+            _decode_b64(ev) for ev in events
+            if int(ev.get("seq_global") or 0) >= start_seq
+            and ev.get("type") == "bytes" and ev.get("dir") != "in"))
+        best: tuple[int, int, str] | None = None  # (labels, votos, base)
+        for votos, base, stem in numrot_hits:
+            labels = layout_labels(extract_layout(Path(base) / f"{stem}.prg"))
+            score = sum(1 for lb in labels if _word_in(lb, screen_text))
+            if score >= 2 and (best is None or (score, votos) > (best[0], best[1])):
+                best = (score, votos, base)
+        if best:
+            mod_dir = best[2]
+    if not mod_dir:
+        mod_dir = counts.most_common(1)[0][0]
     mod = Path(mod_dir).name
     if not (Path(mod_dir) / f"{mod}.dbo").is_file():
         return None
@@ -171,6 +193,14 @@ def _decode_b64(ev: dict) -> str:
         return base64.b64decode(str(ev.get("data_b64") or "")).decode("utf-8", "replace")
     except Exception:
         return ""
+
+
+def _word_in(key: str, text: str) -> bool:
+    """Match por palavra inteira (case-insensitive) — mesmo critério do
+    capture_knowledge_integrator (substring casava 'ARQ' de 'ARQUIVO')."""
+    if not key or not text:
+        return False
+    return re.search(r"\b" + re.escape(key) + r"\b", text, re.IGNORECASE) is not None
 
 
 def _first_printable_anchor(text: str) -> str:

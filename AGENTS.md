@@ -258,7 +258,9 @@ replay2/
   por `derive_module_entry`: os códigos de menu das telas OUT (3.6.1 → 361 →
   est361.prg; menus de 2 níveis usam o candidato zero-padded — 3.3 → 330) e o
   desempate entre módulos com o mesmo sufixo numérico (330 existe em todo
-  módulo: ace330, cad330, est330...) é o `numrot` declarado no fonte;
+  módulo: ace330, cad330, est330... — todos pontes com o mesmo `numrot`) é
+  pelo `numrot` declarado no fonte e, persistindo o empate, pelas labels
+  posicionados visíveis nas telas (mínimo 2, mesmo critério do integrator);
   apontam o diretório do módulo sob `source_dir` e a presença de
   `<mod>.dbo`/`config.<mod>` decide o comando (`cd <dados>; dbrt
   <prg_mod>/<mod>` quando o config está no diretório de dados irmão de prg,

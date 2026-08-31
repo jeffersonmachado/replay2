@@ -98,8 +98,11 @@ def derive_module_entry(
             continue
         for code in _MENU_CODE_RE.findall(_decode_b64(ev)):
             d = code.replace(".", "")
-            if len(d) >= 3:
-                digits.append(d)
+            # Menus de 2 níveis ('3.3' → est330.prg) usam o candidato
+            # zero-padded, mesmo critério do capture_knowledge_integrator.
+            for cand in ([d, d + "0"] if len(d) == 2 else [d]):
+                if len(cand) >= 3:
+                    digits.append(cand)
     if not digits:
         return None
     # Índice único dos fontes: stem do .prg → diretório do módulo.
@@ -229,7 +232,12 @@ def detect_session_entry(events: list[dict], source_dir: str | Path | None = Non
         )
         m = _SHELL_PROMPT_RE.search(last_prompt_text)
         if m:
-            shell_wait = m.group(0).strip()
+            # Só a parte estável '<user>)<host>:' — o cwd gravado no prompt
+            # (ex.: /dakota11/est) não se repete no replay (cai no HOME) e um
+            # wait literal estouraria antes do send, despejando as teclas do
+            # sistema no shell (run 49 da captura 73).
+            head = re.match(r"\(\w+\)[\w.\-]+:", m.group(0))
+            shell_wait = head.group(0) if head else m.group(0).strip()
 
     # Âncora da primeira tela do sistema: primeiro texto visível do draw pós-init.
     first_det_after = next((s for s in det_seqs if s > erp_seq), erp_seq + 30)

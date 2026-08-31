@@ -244,7 +244,9 @@ replay2/
   `detect_session_entry` reconhece o padrão (prompt shell/erro de
   /etc/profile + wrapper antes do runtime Recital subir — `ESC[?7l`), corta
   o preâmbulo (`start_seq`) e deriva das próprias teclas gravadas o
-  `entry_preamble` (menu wrapper → shell → ERP, com âncoras de espera),
+  `entry_preamble` (menu wrapper → shell → ERP, com âncoras de espera — a do
+  passo shell é só `<user>)<host>:`, sem o cwd do prompt gravado, que não se
+  repete no replay e estouraria o wait antes do send),
   gravado nos params da run e executado por `_run_entry_preamble`
   (`replay_control/executors.py`) uma vez por sessão, antes do primeiro
   checkpoint; default ligado no 1-clique (`auto_entry`, `0` desliga). Se a

@@ -129,6 +129,20 @@ def test_detect_entry_reconhece_preambulo_shell():
     assert steps[3]["wait_stable_ms"] > 0
 
 
+def test_detect_entry_shell_wait_independente_do_cwd():
+    """O wait do passo shell não pode carregar o diretório da captura: o
+    replay cai no HOME (ex.: /dakota1/u/ferblo) e um wait com o cwd gravado
+    (ex.: /dakota11/est) estoura ANTES do send — a run 49 digitou toda a NF
+    no ksh por causa disso. A parte estável é '<user>)<host>:'."""
+    events, _ = _capture62_like_events()
+    entry = detect_session_entry(events)
+    assert entry is not None
+    step = entry["preamble"][1]
+    assert step["wait_text"] == "(ferblo)MIG24:"
+    assert "/" not in step["wait_text"]
+    assert ">" not in step["wait_text"]
+
+
 def test_detect_entry_sem_erp_retorna_none():
     events = [
         _ev(1, "session_start"),
@@ -391,6 +405,19 @@ def test_derive_module_entry_sem_codigo_menu_retorna_none(tmp_path):
     prg = _source_tree(tmp_path)
     events = [_out(100, "DAKOTA S/A  MENU PRINCIPAL sem codigo")]
     assert derive_module_entry(events, 82, prg) is None
+
+
+def test_derive_module_entry_codigo_menu_dois_niveis(tmp_path):
+    """Menu de 2 níveis ('3.3 NOTAS FISCAIS EMITIDA') localiza o fonte pelo
+    candidato zero-padded ('33' → '330' → est330.prg) — mesmo critério do
+    capture_knowledge_integrator; sem isso o fallback da captura 73 vinha null."""
+    prg = _source_tree(tmp_path)
+    (prg / "est" / "est330.prg").write_text("&& notas fiscais emitidas", encoding="utf-8")
+    events = [_out(100, "| 3.3 NOTAS FISCAIS EMITIDA")]
+    step = derive_module_entry(events, 82, prg)
+    assert step is not None
+    assert step["send"] == f"cd {tmp_path}/est; dbrt {prg}/est/est\r"
+    assert "est" in step["label"]
 
 
 def test_detect_entry_com_source_dir_inclui_fallback(tmp_path):

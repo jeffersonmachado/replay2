@@ -198,7 +198,8 @@ replay2/
   entre grades sobrepostas por compatibilidade valor×PICTURE e célula mais
   estreita; '+' é tecla de confirmação de grade, nunca dado) e
   `capture_knowledge_integrator.py` vincula a
-  tela ao fonte pelo código de menu (3.6.1 → est361.prg) + labels
+  tela ao fonte pelo código de menu (3.6.1 → est361.prg; código de 2
+  níveis completa com zero à direita: 3.3 → est330.prg) + labels
   posicionados e mapeia input→campo por `by_cursor_position` e
   `by_grid_column` (célula de dbedit; PICTURE do
   GET vira constraint de geração do dado sintético e **vence o range

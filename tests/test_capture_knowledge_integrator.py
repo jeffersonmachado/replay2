@@ -265,5 +265,89 @@ class CaptureKnowledgeIntegratorTests(unittest.TestCase):
         self.assertGreaterEqual(enriched.total_inputs, 0)
 
 
+class PositionalBindingMenuCodeTests(unittest.TestCase):
+    """Vínculo posicional tela→fonte pelo código de menu do cabeçalho.
+
+    Regressão da captura 73 (inclusão de nota fiscal, AIX): o código de
+    menu de DOIS níveis (``3.3 NOTAS FISCAIS EMITIDA`` → ``est330.prg``)
+    era descartado pelo filtro de ≥3 dígitos (só cobria ``3.6.1`` →
+    ``est361.prg``), deixando a síntese sem nenhum campo mapeado.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.dir_path = Path(self.tmpdir.name)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _make_prg(self, name: str) -> str:
+        src = self.dir_path / name
+        src.write_text(
+            '@ 5, 2 SAY "Rede"\n'
+            '@ 5, 12 GET vRede\n'
+            '@ 6, 2 SAY "Loja"\n'
+            '@ 6, 12 GET vLoja\n'
+            '@ 7, 2 SAY "Emitente"\n'
+            '@ 7, 14 GET vEmit\n',
+            encoding="utf-8",
+        )
+        return str(src)
+
+    def _binding(self, source_file: str) -> ScreenEntityBinding:
+        return ScreenEntityBinding(
+            screen_title="",
+            program_name=Path(source_file).stem,
+            source_file=source_file,
+            entity_name="NOTAS",
+            operation="create",
+            matched_fields=[],
+            confidence=0.0,
+            evidence=[],
+        )
+
+    def _find(self, screen_sample: str, source_file: str):
+        integrator = CaptureKnowledgeIntegrator(source_root=str(self.dir_path))
+        return integrator._find_positional_binding(
+            screen_sample, [self._binding(source_file)]
+        )
+
+    def test_menu_code_two_levels_maps_to_zero_padded_program(self):
+        """``3.3 ...`` deve vincular ao est330.prg (dígitos + pad 0)."""
+        src = self._make_prg("est330.prg")
+        sample = (
+            "DAKOTA S/A                    3.3 NOTAS FISCAIS EMITIDA\n"
+            "Rede...........: 1 UNIVERSO DAKOTA\n"
+            "Loja...........: 5102\n"
+        )
+        found = self._find(sample, src)
+        self.assertIsNotNone(found)
+        binding, layout = found
+        self.assertTrue(binding.source_file.endswith("est330.prg"))
+
+    def test_menu_code_three_levels_keeps_working(self):
+        """``3.6.1 PEDIDO E-COMMERCE`` → est361.prg (comportamento atual)."""
+        src = self._make_prg("est361.prg")
+        sample = (
+            "DAKOTA S/A                    3.6.1 PEDIDO E-COMMERCE\n"
+            "Rede...........: 1 UNIVERSO DAKOTA\n"
+            "Loja...........: 5102\n"
+        )
+        found = self._find(sample, src)
+        self.assertIsNotNone(found)
+        binding, _layout = found
+        self.assertTrue(binding.source_file.endswith("est361.prg"))
+
+    def test_menu_code_two_levels_without_candidate_returns_none(self):
+        """Código de 2 níveis sem .prg correspondente segue sem vínculo."""
+        src = self._make_prg("est361.prg")
+        sample = (
+            "DAKOTA S/A                    9.9 TELA INEXISTENTE\n"
+            "Rede...........: 1 UNIVERSO DAKOTA\n"
+            "Loja...........: 5102\n"
+        )
+        self.assertIsNone(self._find(sample, src))
+
+
 if __name__ == "__main__":
     unittest.main()

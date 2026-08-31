@@ -361,7 +361,18 @@ class CaptureKnowledgeIntegrator:
             return None
 
         codes = re.findall(r"\b\d{1,2}(?:\.\d{1,2}){1,2}\b", screen_sample)
-        digits = {c.replace(".", "") for c in codes if len(c.replace(".", "")) >= 3}
+        digits: set[str] = set()
+        for c in codes:
+            d = c.replace(".", "")
+            if len(d) >= 3:
+                digits.add(d)
+            elif len(d) == 2:
+                # Código de menu de 2 níveis ("3.3"): a convenção de nome do
+                # programa completa com zero à direita — est330.prg é a
+                # rotina "3.3 NOTAS FISCAIS EMITIDA" (numrot = "3.3").
+                # Mantém também o stem exato ("33") para módulos sem pad.
+                digits.add(d)
+                digits.add(d + "0")
         if not digits:
             return None
 

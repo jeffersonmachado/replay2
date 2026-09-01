@@ -37,7 +37,7 @@ from .deterministic import (
     content_present_override,
     synthetic_swap_override,
 )
-from .window import _is_replay_input_event, _replay_input_mode, _selected_events
+from .window import _is_replay_input_event, _on_deterministic_mismatch, _replay_input_mode, _selected_events
 
 _MAX_RECENT_KEYS = 3
 
@@ -377,7 +377,17 @@ def replay_strict_global_controlled(
                 drain_output(0.0)
             elif typ == "checkpoint" and sid:
                 if _event_requires_deterministic_comparison(ev, params, session_config=session_configs.get(sid), replay_config=cfg):
-                    wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0))
+                    try:
+                        wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0))
+                    except ReplayError:
+                        # Checkpoint avulso (sem deterministic_input associado):
+                        # a divergência já foi registrada pelo wait_checkpoint.
+                        # Em send-anyway a run segue — o trim de entrada pode
+                        # deixar checkpoints de draws intermediários do init do
+                        # ERP que o replay não reproduz (a sessão real chega ao
+                        # menu já pintado — run 58, captura 81).
+                        if _on_deterministic_mismatch(params) != "send-anyway":
+                            raise
                     expected_snapshot = _expected_snapshot_from_event(ev)
                     on_progress(seq_global, expected_snapshot.get("screen_sig") or expected_snapshot.get("visual_sig") or expected_snapshot.get("text_sig") or expected_snapshot.get("semantic_sig") or None)
 

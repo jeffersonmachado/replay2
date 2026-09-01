@@ -504,3 +504,69 @@ def test_strict_global_deterministic_input_registra_falha_uma_vez(tmp_path):
     assert len(failures) == 1
     assert failures[0]["event_type"] == "deterministic_input"
     assert _Session.instances[0]._writes == [b"A"]
+
+
+def test_strict_global_checkpoint_avulso_send_anyway_nao_aborta(tmp_path):
+    """Checkpoint avulso divergente em send-anyway registra a falha e segue.
+
+    Run 58 (captura 81): o trim da entrada deixou checkpoints dos draws
+    intermediários do init do ERP antes do 1º input; a sessão real chega ao
+    menu já pintado, a assinatura nunca casa e o ReplayError do checkpoint
+    avulso (sem deterministic_input associado) subia até o runner — run
+    abortada aos 43s com technical_error/high. Em send-anyway o checkpoint
+    avulso deve registrar a divergência e a run continuar.
+    """
+    entries = [
+        {"type": "session_start", "session_id": "s1", "seq_global": 1, "seq_session": 1, "rows": 2, "cols": 3},
+        {
+            "type": "checkpoint",
+            "session_id": "s1",
+            "seq_global": 2,
+            "seq_session": 2,
+            "comparison_mode": "visual",
+            "expected_visual_sig": "sha256:visual-wrong",
+        },
+        {
+            "type": "deterministic_input",
+            "session_id": "s1",
+            "seq_global": 3,
+            "seq_session": 3,
+            "comparison_mode": "visual",
+            "expected_visual_sig": "sha256:visual-ok",
+            "key_b64": base64.b64encode(b"A").decode("ascii"),
+        },
+    ]
+    (tmp_path / "audit-control.part001.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in entries),
+        encoding="utf-8",
+    )
+    cfg = ReplayConfig(
+        log_dir=str(tmp_path),
+        target_host="local",
+        input_mode="deterministic",
+        on_deterministic_mismatch="send-anyway",
+        comparison_mode="visual",
+        checkpoint_quiet_ms=0,
+    )
+    _Session.instances = []
+    failures: list[dict] = []
+    with patch.object(replay_control.executors, "_TargetSession", _Session), patch.object(
+        replay_control.executors.selectors, "DefaultSelector", _Selector
+    ):
+        # Não pode propagar ReplayError — a run deve ir até o fim.
+        replay_control.replay_strict_global_controlled(
+            cfg,
+            params={
+                "input_mode": "deterministic",
+                "on_deterministic_mismatch": "send-anyway",
+                "comparison_mode": "visual",
+                "synthetic": True,
+            },
+            should_pause_or_cancel=lambda: None,
+            on_progress=lambda *args: None,
+            on_failure=failures.append,
+            checkpoint_timeout_ms=20,
+        )
+    assert [f["event_type"] for f in failures] == ["checkpoint"]
+    # E o input seguinte foi enviado — a run não parou no checkpoint avulso.
+    assert _Session.instances[0]._writes == [b"A"]

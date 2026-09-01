@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import selectors
 import time
 from dataclasses import dataclass
@@ -75,6 +76,18 @@ def _run_entry_preamble(s, sel, steps, fallback=None, *, should_pause_or_cancel=
     warnings: list[str] = []
     tail = bytearray()
 
+    # A âncora derivada do texto normalizado da tela (espaços colapsados,
+    # sem escapes ANSI — ex.: "Recital V8.0x" do banner do dbrt) não existe
+    # literalmente no fluxo cru ("Recital         V8.0" + corner ACS 'x').
+    # O wait casa primeiro no fluxo cru e, em seguida, na versão limpa —
+    # sem isso a âncora final estourava e o fallback era digitado no
+    # prompt '>' do dbrt (run 56, captura 79).
+    _ansi_tail_re = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][0-9A-Z]|\x1b.")
+
+    def _clean(data: bytes) -> bytes:
+        text = _ansi_tail_re.sub("", data.decode("utf-8", "replace"))
+        return re.sub(r"\s+", " ", text).encode("utf-8")
+
     def pump(timeout: float) -> None:
         try:
             events = sel.select(timeout=max(0.0, timeout))
@@ -92,14 +105,15 @@ def _run_entry_preamble(s, sel, steps, fallback=None, *, should_pause_or_cancel=
 
     def wait_for(text: str, timeout_s: float) -> bool:
         needle = str(text).encode("utf-8", "replace")
+        needle_clean = _clean(needle)
         deadline = time.monotonic() + max(0.2, float(timeout_s))
         while time.monotonic() < deadline:
-            if needle in tail:
+            if needle in tail or (needle_clean and needle_clean in _clean(bytes(tail))):
                 return True
             if should_pause_or_cancel is not None:
                 should_pause_or_cancel()
             pump(min(0.2, max(0.02, deadline - time.monotonic())))
-        return needle in tail
+        return needle in tail or (bool(needle_clean) and needle_clean in _clean(bytes(tail)))
 
     def wait_stable(stable_ms: int, timeout_s: float) -> None:
         deadline = time.monotonic() + max(0.2, float(timeout_s))

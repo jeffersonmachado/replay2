@@ -567,3 +567,25 @@ def test_preamble_sem_fallback_mantem_comportamento():
     assert sess.sent == ["k\r"]
     assert len(warnings) == 1
     assert "DAKOTA S/A" in warnings[0]
+
+
+def test_preamble_ancora_casa_saida_com_padding_e_escapes():
+    """A âncora derivada do texto normalizado (ex.: 'Recital V8.0x') deve
+    casar a saída crua com espaços de padding e sequências ANSI entre as
+    palavras (banner do dbrt: 'Recital         V8.0' + corner ACS 'x').
+    Sem o match normalizado a âncora estourava e o fallback era digitado
+    no prompt '>' do dbrt (run 56, captura 79 — OC no módulo cmp)."""
+    sess = _FakeSession([
+        (0.05, "(ferblo)MIG24:/dakota1/u/ferblo > "),
+        (0.10, "\x1b[?7l\x1b[0m\x1b[H\x1b[2J\x1b[1;1H"),
+        (0.15, "\x1b[1;22r\x1b[?25l\x1b[0m\x1b[H\x1b[2J\x1b[7mRecital         V8.0\x1b(0\x1b[0m\x1b[7mx\x1b(B\x1b[0m\x1b[7m  Upd"),
+    ])
+    steps = [
+        {"wait_text": "MIG24:", "send": "db\r", "timeout_s": 5},
+        {"wait_text": "Recital V8.0x", "timeout_s": 5},
+        {"wait_stable_ms": 50, "timeout_s": 2},
+    ]
+    fallback = {"send": "cd /x; dbrt y\r", "wait_text": "Recital V8.0x", "timeout_s": 1}
+    warnings = _run_entry_preamble(sess, _FakeSelector(), steps, fallback)
+    assert sess.sent == ["db\r"]
+    assert warnings == []

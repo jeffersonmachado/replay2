@@ -143,6 +143,28 @@ class TemplateInput:
     lookup_table: str = ""
 
 
+def _lookup_key_for_input(
+    lookup_table: str,
+    field_name: str,
+    lookup_values: dict[str, list] | None,
+) -> str | None:
+    """Chave de lookup do input para o DatasetBuilder.
+
+    Prioridade: a tabela FK (``lookup_table`` da KB ou do VALID do fonte).
+    Sem ela, cai para ``field:<campo>`` quando o harvest de capturas
+    anteriores tem valores reais para o campo — permite variar códigos
+    (ex.: EAN) mesmo com a tabela referenciada desconhecida. Sem as duas,
+    o valor é gerado livre pelo provider.
+    """
+    table = str(lookup_table or "").strip().lower()
+    if table:
+        return table
+    field = str(field_name or "").strip().lower()
+    if field and f"field:{field}" in (lookup_values or {}):
+        return f"field:{field}"
+    return None
+
+
 @dataclass
 class JourneyStep:
     """Passo da jornada (tela)."""
@@ -423,8 +445,11 @@ class JourneySynthesizer:
                             required=True,
                             # lookup em minúsculas: as listas de valores
                             # reais (lookup_values) são indexadas assim.
-                            lookup=(inp.lookup_table.strip().lower()
-                                    if inp.lookup_table else None),
+                            # Sem tabela FK, cai para field:<campo> quando o
+                            # harvest tem valores reais para o campo.
+                            lookup=_lookup_key_for_input(
+                                inp.lookup_table, inp.field_name,
+                                lookup_values),
                         )
                         # PICTURE do GET (inputs mapeados por posição de
                         # cursor) limita a geração à largura real do campo.

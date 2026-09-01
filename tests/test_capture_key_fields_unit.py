@@ -184,6 +184,156 @@ class SuggestKeyFieldsTests(unittest.TestCase):
         ]
         self.assertEqual(suggest_key_fields(mappings, [_entity_clientes()]), ["cpf"])
 
+    def test_lookup_table_do_input_ancora_mesmo_sem_metadados_na_kb(self):
+        """O lookup_table derivado do VALID do fonte (fValida) ancora o campo
+        mesmo quando a entidade da KB não tem o campo com FK declarada —
+        caso do cfop da captura 73: VALID exige valor em uni500 e o valor
+        livre gerado (9445) caiu em "Codigo nao cadastrado" (run 52)."""
+        entity = EntityDefinition(name="arq", fields=[])
+        mappings = [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "5102", "field_name": "cfop",
+                 "placeholder": "{{arq.cfop}}", "lookup_table": "uni500",
+                 "method": "by_cursor_position"},
+                {"original": "399,7", "field_name": "valor",
+                 "placeholder": "{{arq.valor}}", "method": "by_cursor_position"},
+            ],
+        }]
+        self.assertEqual(
+            suggest_key_fields(mappings, [entity], lookup_covered=set()),
+            ["cfop"])
+
+    def test_lookup_table_do_input_coberta_por_valores_reais_nao_ancora(self):
+        """FK coberta por valores reais (lookup_values) varia dentro do
+        cadastro — não precisa de âncora."""
+        entity = EntityDefinition(name="arq", fields=[])
+        mappings = [{
+            "entity_name": "arq",
+            "inputs": [
+                {"original": "5102", "field_name": "cfop",
+                 "placeholder": "{{arq.cfop}}", "lookup_table": "uni500",
+                 "method": "by_cursor_position"},
+            ],
+        }]
+        self.assertEqual(
+            suggest_key_fields(mappings, [entity], lookup_covered={"uni500"}),
+            [])
+
+    def test_codigo_numerico_longo_sem_cobertura_e_ancora(self):
+        """Valor com cara de código de registro (EAN-13, CPF, CNPJ — 8 a 14
+        dígitos puros) é chave de cadastro: sem lista de valores reais para
+        sortear, mantém o original em vez de gerar um código inexistente —
+        caso do EAN da captura 73 (mapeado como 'observacao' da fin310, sem
+        lookup_table): 7036643879947 cairia em "Codigo nao cadastrado"."""
+        mappings = [{
+            "entity_name": "fin310",
+            "inputs": [
+                {"original": "7909667373669", "field_name": "observacao",
+                 "placeholder": "{{fin310.observacao}}", "is_grid": True,
+                 "method": "by_grid_source"},
+                {"original": "399,7", "field_name": "valor",
+                 "placeholder": "{{fin310.valor}}", "is_grid": True,
+                 "method": "by_grid_source"},
+                {"original": "15", "field_name": "formapag",
+                 "placeholder": "{{fin310.formapag}}", "is_grid": True,
+                 "method": "by_grid_source"},
+                {"original": "1000", "field_name": "qtd",
+                 "placeholder": "{{fin310.qtd}}", "is_grid": True,
+                 "method": "by_grid_source"},
+            ],
+        }]
+        self.assertEqual(
+            suggest_key_fields(mappings, [], lookup_covered=set()),
+            ["observacao"])
+
+    def test_codigo_numerico_longo_coberto_por_campo_nao_ancora(self):
+        """Código com valores reais observados para o MESMO campo
+        (field:<nome> no harvest) varia dentro dos códigos reais."""
+        mappings = [{
+            "entity_name": "fin310",
+            "inputs": [
+                {"original": "7909667373669", "field_name": "observacao",
+                 "placeholder": "{{fin310.observacao}}", "is_grid": True,
+                 "method": "by_grid_source"},
+            ],
+        }]
+        self.assertEqual(
+            suggest_key_fields(
+                mappings, [], lookup_covered={"field:observacao"}),
+            [])
+
+    def test_harvest_indexa_valores_por_nome_de_campo(self):
+        """O harvest de valores reais passa a indexar também por
+        field:<campo> — permite variar códigos (EAN) mesmo quando a tabela
+        FK é desconhecida ou o campo foi mapeado para a entidade errada."""
+        import json
+        import tempfile
+        from control.services.capture_synthesis_service import (
+            _harvest_lookup_values)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = {
+                "screen_mappings": [{
+                    "entity_name": "fin310",
+                    "inputs": [
+                        {"original": "7899295395174", "field_name": "observacao",
+                         "lookup_table": "", "entity_name": "fin310"},
+                        {"original": "{KEY:ENTER}", "field_name": "",
+                         "lookup_table": "", "entity_name": ""},
+                        {"original": "5102", "field_name": "cfop",
+                         "lookup_table": "uni500", "entity_name": "arq"},
+                    ],
+                }],
+            }
+            out = Path(tmp) / "cap-x" / "synthetic" / "run-1"
+            out.mkdir(parents=True)
+            (out / "report.json").write_text(
+                json.dumps(report), encoding="utf-8")
+            values = _harvest_lookup_values(Path(tmp))
+        self.assertIn("7899295395174", values.get("field:observacao", []))
+        self.assertIn("5102", values.get("field:cfop", []))
+        self.assertIn("5102", values.get("uni500", []))
+        self.assertNotIn("{KEY:ENTER}", values.get("field:observacao", []))
+
+    def test_lookup_key_cai_para_field_quando_sem_tabela(self):
+        """Sem lookup_table (FK desconhecida), o dataset usa a lista de
+        valores reais indexada por field:<campo> quando existe — é o que
+        permite variar o EAN entre códigos de produto reais."""
+        from dakota_gateway.synthetic.journey_synthesizer import (
+            _lookup_key_for_input)
+
+        lv = {"field:observacao": ["7899295395174"]}
+        self.assertEqual(
+            _lookup_key_for_input("", "observacao", lv), "field:observacao")
+        self.assertEqual(_lookup_key_for_input("uni500", "cfop", lv), "uni500")
+        self.assertIsNone(_lookup_key_for_input("", "valor", lv))
+        self.assertIsNone(_lookup_key_for_input("", "", lv))
+        self.assertIsNone(_lookup_key_for_input("  ", "  ", lv))
+
+    def test_depara_nota_valor_real_observado_por_campo(self):
+        """De→para registra a origem do valor quando ele veio da lista
+        field:<campo> (valores reais observados em capturas anteriores)."""
+        from control.services.capture_synthesis_service import (
+            _build_depara_screens)
+
+        mappings = [{
+            "entity_name": "fin310",
+            "inputs": [{
+                "original": "7909667373669", "field_name": "observacao",
+                "placeholder": "{{fin310.observacao}}", "is_grid": True,
+                "method": "by_grid_source",
+            }],
+        }]
+        screens = _build_depara_screens(
+            mappings, {"fin310.observacao": "7899295395174"}, set(),
+            lookup_counts={"field:observacao": 3})
+        self.assertEqual(len(screens), 1)
+        field = screens[0]["fields"][0]
+        self.assertEqual(field["synthetic"], "7899295395174")
+        self.assertIn("valor real observado em capturas", field["note"])
+        self.assertIn("1 de 3", field["note"])
+
     def test_sugestao_alimenta_extract_substitutions_como_identidade(self):
         """Âncora detectada vira substituição identidade sem skip explícito."""
         from control.services.capture_synthesis_service import _extract_substitutions

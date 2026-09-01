@@ -100,6 +100,17 @@ class DatasetBuilder:
         seed: int,
         lookup_values: dict[str, list[Any]],
     ) -> Any:
+        # Lookup: se o campo referencia outra entidade (ou tem valores reais
+        # observados para o campo — chave field:<nome>), sorteia da lista de
+        # valores reais. Vem ANTES do formato pattern: um código real do
+        # cadastro sempre vence um valor sintético no formato certo — o ERP
+        # valida a existência ("Codigo nao cadastrado"), não o formato.
+        if field.lookup and field.lookup in lookup_values:
+            lookup_list = lookup_values[field.lookup]
+            if index < len(lookup_list):
+                return lookup_list[index]
+            return random.Random(seed + index).choice(lookup_list)
+
         # Formato "pattern:<molde>" — preserva o formato do valor original
         # (letra→letra aleatória, dígito→dígito, demais chars intactos). Usado
         # em células de grade com PICTURE de função ("@"), onde o provider por
@@ -121,13 +132,6 @@ class DatasetBuilder:
 
         if not provider:
             provider = self.registry.get("text")
-
-        # Lookup: se o campo referencia outra entidade, usa valores pre-gerados
-        if field.lookup and field.lookup in lookup_values:
-            lookup_list = lookup_values[field.lookup]
-            if index < len(lookup_list):
-                return lookup_list[index]
-            return random.Random(seed + index).choice(lookup_list)
 
         kwargs: dict = {}
         if field.choices:

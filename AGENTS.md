@@ -313,6 +313,24 @@ replay2/
   tam↔tamanho): códigos sintéticos de modelo/comb/codigo não existem no
   cadastro de produtos (seek no cad2d1 do est361.prg) e o ERP rejeita o
   item ("Codigo nao cadastrado"), impedindo a persistência do pedido.
+  Âncora por evidência no próprio input (v0.8.81 — não depende de metadados
+  da KB, cobre entidade espúria/incompleta como a "arq" da captura 73):
+  (a) `lookup_table` do input (KB ou VALID do fonte via `_lookup_of`) sem
+  cobertura de valores reais ancora o campo — o cfop 5102→9445 da run 52
+  caiu em "Codigo nao cadastrado" porque o VALID (uni500) era conhecido mas
+  a KB não tinha o campo; (b) valor original com cara de código de registro
+  (8-14 dígitos puros: EAN, CPF, CNPJ, código de barras) sem valores reais
+  observados para o campo também ancora — o EAN da NF (captura 73) foi
+  mapeado como `observacao` da fin310 (sem FK) e o código livre gerado
+  seria rejeitado pelo cadastro de produtos. A cobertura que libera a
+  variação desses códigos é por nome de campo: `_harvest_lookup_values`
+  passou a indexar também por `field:<campo>` (além de
+  `lookup_table`/`entity_name`), e o `FieldSchema.lookup` cai para
+  `field:<campo>` quando não há tabela FK
+  (`journey_synthesizer._lookup_key_for_input`); no `dataset_builder` o
+  sorteio de valor real tem prioridade sobre o formato `pattern:` — código
+  existente vence código bem-formatado. O de→para registra a nota "valor
+  real observado em capturas (1 de N)" nesses casos.
   Células numéricas de grade (`is_grid`) têm a magnitude limitada pela
   quantidade de dígitos do valor original (`journey_synthesizer.synthesize`
   — a PICTURE define a largura máxima, mas qtd=7042 ou 4755 parcelas

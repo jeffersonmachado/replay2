@@ -290,6 +290,12 @@ def _harvest_lookup_values(
                 keys = (
                     str(inp.get("lookup_table") or "").strip().lower(),
                     str(inp.get("entity_name") or "").strip().lower(),
+                    # Chave por nome de campo: permite variar códigos reais
+                    # (ex.: EAN) mesmo quando a tabela FK é desconhecida ou
+                    # o input foi mapeado para a entidade errada — a lista
+                    # ``field:<campo>`` alimenta o dataset via lookup.
+                    (f"field:{str(inp.get('field_name') or '').strip().lower()}"
+                     if str(inp.get("field_name") or "").strip() else ""),
                 )
                 for key in keys:
                     if not key:
@@ -379,6 +385,36 @@ def suggest_key_fields(
                 if _matches_indexed(field, indexed_fields):
                     seen.add(field.lower())
                     keys.append(field)
+    # Passada por evidência no próprio input (não depende de metadados da
+    # KB — cobre entidade espúria/incompleta, ex.: "arq" da captura 73):
+    # - lookup_table do input (da KB ou do VALID do fonte via ``_lookup_of``)
+    #   sem cobertura de valores reais → o valor PRECISA existir na tabela
+    #   referenciada; gerar livre cai em "Codigo nao cadastrado" (cfop 9445
+    #   da run 52);
+    # - valor com cara de código de registro (8-14 dígitos puros: EAN, CPF,
+    #   CNPJ, código de barras) sem valores reais observados para o campo →
+    #   idem (EAN 7036643879947 inventado para a NF da captura 73). Cobertura
+    #   por ``field:<campo>`` (harvest de capturas anteriores) libera a
+    #   variação com códigos que existem de verdade.
+    for screen in screen_mappings or []:
+        for inp in screen.get("inputs") or []:
+            field = str(inp.get("field_name") or "").strip()
+            if not field or field.lower() in seen:
+                continue
+            if str(inp.get("method") or "") == "command":
+                continue
+            field_key = f"field:{field.lower()}"
+            lookup_table = str(inp.get("lookup_table") or "").strip().lower()
+            if (lookup_table and lookup_table not in covered
+                    and field_key not in covered):
+                seen.add(field.lower())
+                keys.append(field)
+                continue
+            original = str(inp.get("original") or "").strip()
+            if (re.fullmatch(r"\d{8,14}", original)
+                    and field_key not in covered):
+                seen.add(field.lower())
+                keys.append(field)
     return keys
 
 
@@ -685,6 +721,9 @@ def _build_depara_screens(
                 lt = str(inp.get("lookup_table") or "").strip().lower()
                 if lt and lookup_counts and lt in lookup_counts:
                     note = f"valor real do cadastro (1 de {lookup_counts[lt]})"
+                elif lookup_counts and f"field:{field.lower()}" in lookup_counts:
+                    note = ("valor real observado em capturas "
+                            f"(1 de {lookup_counts[f'field:{field.lower()}']})")
             if not note:
                 # Constraint vinda do VALID do fonte (ex.: "valor > 0") —
                 # registrada no schema da geração (validation_rules).

@@ -176,6 +176,42 @@ def test_detect_entry_sem_evidencia_shell_retorna_none():
     assert detect_session_entry(events) is None
 
 
+def test_detect_entry_janela_iniciada_no_shell():
+    """Recorte que começa no meio da sessão, já no shell — sem o wrapper do
+    login dentro da janela (2ª OC da captura 78 → captura 81: a fase de
+    investigação no dot-prompt usava arq922.uni, arquivo volátil que já não
+    existia no replay — run 57). A entrada continua detectável: o replay
+    fresco cai no wrapper do login, atravessado pela convenção '0' (Fim),
+    e o comando shell ('k\r') vem das teclas gravadas na janela. Na captura
+    real o usuário digitou '3' de memória ANTES do draw do menu — a âncora
+    da primeira tela só aparece depois do 1º input determinístico."""
+    events = [
+        _ev(1, "session_start", logname="ferblo"),
+        _out(20, "(ferblo)MIG24:/dakota1/caduni > "),
+        _in(22, "k\r"),
+        _out(24, "k\r\n"),
+        _out(30, "\x1b[?7l\x1b[0m\x1b[H\x1b[2J\x1b[1;1H"),
+        _det(31, "3"),
+        _in(33, "3"),
+        _out(34, "\x1b[?25l\x1b[0m\x1b[H\x1b[2J\x1b[7m DAKOTA S/A   COMPRAS\x1b[0m"),
+        _ev(35, "session_end"),
+    ]
+    entry = detect_session_entry(events)
+    assert entry is not None
+    assert entry["start_seq"] == 30
+    steps = entry["preamble"]
+    # passo 1: wrapper do login — convenção do ambiente ("0 - Fim"), opcional
+    assert steps[0]["wait_text"] == "Digite a sua opcao"
+    assert steps[0]["send"] == "0\r"
+    assert steps[0]["optional"] is True
+    # passo 2: shell → comando gravado na janela
+    assert steps[1]["send"] == "k\r"
+    assert steps[1]["wait_text"] == "(ferblo)MIG24:"
+    # passo 3: âncora da primeira tela do sistema
+    assert steps[2]["wait_text"] == "DAKOTA S/A"
+    assert steps[3]["wait_stable_ms"] > 0
+
+
 def test_detect_entry_ignora_registro_de_terminal():
     """Captura 13: a sessão reconectou — há DOIS wrappers e o bloco de
     identificação TeraTerm ('NOME = ...\\nTERATERM = ...') cai entre eles.

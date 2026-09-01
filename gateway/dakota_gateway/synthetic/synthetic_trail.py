@@ -251,7 +251,10 @@ def detect_session_entry(events: list[dict], source_dir: str | Path | None = Non
     pre_text = "".join(text for seq, text in outs if seq < erp_seq)
     has_wrapper = _WRAPPER_PROMPT in pre_text
     has_shell = bool(_SHELL_PROMPT_RE.search(pre_text)) or _PROFILE_ERROR in pre_text
-    if not (has_wrapper and has_shell):
+    # O wrapper é dispensável: recortes que começam já no shell (captura 80 —
+    # 2ª OC da 78, sem a fase de browse) não o têm na janela, mas o replay
+    # fresco cai nele no login e o atravessa pela convenção '0' (Fim).
+    if not has_shell:
         return None
 
     # Teclas digitadas após o ÚLTIMO prompt do wrapper antes do ERP, até o
@@ -307,6 +310,21 @@ def detect_session_entry(events: list[dict], source_dir: str | Path | None = Non
         if anchor:
             break
     if not anchor:
+        # A pintura da primeira tela pode chegar DEPOIS do 1º input
+        # determinístico (usuário digitou de memória antes do draw — captura
+        # 81: tecla no seq 33, menu pintado no 34). Ampliar a busca por mais
+        # alguns eventos de saída, com teto para não varrer a trilha inteira.
+        scanned = 0
+        for seq, text in outs:
+            if seq <= first_det_after:
+                continue
+            scanned += 1
+            if scanned > 40:
+                break
+            anchor = _first_printable_anchor(text)
+            if anchor:
+                break
+    if not anchor:
         return None
 
     steps: list[dict] = []
@@ -314,6 +332,16 @@ def detect_session_entry(events: list[dict], source_dir: str | Path | None = Non
         steps.append({
             "wait_text": _WRAPPER_PROMPT,
             "send": wrapper_send,
+            "timeout_s": 20,
+            "optional": True,
+            "label": "menu inicial do login",
+        })
+    elif not has_wrapper:
+        # Janela shell-only: o wrapper não está na gravação, mas no replay ele
+        # aparece no login — atravessar pela convenção do ambiente ("0 - Fim").
+        steps.append({
+            "wait_text": _WRAPPER_PROMPT,
+            "send": "0\r",
             "timeout_s": 20,
             "optional": True,
             "label": "menu inicial do login",

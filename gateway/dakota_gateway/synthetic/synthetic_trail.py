@@ -299,6 +299,21 @@ def detect_session_entry(events: list[dict], source_dir: str | Path | None = Non
             # sistema no shell (run 49 da captura 73).
             head = re.match(r"\(\w+\)[\w.\-]+:", m.group(0))
             shell_wait = head.group(0) if head else m.group(0).strip()
+        # O SEND, ao contrário do wait, reproduz o cwd do prompt: comandos
+        # como 'k' (/usr/util/k) abrem o sistema do diretório corrente
+        # (`dbrt $(basename $PWD)`); sem o 'cd' o replay cai no HOME e o 'k'
+        # falha com FATAL ERROR "Cannot open file <user>.dbo" (run 59 da
+        # captura 81). cd ao HOME é redundante — o login já cai nele.
+        cwd_matches = re.findall(r"\(\w+\)[\w.\-]+:(/[^\s>]*)", last_prompt_text)
+        if cwd_matches and shell_send:
+            cwd = cwd_matches[-1].rstrip("/")
+            logname = next(
+                (str(ev.get("logname")) for ev in events
+                 if ev.get("type") == "session_start" and ev.get("logname")),
+                "",
+            )
+            if cwd and not (logname and cwd.endswith("/" + logname)):
+                shell_send = f"cd {cwd}; {shell_send}"
 
     # Âncora da primeira tela do sistema: primeiro texto visível do draw pós-init.
     first_det_after = next((s for s in det_seqs if s > erp_seq), erp_seq + 30)

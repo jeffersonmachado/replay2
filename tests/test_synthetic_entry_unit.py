@@ -182,9 +182,14 @@ def test_detect_entry_janela_iniciada_no_shell():
     investigação no dot-prompt usava arq922.uni, arquivo volátil que já não
     existia no replay — run 57). A entrada continua detectável: o replay
     fresco cai no wrapper do login, atravessado pela convenção '0' (Fim),
-    e o comando shell ('k\r') vem das teclas gravadas na janela. Na captura
-    real o usuário digitou '3' de memória ANTES do draw do menu — a âncora
-    da primeira tela só aparece depois do 1º input determinístico."""
+    e o comando shell vem das teclas gravadas na janela. Na captura real o
+    usuário digitou '3' de memória ANTES do draw do menu — a âncora da
+    primeira tela só aparece depois do 1º input determinístico.
+
+    O send reproduz também o CWD do prompt gravado: 'k' é um script que abre
+    o sistema do diretório corrente (`dbrt $(basename $PWD)`); sem o
+    'cd /dakota1/caduni' o replay cai no HOME e o 'k' falha com
+    FATAL ERROR "Cannot open file ferblo.dbo" (run 59)."""
     events = [
         _ev(1, "session_start", logname="ferblo"),
         _out(20, "(ferblo)MIG24:/dakota1/caduni > "),
@@ -204,12 +209,33 @@ def test_detect_entry_janela_iniciada_no_shell():
     assert steps[0]["wait_text"] == "Digite a sua opcao"
     assert steps[0]["send"] == "0\r"
     assert steps[0]["optional"] is True
-    # passo 2: shell → comando gravado na janela
-    assert steps[1]["send"] == "k\r"
+    # passo 2: shell → cwd gravado + comando da janela, numa linha só
+    assert steps[1]["send"] == "cd /dakota1/caduni; k\r"
+    # o WAIT continua sem cwd: o replay cai no HOME e um wait com o
+    # diretório gravado estouraria antes do send (regra da run 49)
     assert steps[1]["wait_text"] == "(ferblo)MIG24:"
     # passo 3: âncora da primeira tela do sistema
     assert steps[2]["wait_text"] == "DAKOTA S/A"
     assert steps[3]["wait_stable_ms"] > 0
+
+
+def test_detect_entry_shell_send_sem_cd_quando_prompt_e_o_home():
+    """Prompt no HOME do usuário (basename == logname, ex.:
+    /dakota1/u/ferblo) não ganha 'cd' — o login do replay já cai nele e o
+    prefixo seria ruído."""
+    events = [
+        _ev(1, "session_start", logname="ferblo"),
+        _out(20, "(ferblo)MIG24:/dakota1/u/ferblo > "),
+        _in(22, "k\r"),
+        _out(24, "k\r\n"),
+        _out(30, "\x1b[?7l\x1b[0m\x1b[H\x1b[2J\x1b[1;1H"),
+        _out(34, "\x1b[?25l\x1b[0m\x1b[H\x1b[2J\x1b[7m DAKOTA S/A   COMPRAS\x1b[0m"),
+        _det(36, "3"),
+        _ev(37, "session_end"),
+    ]
+    entry = detect_session_entry(events)
+    assert entry is not None
+    assert entry["preamble"][1]["send"] == "k\r"
 
 
 def test_detect_entry_ignora_registro_de_terminal():

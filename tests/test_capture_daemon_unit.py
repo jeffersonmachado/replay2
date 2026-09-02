@@ -432,3 +432,63 @@ def test_client_append_many_erro_quando_daemon_cai(tmp_path):
     fx.stop()
     with pytest.raises((AuditClientError, OSError)):
         client.append_many([_event("bytes")])
+
+
+def test_connect_eagain_transitorio_e_vencido_por_retry(daemon, monkeypatch):
+    """Regressão (aceite 0.9.1): com backlog do daemon cheio sob concorrência,
+    o connect AF_UNIX pode falhar com BlockingIOError(EAGAIN). O cliente deve
+    tratar como transitório e tentar de novo em vez de derrubar o append."""
+    import socket as socket_mod
+
+    from dakota_gateway import audit_client
+
+    fx, _db, log_dir, _uuid = daemon
+    real_socket = socket_mod.socket
+    state = {"falhas": 0}
+
+    class FlakySocket:
+        def __init__(self, *args, **kwargs):
+            self._real = real_socket(*args, **kwargs)
+
+        def connect(self, addr):
+            if state["falhas"] < 3:
+                state["falhas"] += 1
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return self._real.connect(addr)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(audit_client.socket, "socket", FlakySocket)
+    client = audit_client.AuditClient(fx.socket_path, log_dir)
+    try:
+        assert state["falhas"] == 3, "o connect deveria ter sofrido os EAGAINs simulados"
+        signed = client.append_many([_event("bytes")])
+        assert signed[0].seq_global >= 1
+    finally:
+        client.close()
+    verify_log(log_dir, HMAC_KEY)
+
+
+def test_connect_eagain_persistentes_estoura_erro_claro(daemon, monkeypatch):
+    """EAGAIN além do orçamento de retry continua erro — sem loop infinito."""
+    import socket as socket_mod
+
+    from dakota_gateway import audit_client
+
+    fx, _db, log_dir, _uuid = daemon
+    real_socket = socket_mod.socket
+
+    class AlwaysEagain:
+        def __init__(self, *args, **kwargs):
+            self._real = real_socket(*args, **kwargs)
+
+        def connect(self, addr):
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(audit_client.socket, "socket", AlwaysEagain)
+    with pytest.raises(OSError):
+        audit_client.AuditClient(fx.socket_path, log_dir, timeout=1.0)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -45,13 +46,26 @@ class AuditClient:
 
     def _connect(self) -> None:
         self._close_quiet()
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.settimeout(self.timeout)
-            sock.connect(self.socket_path)
-        except OSError:
-            sock.close()
-            raise
+        # Sob concorrência o backlog do daemon pode encher e o connect AF_UNIX
+        # falha com EAGAIN (BlockingIOError) — transitório: retry com backoff
+        # dentro do orçamento do timeout em vez de derrubar o append.
+        deadline = time.monotonic() + self.timeout
+        tentativa = 0
+        while True:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.settimeout(self.timeout)
+                sock.connect(self.socket_path)
+                break
+            except BlockingIOError:
+                sock.close()
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(min(0.05 * (2 ** tentativa), 0.4))
+                tentativa += 1
+            except OSError:
+                sock.close()
+                raise
         self._sock = sock
         self._wfile = sock.makefile("wb")
         self._rfile = sock.makefile("rb")

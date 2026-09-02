@@ -257,7 +257,8 @@ CREATE TABLE IF NOT EXISTS capture_sessions (
   target_env_id INTEGER REFERENCES target_environments(id),
   notes TEXT,
   session_count INTEGER NOT NULL DEFAULT 0,
-  event_count INTEGER NOT NULL DEFAULT 0
+  event_count INTEGER NOT NULL DEFAULT 0,
+  synthetic_prefs TEXT
 );
 
 CREATE INDEX IF NOT EXISTS capture_sessions_status
@@ -547,6 +548,18 @@ CREATE TABLE IF NOT EXISTS screen_entity_bindings (
 
 CREATE INDEX IF NOT EXISTS screen_entity_bindings_entity ON screen_entity_bindings(entity_name);
 CREATE INDEX IF NOT EXISTS screen_entity_bindings_confidence ON screen_entity_bindings(confidence);
+
+-- Metadados da knowledge base do fonte (analyze-source): de qual diretório
+-- a KB foi gerada e o fingerprint dos fontes (nº de .prg + mtime máximo),
+-- para avisar na síntese quando a KB está desatualizada ou é de outro dir.
+
+CREATE TABLE IF NOT EXISTS source_kb_meta (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  source_dir TEXT,
+  analyzed_at_ms INTEGER,
+  file_count INTEGER,
+  max_mtime_ms INTEGER
+);
 
 -- Métricas de recursos do host (painel /observability/resources).
 -- Coletadas pelo HostMetricsSampler (dakota_gateway/host_metrics.py);

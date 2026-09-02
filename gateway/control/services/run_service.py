@@ -111,6 +111,27 @@ def get_run_detail_payload(con, run_id: int) -> dict | None:
     payload["failure_summary"] = failure_summary
     payload["family"] = build_run_family(con, int(run_id))
     payload["reprocess_trace"] = build_reprocess_trace(con, int(run_id))
+    # Run sintética (params.synthetic): feedback loop — sugere campo para o
+    # skip_fields do próximo replay a partir da falha de validação desta run,
+    # e expõe a seleção "Manter originais" já armazenada na captura (merge
+    # aditivo do botão da UI).
+    try:
+        params = json.loads(row["params_json"] or "{}")
+    except (TypeError, ValueError):
+        params = {}
+    if isinstance(params, dict) and params.get("synthetic"):
+        from control.services.synthetic_prefs_service import (
+            feedback_for_run,
+            load_prefs,
+        )
+        payload["synthetic_feedback"] = feedback_for_run(con, int(run_id))
+        try:
+            capture_id = int(params.get("source_capture_id") or 0)
+        except (TypeError, ValueError):
+            capture_id = 0
+        payload["synthetic_stored_skip_fields"] = (
+            load_prefs(con, capture_id).get("skip_fields") or []
+        )
     return {"run": payload}
 
 

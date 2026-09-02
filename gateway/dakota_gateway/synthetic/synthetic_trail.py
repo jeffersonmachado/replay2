@@ -59,6 +59,9 @@ _TERMINAL_ID_RE = re.compile(r"^(NOME|WINDOWS|TERATERM|MACs)\s*=", re.M)
 # ERP logo no início da sessão (até este seq) não é preâmbulo — é o fluxo
 # normal de quem já cai dentro do sistema.
 _MIN_ERP_SEQ = 15
+# Sentinela do ``entry`` de ``build_synthetic_trail``: sem entry pré-computado
+# (cache das prefs da captura), a detecção de entrada roda na hora.
+_ENTRY_DETECT = object()
 # Código de menu Recital no cabeçalho das telas (ex.: "3.6.1") — os dígitos
 # apontam o fonte ``<modulo><digitos>.prg`` (ex.: est361.prg).
 _MENU_CODE_RE = re.compile(r"\b\d{1,2}(?:\.\d{1,2}){1,2}\b")
@@ -449,15 +452,25 @@ def _is_data_key(key: str) -> bool:
 
 def _apply_substitutions(
     events: list[dict],
-    substitutions: list[tuple[str, str]],
-) -> tuple[list[str], list[str]]:
-    """Aplica substituições em ordem; retorna (avisos, log de aplicações)."""
+    substitutions: list[tuple],
+) -> tuple[list[str], list[str], list[dict]]:
+    """Aplica substituições em ordem; retorna (avisos, log, registros).
+
+    ``substitutions``: pares ``(original, valor)`` ou triplas
+    ``(original, valor, campo)``. ``registros`` (``applied_detail``) é a
+    versão estruturada do log: ``{field, original, synthetic, seq_start,
+    seq_end}`` com os seqs JÁ nas coordenadas da trilha gerada (renumerada) —
+    é o que permite ao feedback loop mapear falha (seq) → campo.
+    """
     warnings: list[str] = []
     applied: list[str] = []
+    records: list[dict] = []
     det_idx = [i for i, ev in enumerate(events) if ev.get("type") == "deterministic_input"]
     cursor = -1  # posição (em `events`) da última substituição aplicada
 
-    for original, value in substitutions:
+    for sub in substitutions:
+        original, value = sub[0], sub[1]
+        field = str(sub[2]) if len(sub) > 2 else ""
         if not original:
             continue
         # Campo digitado tecla a tecla: sequência de eventos de 1 caractere
@@ -497,6 +510,13 @@ def _apply_substitutions(
                 label = ("dígitos" if original.isdigit() and value.isdigit()
                          and len(value) == len(original) else "teclas")
                 applied.append(f"{original}->{value} ({label}, seq {events[found[0]].get('seq_global')}..{events[found[-1]].get('seq_global')})")
+                records.append({
+                    "field": field,
+                    "original": original,
+                    "synthetic": value,
+                    "seq_start": events[found[0]].get("seq_global"),
+                    "seq_end": events[found[-1]].get("seq_global"),
+                })
                 continue
         # Substituição simples: primeiro evento igual ao original após o cursor.
         pos = next(
@@ -510,30 +530,43 @@ def _apply_substitutions(
         events[pos]["key_text"] = value
         cursor = pos
         applied.append(f"{original}->{value} (seq {events[pos].get('seq_global')})")
+        records.append({
+            "field": field,
+            "original": original,
+            "synthetic": value,
+            "seq_start": events[pos].get("seq_global"),
+            "seq_end": events[pos].get("seq_global"),
+        })
 
-    return warnings, applied
+    return warnings, applied, records
 
 
 def build_synthetic_trail(
     capture_jsonl: str | Path,
-    substitutions: list[tuple[str, str]],
+    substitutions: list[tuple],
     out_dir: str | Path,
     *,
     hmac_key: bytes,
     drop_banner: bool = True,
     start_seq: int | str | None = None,
     source_dir: str | Path | None = None,
+    entry: dict | None | object = _ENTRY_DETECT,
 ) -> dict:
     """Gera trilha auditável derivada da captura com dados sintéticos.
 
-    ``substitutions``: pares ``(valor_original, valor_sintético)`` na ordem
-    em que os inputs aparecem na captura. ``start_seq``: corte do preâmbulo
-    de login/shell — um ``int`` (seq_global do primeiro evento mantido) ou
-    ``"auto`` para detectar (``detect_session_entry``). ``source_dir`` (raiz
-    dos fontes Recital) habilita o ``fallback`` de entrada pelo módulo na
-    detecção automática. Retorna dict com
+    ``substitutions``: pares ``(valor_original, valor_sintético)`` ou triplas
+    ``(original, sintético, campo)`` na ordem em que os inputs aparecem na
+    captura. ``start_seq``: corte do preâmbulo de login/shell — um ``int``
+    (seq_global do primeiro evento mantido) ou ``"auto"`` para detectar
+    (``detect_session_entry``). Com ``start_seq="auto"``, um ``entry``
+    pré-computado (cache das prefs da captura, inclusive ``None`` = "sem
+    preâmbulo") dispensa a detecção; o default ``_ENTRY_DETECT`` mantém o
+    comportamento de detectar na hora. ``source_dir`` (raiz dos fontes
+    Recital) habilita o ``fallback`` de entrada pelo módulo na detecção
+    automática. Retorna dict com
     ``out``, ``events``, ``dropped_banner``, ``dropped_entry``, ``entry``
-    (detecção de entrada, quando ``auto``), ``applied`` e ``warnings``.
+    (detecção de entrada, quando ``auto``), ``applied``, ``applied_detail``
+    (registros estruturados com campo e seqs da trilha gerada) e ``warnings``.
     """
     capture_path = Path(capture_jsonl)
     events = [
@@ -542,10 +575,13 @@ def build_synthetic_trail(
         if line.strip()
     ]
 
-    entry = None
+    entry_result = None
     if start_seq == "auto":
-        entry = detect_session_entry(events, source_dir=source_dir)
-        start_seq = int(entry["start_seq"]) if entry else None
+        if entry is _ENTRY_DETECT:
+            entry_result = detect_session_entry(events, source_dir=source_dir)
+        else:
+            entry_result = entry if isinstance(entry, dict) else None
+        start_seq = int(entry_result["start_seq"]) if entry_result else None
     elif start_seq is not None:
         start_seq = int(start_seq)
 
@@ -560,7 +596,13 @@ def build_synthetic_trail(
     if isinstance(start_seq, int) and start_seq > 1:
         events, dropped_entry = _trim_before_seq(events, start_seq)
 
-    warnings, applied = _apply_substitutions(events, list(substitutions))
+    # Renumera ANTES das substituições: assim o log `applied`/`applied_detail`
+    # registra os seqs nas coordenadas da trilha gerada — os mesmos que as
+    # falhas das runs apontam (feedback loop mapeia falha → campo).
+    for new_seq, ev in enumerate(events, 1):
+        ev["seq_global"] = new_seq
+
+    warnings, applied, records = _apply_substitutions(events, list(substitutions))
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -586,7 +628,8 @@ def build_synthetic_trail(
         "events": len(events),
         "dropped_banner": dropped,
         "dropped_entry": dropped_entry,
-        "entry": entry,
+        "entry": entry_result,
         "applied": applied,
+        "applied_detail": records,
         "warnings": warnings,
     }

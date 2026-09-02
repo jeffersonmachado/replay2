@@ -178,6 +178,21 @@ class SyntheticFieldsPayloadTests(unittest.TestCase):
         self.assertEqual(fields["cpf"]["original"], "00109829069")
         self.assertEqual(sorted(payload["fields"]), ["cpf", "frete", "situacao"])
 
+    def test_payload_inclui_skip_fields_armazenado_e_bloco_kb(self):
+        """stored_skip_fields (servidor) + situação da KB alimentam a UI."""
+        from control.services.synthetic_prefs_service import save_prefs
+        save_prefs(self.con, self.capture_id, {"skip_fields": ["frete"]})
+        self._write_report()
+        with mock.patch(
+            "dakota_gateway.synthetic.engine.SyntheticEngine.load_entities",
+            return_value=_FAKE_ENTITIES,
+        ):
+            payload = synthetic_fields_payload(self.con, self.capture_id, source_dir="")
+        self.assertEqual(payload["stored_skip_fields"], ["frete"])
+        self.assertIn("kb", payload)
+        self.assertFalse(payload["kb"]["stale"])  # sem meta gravada, não avisa
+        self.assertIsNone(payload["kb"]["analyzed_at_ms"])
+
     def test_computed_path_parametriza_quando_nao_ha_report(self):
         self.log_dir.joinpath("audit-000001.jsonl").write_text(
             json.dumps({"type": "session_start", "logname": "ferblo"}) + "\n",

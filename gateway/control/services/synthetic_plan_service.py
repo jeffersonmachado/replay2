@@ -374,6 +374,10 @@ def analyze_source_payload(con, source_dir: str) -> dict:
     # consumidor (synthesize, relatórios) re-parseava o fonte inteiro.
     bindings = parser.screen_entity_bindings() if parser else []
     engine.save_bindings(bindings)
+    # Stamp da KB: diretório analisado + fingerprint dos fontes — a síntese
+    # avisa quando a KB está desatualizada ou veio de outro diretório.
+    from control.services.synthetic_prefs_service import save_kb_meta
+    save_kb_meta(con, source_dir)
     return {
         "screens": len(result.screens), "entities": len(entities),
         "bindings": len(bindings),

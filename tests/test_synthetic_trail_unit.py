@@ -242,3 +242,90 @@ def test_det_key_decodifica_b64():
     assert det_key(ev) == "x"
     assert det_key({"key_text": "y"}) == "y"
     assert det_key({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Entry pré-computado (cache das prefs) e applied estruturado (feedback loop)
+# ---------------------------------------------------------------------------
+
+
+def test_entry_pre_computado_pula_a_deteccao(tmp_path, monkeypatch):
+    """start_seq='auto' com entry cacheado: detect_session_entry NÃO roda."""
+    import dakota_gateway.synthetic.synthetic_trail as trail_mod
+
+    def _explode(events, source_dir=None):  # pragma: no cover - não deve rodar
+        raise AssertionError("detect_session_entry não deveria ser chamado")
+
+    monkeypatch.setattr(trail_mod, "detect_session_entry", _explode)
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_events())
+    cached = {"start_seq": 4, "preamble": [{"send": "0\r"}], "dropped": 1,
+              "summary": "cache"}
+    result = build_synthetic_trail(
+        src, [], tmp_path / "out", hmac_key=HMAC_KEY,
+        start_seq="auto", entry=cached)
+    assert result["entry"] == cached
+    # trim aplicado: eventos de seq < 4 (exceto session_start) cortados
+    events = _read_trail(result["out"])
+    assert events[0]["type"] == "session_start"
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    assert "P" not in keys and "C" not in keys
+
+
+def test_entry_cacheado_none_nao_detecta_nem_corta(tmp_path, monkeypatch):
+    """Cache de 'sem preâmbulo' (entry=None) também dispensa a detecção."""
+    import dakota_gateway.synthetic.synthetic_trail as trail_mod
+
+    def _explode(events, source_dir=None):  # pragma: no cover - não deve rodar
+        raise AssertionError("detect_session_entry não deveria ser chamado")
+
+    monkeypatch.setattr(trail_mod, "detect_session_entry", _explode)
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_events())
+    result = build_synthetic_trail(
+        src, [], tmp_path / "out", hmac_key=HMAC_KEY,
+        start_seq="auto", entry=None)
+    assert result["entry"] is None
+    assert result["dropped_entry"] == 0
+
+
+def test_applied_detail_carrega_campo_e_seq_da_trilha(tmp_path):
+    """O registro estruturado usa os seqs RENUMERADOS da trilha gerada —
+    os mesmos que as falhas das runs apontam (feedback loop)."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_events())
+    result = build_synthetic_trail(
+        src,
+        [("00109829069", "18503257408", "cpf")],
+        tmp_path / "out",
+        hmac_key=HMAC_KEY,
+    )
+    detail = result["applied_detail"]
+    assert len(detail) == 1
+    rec = detail[0]
+    assert rec["field"] == "cpf"
+    assert rec["original"] == "00109829069"
+    assert rec["synthetic"] == "18503257408"
+    # banner (seqs 2-3) removido → dígitos viram seqs 4..14 na trilha gerada
+    events = _read_trail(result["out"])
+    sub_events = [ev for ev in events if ev["type"] == "deterministic_input"
+                  and det_key(ev) and det_key(ev) in "18503257408"
+                  and det_key(ev) != "\r"]
+    digit_seqs = [ev["seq_global"] for ev in events
+                  if ev["type"] == "deterministic_input"
+                  and rec["seq_start"] <= ev["seq_global"] <= rec["seq_end"]]
+    typed = "".join(det_key(ev) for ev in events
+                    if ev["type"] == "deterministic_input"
+                    and rec["seq_start"] <= ev["seq_global"] <= rec["seq_end"])
+    assert typed == "18503257408"
+    assert rec["seq_end"] - rec["seq_start"] == 10
+
+
+def test_applied_detail_sem_campo_quando_par_simples(tmp_path):
+    """Pares (sem campo) continuam válidos — field fica vazio."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_events())
+    result = build_synthetic_trail(
+        src, [("1", "104529,05")], tmp_path / "out", hmac_key=HMAC_KEY)
+    assert result["applied_detail"][0]["field"] == ""
+    assert result["applied_detail"][0]["synthetic"] == "104529,05"

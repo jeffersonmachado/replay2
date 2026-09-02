@@ -460,7 +460,16 @@ terminal — isso é garantido pelo teste
   abandona a request (sonda a cada 64 linhas/eventos). Inclui também
   `synthetic_replay_service.py` — fluxo Synthetic → Replay real (dívida X5):
   materializa a jornada como trilha auditável efêmera e dispara run real
-  via replay_control. O `benchmark_service.py` também faz a adoção de
+  via replay_control. Inclui também `synthetic_prefs_service.py` —
+  aprendizados da síntese persistidos por captura: `skip_fields` e cache do
+  `entry_point` (versionado pela VERSION) na coluna
+  `capture_sessions.synthetic_prefs`, metadados da KB do fonte na tabela
+  `source_kb_meta` (source_dir + fingerprint de `*.prg`, gravados pelo
+  analyze-source; a síntese só avisa, nunca bloqueia) e o feedback loop
+  (`feedback_for_capture`/`feedback_for_run`): a falha de validação mais
+  cedo de cada run sintética vira sugestão de campo para o `skip_fields` do
+  próximo replay, mapeada pelo `applied` estruturado do `de-para.json` da
+  trilha (campo + seqs). O `benchmark_service.py` também faz a adoção de
   experimentos de benchmark no boot do control plane
   (`import_experiments_from_artifacts`): experimentos cujos artefatos vieram
   no tarball (`artifacts/benchmarks/`, §33) são registrados em

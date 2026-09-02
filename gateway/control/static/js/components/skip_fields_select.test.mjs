@@ -8,6 +8,7 @@ import {
   buildSkipFieldsModel,
   summarizeSelection,
   parseStoredSelection,
+  resolveInitialSelection,
 } from './skip_fields_select.js';
 
 const SCREENS = [
@@ -92,4 +93,14 @@ test('parseStoredSelection tolera lixo e filtra vazios', () => {
   assert.deepEqual(parseStoredSelection('não-json'), []);
   assert.deepEqual(parseStoredSelection('{"a":1}'), []);
   assert.deepEqual(parseStoredSelection(''), []);
+});
+
+test('resolveInitialSelection prefere a seleção do servidor', () => {
+  // Servidor manda a lista (mesmo vazia) → ela vence o localStorage.
+  assert.deepEqual(resolveInitialSelection(['cpf'], ['frete']), ['cpf']);
+  assert.deepEqual(resolveInitialSelection([], ['frete']), []);
+  // Payload antigo/sem a chave → fallback para o localStorage.
+  assert.deepEqual(resolveInitialSelection(undefined, ['frete']), ['frete']);
+  assert.deepEqual(resolveInitialSelection(null, ['frete']), ['frete']);
+  assert.deepEqual(resolveInitialSelection(undefined, []), []);
 });

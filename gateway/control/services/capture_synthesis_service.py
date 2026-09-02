@@ -14,6 +14,14 @@ from dakota_gateway.synthetic.synthetic_trail import build_synthetic_trail
 from dakota_gateway.source_analyzer.semantic_types import identifies_record
 
 from control.services.capture_service import get_capture, resolve_replay_log_dir
+from control.services.synthetic_prefs_service import (
+    entry_point_from_prefs,
+    kb_status,
+    load_prefs,
+    resolve_skip_fields,
+    save_prefs,
+    current_version as _current_version,
+)
 
 
 def _slug(value: str, fallback: str = "capture") -> str:
@@ -56,6 +64,7 @@ def synthesize_capture(
     concurrency: int = 5,
     variation: str = "synthetic",
     lookup_values: dict[str, list] | None = None,
+    skip_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """Transforma uma captura registrada em template + dataset + sessões sintéticas.
 
@@ -67,6 +76,12 @@ def synthesize_capture(
     nas capturas anteriores deste servidor (harvest dos report.json) — campos
     de lookup cobertos por valores reais deixam de ser âncora e passam a
     variar dentro do cadastro (ex.: condição de pagamento).
+
+    ``skip_fields``: quando NÃO-None (o body da requisição contém a chave,
+    mesmo vazia), é a seleção explícita do usuário e substitui a lista
+    armazenada nas prefs da captura; quando None (chamadas CLI), usa a lista
+    armazenada sem alterá-la. O efetivo sempre inclui os campos-âncora
+    auto-detectados (chave de consulta).
     """
     capture = get_capture(con, capture_id)
     if not capture:
@@ -154,6 +169,22 @@ def synthesize_capture(
         indexed_fields=_indexed_field_names(data_dirs),
         lookup_covered={k for k, v in merged_lookup.items() if v})
 
+    # skip_fields por captura, persistidos no servidor (prefs): body com a
+    # chave (mesmo vazia) = seleção explícita → replace; body sem a chave
+    # (CLI) = usa o armazenado sem alterá-lo. O efetivo sempre inclui as
+    # âncoras auto-detectadas.
+    skip_res = resolve_skip_fields(load_prefs(con, capture_id), skip_fields, key_fields)
+    if skip_res["persist"]:
+        save_prefs(con, capture_id, {"skip_fields": skip_res["stored"]})
+    effective_keep = skip_res["effective"]
+
+    # Aviso (nunca bloqueia) quando a knowledge base do fonte está
+    # desatualizada ou foi gerada de outro diretório.
+    kb = kb_status(con, str(source_path))
+    warnings = list(result.warnings or [])
+    if kb["warning"]:
+        warnings.append(kb["warning"])
+
     # De→para (original → sintético) da 1ª sessão gerada — exibido no modal
     # do detalhe da captura após o "Gerar". Em variation=equal todas as
     # sessões usam esta linha; em synthetic ela representa a sessão 1.
@@ -161,8 +192,9 @@ def synthesize_capture(
     dataset_row = _first_session_dataset_row(result.dataset_path)
     if dataset_row:
         depara_screens = _build_depara_screens(
-            result.screen_mappings, dataset_row, key_fields,
-            lookup_counts={k: len(v) for k, v in merged_lookup.items() if v})
+            result.screen_mappings, dataset_row, effective_keep,
+            lookup_counts={k: len(v) for k, v in merged_lookup.items() if v},
+            auto_keys=key_fields)
 
     return {
         "ok": True,
@@ -192,6 +224,16 @@ def synthesize_capture(
         # Campos-âncora detectados na KB (chave de consulta) — mantidos com o
         # valor original no replay sintético, sem intervenção do usuário.
         "key_fields": key_fields,
+        # skip_fields efetivo (âncoras + seleção do usuário) e a seleção
+        # armazenada nas prefs da captura (estado inicial do multi-select).
+        "skip_fields": effective_keep,
+        "stored_skip_fields": skip_res["stored"],
+        "kb": {
+            "source_dir": kb["source_dir"],
+            "stored_source_dir": kb["stored_source_dir"],
+            "stale": kb["stale"],
+            "analyzed_at_ms": kb["analyzed_at_ms"],
+        },
         # Cobertura de lookup aplicada nesta síntese (tabela FK → nº de
         # valores reais disponíveis) — alimenta a nota do de→para e o
         # replay em 1 clique.
@@ -201,7 +243,7 @@ def synthesize_capture(
             "sessions": result.generated_sessions,
             "screens": depara_screens,
         },
-        "warnings": result.warnings,
+        "warnings": warnings,
         "evidence": result.evidence,
         "validation": validation,
         "stress": stress,
@@ -540,16 +582,22 @@ def _extract_substitutions(
     screen_mappings: list[dict],
     dataset_row: dict,
     skip_fields: set[str] | None = None,
-) -> list[tuple[str, str]]:
+    with_fields: bool = False,
+) -> list[tuple]:
     """Pares (original → sintético) na ordem da captura, a partir dos mappings.
 
     ``skip_fields``: nomes de campos a manter com o valor original da captura
     (ex.: chaves de consulta como ``cpf`` — um valor sintético novo desviaria
     o fluxo para o cadastro em vez de seguir a jornada gravada).
+
+    ``with_fields``: retorna triplas ``(original, sintético, campo)`` — o
+    ``build_synthetic_trail`` grava o campo no registro estruturado da
+    substituição (``applied_detail``), que o feedback loop usa para mapear
+    falha (seq) → campo sugerido para skip_fields.
     """
     skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
     pay_overrides = _payment_total_overrides(screen_mappings, dataset_row, skip)
-    subs: list[tuple[str, str]] = []
+    subs: list[tuple] = []
     for screen in screen_mappings or []:
         for inp in screen.get("inputs") or []:
             placeholder = str(inp.get("placeholder") or "")
@@ -571,7 +619,8 @@ def _extract_substitutions(
                 # mas avança o cursor posicional para a ocorrência certa —
                 # sem isso, uma substituição posterior de valor ambíguo
                 # (ex.: frete "1") casaria no menu ("1 - REDE LOJAS").
-                subs.append((original, original))
+                subs.append((original, original, field) if with_fields
+                            else (original, original))
                 continue
             value = _format_synthetic_value(original, raw_value)
             if field.lower() == "valor" and (
@@ -579,7 +628,8 @@ def _extract_substitutions(
             ):
                 value = pay_overrides.get(original, value)
             if value and value != original:
-                subs.append((original, value))
+                subs.append((original, value, field) if with_fields
+                            else (original, value))
     return subs
 
 
@@ -652,6 +702,7 @@ def _build_depara_screens(
     dataset_row: dict,
     skip_fields: set[str] | list[str],
     lookup_counts: dict[str, int] | None = None,
+    auto_keys: set[str] | list[str] | None = None,
 ) -> list[dict]:
     """De→para por tela: campo, valor original da captura, valor na trilha
     sintética e se foi mantido (chave de consulta ou igual ao original).
@@ -663,6 +714,12 @@ def _build_depara_screens(
     contabilizados, não só os substituídos.
     """
     skip = {str(f).strip().lower() for f in (skip_fields or set()) if str(f).strip()}
+    # Âncoras auto-detectadas (chave de consulta) — distinguem a nota
+    # "chave de consulta" da "mantido pelo usuário" quando o skip efetivo
+    # inclui a seleção manual das prefs.
+    auto = {str(f).strip().lower()
+            for f in (auto_keys if auto_keys is not None else (skip_fields or set()))
+            if str(f).strip()}
     pay_overrides = _payment_total_overrides(screen_mappings, dataset_row, skip)
     screens: list[dict] = []
     for screen in screen_mappings or []:
@@ -705,7 +762,9 @@ def _build_depara_screens(
             kept = False
             note = ""
             if field.lower() in skip:
-                kept, note, synthetic = True, "chave de consulta", original
+                note = ("chave de consulta" if field.lower() in auto
+                        else "mantido pelo usuário")
+                kept, synthetic = True, original
             else:
                 synthetic = _format_synthetic_value(original, raw_value)
                 if field.lower() == "valor" and (
@@ -972,6 +1031,12 @@ def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[s
         "screens": screens,
         "fields": all_fields,
         "key_fields": key_fields,
+        # Seleção "Manter originais" persistida no servidor (estado inicial
+        # do multi-select — o localStorage do browser vira só fallback).
+        "stored_skip_fields": load_prefs(con, capture_id).get("skip_fields") or [],
+        # Situação da knowledge base do fonte (desatualizada/outro diretório)
+        # — alimenta o aviso amber do painel DADOS SINTÉTICOS.
+        "kb": {k: v for k, v in kb_status(con, source_dir).items() if k != "warning"},
     }
 
 
@@ -1015,23 +1080,25 @@ def start_synthetic_replay(
         name=f"capture-{capture_id}-replay",
         include_validation=False,
         lookup_values=lookup_values,
+        skip_fields=skip_fields,
     )
 
     dataset_path = Path(synth["artifacts"]["dataset"])
     dataset_row = _first_session_dataset_row(dataset_path)
 
     # Campos-âncora (chave de consulta detectada na KB) são mantidos com o
-    # valor original automaticamente; o chamador pode adicionar outros via
-    # skip_fields explícito.
+    # valor original automaticamente; o efetivo já inclui a seleção do usuário
+    # (explícita do body ou armazenada nas prefs — merge feito na síntese).
     suggested_skip = [str(f) for f in (synth.get("key_fields") or [])]
-    explicit_skip = [str(f).strip() for f in (skip_fields or []) if str(f).strip()]
-    effective_skip = sorted({f.lower() for f in suggested_skip + explicit_skip})
+    stored_skip = [str(f) for f in (synth.get("stored_skip_fields") or [])]
+    effective_skip = [str(f) for f in (synth.get("skip_fields") or [])]
 
     substitutions = _extract_substitutions(
-        synth.get("screen_mappings"), dataset_row, skip_fields=set(effective_skip)
+        synth.get("screen_mappings"), dataset_row, skip_fields=set(effective_skip),
+        with_fields=True,
     )
     synth_warnings = list(synth.get("warnings") or [])
-    auto_kept = [f for f in suggested_skip if f.lower() not in {e.lower() for e in explicit_skip}]
+    auto_kept = [f for f in suggested_skip if f.lower() not in {e.lower() for e in stored_skip}]
     if auto_kept:
         synth_warnings.append(
             "campos-âncora mantidos com o valor original (chave de consulta): " + ", ".join(auto_kept)
@@ -1043,29 +1110,51 @@ def start_synthetic_replay(
             "nenhum campo mapeado para substituição — replay usará os dados originais da captura"
         )
 
+    # Cache do entry_point nas prefs da captura (versionado pela VERSION do
+    # código): a detecção do preâmbulo só re-executa quando o cache está
+    # ausente ou foi gravado por outra versão.
+    entry_cached = False
+    cached_entry = None
+    if auto_entry:
+        entry_cached, cached_entry = entry_point_from_prefs(load_prefs(con, capture_id))
+
     trail_dir = Path(synth["output_dir"]) / "trail"
+    trail_kwargs: dict[str, Any] = {
+        "hmac_key": hmac_key,
+        "start_seq": "auto" if auto_entry else None,
+        "source_dir": source_dir if auto_entry else None,
+    }
+    if entry_cached:
+        trail_kwargs["entry"] = cached_entry  # dict ou None ("sem preâmbulo")
     trail = build_synthetic_trail(
         synth["capture_jsonl"],
         substitutions,
         trail_dir,
-        hmac_key=hmac_key,
-        start_seq="auto" if auto_entry else None,
-        source_dir=source_dir if auto_entry else None,
+        **trail_kwargs,
     )
     entry = trail.get("entry") if auto_entry else None
     if entry:
         synth_warnings.append(str(entry.get("summary") or ""))
+    if auto_entry and not entry_cached:
+        save_prefs(con, capture_id, {
+            "entry_point": entry,
+            "entry_point_version": _current_version(),
+        })
 
     # Manifest do de→para (original → sintético por tela) — alimenta o modal
     # "De→para" da página de replay da sessão sintética sem reprocessar nada.
+    # ``applied`` é a lista estruturada das substituições (campo + seqs da
+    # trilha gerada) — o feedback loop a usa para mapear falha → campo.
     depara = {
         "capture_id": capture_id,
         "journey_id": synth.get("journey_id") or "",
         "generated_at_ms": now_ms(),
         "key_fields": effective_skip,
+        "applied": trail.get("applied_detail") or [],
         "screens": _build_depara_screens(
             synth.get("screen_mappings"), dataset_row, effective_skip,
-            lookup_counts=synth.get("lookup_counts") or {}
+            lookup_counts=synth.get("lookup_counts") or {},
+            auto_keys=suggested_skip,
         ),
     }
     try:
@@ -1100,7 +1189,7 @@ def start_synthetic_replay(
             # Pares (original → sintético) aplicados na trilha — permitem ao
             # replay classificar a divergência explicada pela troca como
             # synthetic_data_swap em vez de screen_divergence.
-            "synthetic_substitutions": [[o, s] for o, s in substitutions if o != s],
+            "synthetic_substitutions": [[s[0], s[1]] for s in substitutions if s[0] != s[1]],
         },
     }
     if entry:
@@ -1145,5 +1234,6 @@ def start_synthetic_replay(
         ),
         "trail_events": trail["events"],
         "trail_dir": str(trail_dir),
+        "kb": synth.get("kb"),
         "warnings": trail["warnings"] + synth_warnings,
     }

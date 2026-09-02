@@ -31,6 +31,9 @@ def init_db(con: sqlite3.Connection) -> None:
     # run determinística (v0.8.66) — fora de _ensure_default_capture_scope,
     # que retorna cedo quando o escopo padrão já existe.
     _add_column_if_missing(con, "replay_runs", "observed_dir", "TEXT")
+    # capture_sessions.synthetic_prefs: preferências da síntese por captura
+    # (skip_fields, cache do entry_point) — v0.8.86
+    _add_column_if_missing(con, "capture_sessions", "synthetic_prefs", "TEXT")
 
 
 def migrate_benchmark_tables(con: sqlite3.Connection) -> None:

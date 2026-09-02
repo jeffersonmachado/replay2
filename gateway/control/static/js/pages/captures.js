@@ -347,8 +347,22 @@ async function loadCaptureDetail(captureId) {
   window._currentCaptureId = captureId;
 }
 
-function setupSynthesisPanel(captureId, capture) {
-  const panel = document.getElementById("cap_synthesis_panel");
+// Aviso amber no painel DADOS SINTÉTICOS quando a knowledge base do fonte
+// está desatualizada ou foi gerada de outro diretório (bloco `kb` das
+// respostas de synthetic-fields / synthesize / synthetic-replay).
+function updateKbWarning(kb) {
+  const el = document.getElementById("cap_synth_kb_warning");
+  if (!el) return;
+  if (kb && kb.stale) {
+    el.classList.remove("hidden");
+    el.textContent = "Base de conhecimento desatualizada — rode a análise do fonte (Synthetic → Analisar fonte) para atualizar os mapeamentos.";
+  } else {
+    el.classList.add("hidden");
+    el.textContent = "";
+  }
+}
+
+function setupSynthesisPanel(captureId, capture) {  const panel = document.getElementById("cap_synthesis_panel");
   if (!panel) return;
   const status = String(capture?.status || "");
   // "interrupted" (gateway reiniciado, etc.) também tem trilha completa e
@@ -392,8 +406,17 @@ function setupSynthesisPanel(captureId, capture) {
         const qs = srcDir ? `?source_dir=${encodeURIComponent(srcDir)}` : "";
         const resp = await apiJson(`/api/captures/${captureId}/synthetic-fields${qs}`);
         if (!resp?.ok) throw new Error(resp?.data?.error || "falha ao consultar os campos da trilha");
+        updateKbWarning(resp.data?.kb);
         return resp.data;
       },
+    });
+    // Sincroniza a seleção armazenada no servidor para o fallback local:
+    // se o usuário não abrir o dropdown, o getSelected usa esta lista.
+    apiJson(`/api/captures/${captureId}/synthetic-prefs`).then((resp) => {
+      const list = resp?.data?.prefs?.skip_fields;
+      if (resp?.ok && Array.isArray(list)) {
+        try { localStorage.setItem("replay2.captureSynth.skipFields", JSON.stringify(list)); } catch (_) { /* storage indisponível */ }
+      }
     });
   }
 }
@@ -450,6 +473,7 @@ async function syntheticReplay(captureId) {
 
   const data = response.data || {};
   const kept = Array.isArray(data.skip_fields) ? data.skip_fields : [];
+  updateKbWarning(data.kb);
   const sessionUuid = String(window._currentCaptureSessionUuid || "").trim();
   const viewHref = data.trail_dir && sessionUuid
     ? `/captures/${captureId}/replay?capture_id=${encodeURIComponent(String(captureId))}&session_id=${encodeURIComponent(sessionUuid)}&log_dir=${encodeURIComponent(String(data.trail_dir))}`
@@ -517,6 +541,7 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
   }
   const samples = normalizeNumber(samplesInput?.value, 10, 1, 10000);
   const variation = String(variationInput?.value || "synthetic");
+  const skipFields = document.getElementById("cap_synth_skip_fields")?._skipFields?.getSelected() || [];
 
   if (!sourceDir) {
     if (feedback) {
@@ -549,6 +574,7 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
     name: `capture_${captureId}_${variation}`,
     validate: true,
     lookup_values: currentLookupValues(),
+    skip_fields: skipFields,
   }));
 
   if (btn) { btn.disabled = false; btn.textContent = "Gerar"; }
@@ -565,6 +591,7 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
   const artifacts = data.artifacts || {};
   const validation = data.validation || {};
   const keyFields = Array.isArray(data.key_fields) ? data.key_fields : [];
+  updateKbWarning(data.kb);
   if (feedback) {
     feedback.className = "mt-3 text-sm text-emerald-300";
     feedback.textContent = `${formatCount(data.generated_sessions || 0)} sessão(ões) gerada(s).`;

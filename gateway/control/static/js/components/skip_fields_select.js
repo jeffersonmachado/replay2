@@ -76,6 +76,18 @@ export function parseStoredSelection(raw) {
   }
 }
 
+/**
+ * Seleção inicial do multi-select: a lista armazenada no SERVIDOR
+ * (`stored_skip_fields` do payload) vence — o localStorage é só fallback
+ * offline (ou de payloads antigos, sem a chave).
+ */
+export function resolveInitialSelection(serverStored, localStored) {
+  if (Array.isArray(serverStored)) {
+    return serverStored.map((f) => String(f).trim()).filter(Boolean);
+  }
+  return localStored || [];
+}
+
 /** Renderiza os grupos de checkboxes dentro do container do painel. */
 export function renderSkipFieldsGroups(container, model, { onChange } = {}) {
   container.innerHTML = "";
@@ -184,7 +196,10 @@ export function initSkipFieldsSelect(wrapper, { load, storageKey } = {}) {
     body.innerHTML = '<div class="px-2 py-3 text-xs text-stone-400">Mapeando campos da trilha…</div>';
     try {
       const data = await load();
-      const stored = storageKey ? parseStoredSelection(localStorage.getItem(storageKey)) : [];
+      // Seleção inicial vem do servidor (stored_skip_fields); localStorage
+      // só quando o payload não a traz (fallback offline).
+      const local = storageKey ? parseStoredSelection(localStorage.getItem(storageKey)) : [];
+      const stored = resolveInitialSelection(data?.stored_skip_fields, local);
       model = buildSkipFieldsModel(data?.screens, data?.key_fields, stored);
       renderSkipFieldsGroups(body, model, { onChange: () => { persist(); refreshSummary(); } });
       loaded = true;

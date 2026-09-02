@@ -82,6 +82,52 @@ async function openRunDeparaModal() {
   );
 }
 
+// Feedback loop (run sintética): a falha de validação desta run sugere um
+// campo para o "Manter originais" do próximo replay. O botão faz merge
+// aditivo sobre a seleção armazenada na captura e grava via synthetic-prefs.
+function syntheticFeedbackCard(run) {
+  const suggestions = Array.isArray(run?.synthetic_feedback) ? run.synthetic_feedback : [];
+  if (!suggestions.length) return "";
+  const rows = suggestions.map((s) => `
+    <div class="flex flex-wrap items-center gap-2 rounded-xl border border-stone-800/60 px-3 py-2">
+      <span class="font-mono text-xs text-amber-200">${escapeHtml(String(s.field || ""))}</span>
+      <span class="text-xs text-stone-400">rejeitado na validação (falha no seq ${escapeHtml(String(s.failure_seq ?? "—"))} da run #${escapeHtml(String(s.run_id ?? "—"))})</span>
+      <button type="button" class="r2ctl-btn-soft text-xs" data-keep-field="${escapeHtml(String(s.field || ""))}">Manter campo no próximo replay</button>
+    </div>`).join("");
+  return `
+    <div class="rounded-2xl border border-amber-900/50 bg-amber-950/20 p-4">
+      <div class="text-xs uppercase tracking-[0.14em] text-amber-300">Sugestão para o próximo replay</div>
+      <p class="mt-1 text-xs text-stone-400">O ERP rejeitou o valor sintético destes campos nesta run. Mantê-los com o valor original da captura evita a rejeição na próxima execução.</p>
+      <div class="mt-3 space-y-2">${rows}</div>
+    </div>`;
+}
+
+async function keepFieldForNextReplay(run, field, button) {
+  const origin = runSyntheticOrigin(run);
+  if (!origin || !origin.captureId || !field) return;
+  const stored = Array.isArray(run.synthetic_stored_skip_fields) ? run.synthetic_stored_skip_fields : [];
+  const merged = [...stored];
+  if (!merged.map((f) => String(f).toLowerCase()).includes(String(field).toLowerCase())) {
+    merged.push(field);
+  }
+  if (button) { button.disabled = true; button.textContent = "gravando…"; }
+  const result = await apiJson(
+    `/api/captures/${origin.captureId}/synthetic-prefs`,
+    jsonRequest("POST", { skip_fields: merged }),
+  );
+  if (result?.ok) {
+    run.synthetic_stored_skip_fields = merged;
+    if (button) {
+      button.textContent = "✓ será mantido no próximo replay";
+      button.classList.add("text-emerald-300");
+    }
+    return;
+  }
+  const detail = result?.data?.error || (result ? `HTTP ${result.status}` : "sem resposta do servidor");
+  alert(`Não foi possível gravar a preferência: ${detail}`);
+  if (button) { button.disabled = false; button.textContent = "Manter campo no próximo replay"; }
+}
+
 async function reprocessFromFailure(runId, failureId, scope, button) {
   const originalLabel = button ? button.textContent : "";
   if (button) {
@@ -124,6 +170,7 @@ function renderDetail(run, report, comparison, failures) {
         ${comparisonSummaryCard(summary)}
       </div>
       ${deparaCard}
+      ${syntheticFeedbackCard(run)}
       <div class="grid gap-4 lg:grid-cols-2">
         <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
           <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Falhas por tipo</div>
@@ -146,6 +193,9 @@ function renderDetail(run, report, comparison, failures) {
 
   document.querySelectorAll("[data-reprocess]").forEach((button) => {
     button.addEventListener("click", () => reprocessFromFailure(run.id, button.dataset.reprocess, button.dataset.scope, button));
+  });
+  document.querySelectorAll("[data-keep-field]").forEach((button) => {
+    button.addEventListener("click", () => keepFieldForNextReplay(run, button.dataset.keepField, button));
   });
   document.getElementById("run_depara_btn")?.addEventListener("click", () => openRunDeparaModal());
 }

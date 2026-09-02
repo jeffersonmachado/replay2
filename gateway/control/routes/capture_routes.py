@@ -10,6 +10,9 @@ GET  /api/captures/{id}/sessions — lista sessões dentro de uma captura
 GET  /api/captures/{id}/runs — runs sintéticas geradas desta captura
 GET  /api/captures/{id}/synthetic-substitutions — de→para da trilha sintética
 GET  /api/captures/{id}/synthetic-fields — campos da trilha p/ "Manter originais"
+GET  /api/captures/{id}/synthetic-feedback — sugestões de skip_fields (feedback loop)
+GET  /api/captures/{id}/synthetic-prefs — preferências da síntese da captura
+POST /api/captures/{id}/synthetic-prefs — substitui o skip_fields armazenado
 """
 from __future__ import annotations
 
@@ -319,6 +322,54 @@ def handle_capture_get_route(
         write_json(handler, 200, payload)
         return True
 
+    # GET /api/captures/{id}/synthetic-feedback — sugestões de skip_fields
+    # a partir das falhas de validação das runs sintéticas anteriores
+    if path.startswith("/api/captures/") and path.endswith("/synthetic-feedback"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            return False
+        con = handler._db()
+        try:
+            from control.services.capture_service import get_capture as _gc
+            if not _gc(con, capture_id):
+                write_json(handler, 404, {"ok": False, "error": "captura não encontrada"})
+                return True
+            from control.services.synthetic_prefs_service import feedback_for_capture
+            suggestions = feedback_for_capture(con, capture_id)
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, {"ok": True, "capture_id": capture_id, "suggestions": suggestions})
+        return True
+
+    # GET /api/captures/{id}/synthetic-prefs — preferências da síntese da
+    # captura (skip_fields armazenado, cache do entry_point)
+    if path.startswith("/api/captures/") and path.endswith("/synthetic-prefs"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            return False
+        con = handler._db()
+        try:
+            from control.services.capture_service import get_capture as _gc
+            if not _gc(con, capture_id):
+                write_json(handler, 404, {"ok": False, "error": "captura não encontrada"})
+                return True
+            from control.services.synthetic_prefs_service import load_prefs
+            prefs = load_prefs(con, capture_id)
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, {"ok": True, "capture_id": capture_id, "prefs": prefs})
+        return True
+
     # GET /api/captures/{id}/runs — runs sintéticas geradas desta captura
     if path.startswith("/api/captures/") and path.endswith("/runs"):
         user = handler._require()
@@ -486,6 +537,10 @@ def handle_capture_post_route(
                 concurrency=parse_int(body.get("concurrency", 5), 5, min_value=1),
                 lookup_values=body.get("lookup_values")
                 if isinstance(body.get("lookup_values"), dict) else None,
+                # skip_fields presente no body (mesmo vazio) = seleção
+                # explícita → persiste; ausente (CLI) = usa o armazenado.
+                skip_fields=body.get("skip_fields")
+                if isinstance(body.get("skip_fields"), list) else None,
             )
         except ValueError as exc:
             message = str(exc)
@@ -498,6 +553,37 @@ def handle_capture_post_route(
         finally:
             handler._db_release(con)
         write_json(handler, 200, payload)
+        return True
+
+    # POST /api/captures/{id}/synthetic-prefs — replace da seleção
+    # "Manter originais" armazenada no servidor
+    if path.startswith("/api/captures/") and path.endswith("/synthetic-prefs"):
+        user = handler._require(roles={"admin", "operator"})
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        skip_fields = body.get("skip_fields")
+        if not isinstance(skip_fields, list):
+            write_json(handler, 400, {"ok": False, "error": "skip_fields deve ser uma lista de campos"})
+            return True
+        con = handler._db()
+        try:
+            if not _get_capture(con, capture_id):
+                write_json(handler, 404, {"ok": False, "error": "captura não encontrada"})
+                return True
+            from control.services.synthetic_prefs_service import save_prefs
+            prefs = save_prefs(con, capture_id, {"skip_fields": [
+                str(f).strip() for f in skip_fields if str(f).strip()
+            ]})
+        finally:
+            handler._db_release(con)
+        write_json(handler, 200, {"ok": True, "capture_id": capture_id, "prefs": prefs})
         return True
 
     # POST /api/captures/{id}/synthetic-replay — replay sintético em 1 clique
@@ -535,7 +621,7 @@ def handle_capture_post_route(
                 target_host=str(body.get("target_host") or "").strip(),
                 target_user=str(body.get("target_user") or "").strip(),
                 term=str(body.get("term") or "").strip(),
-                skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else [],
+                skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else None,
                 auto_entry=auto_entry,
                 lookup_values=body.get("lookup_values")
                 if isinstance(body.get("lookup_values"), dict) else None,

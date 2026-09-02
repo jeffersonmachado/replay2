@@ -164,7 +164,10 @@ replay2/
   índice de offsets por sessão para replay sem materializar o capture, e
   `scan_capture_metadata`, passagem única de metadados da run), `deterministic.py`
   (comparação
-  determinística), `executors.py` (executores strict-global/parallel-sessions/
+  determinística — nos modos `send-anyway`/`skip` uma tela já estável que
+  divergiu não espera o timeout cheio do checkpoint: sai após uma carência de
+  max(quiet, 500ms) sem saída nova, `early_exit_on_stable_mismatch` em
+  `replay_compare.wait_for_signature_match`; saída tardia reseta a carência), `executors.py` (executores strict-global/parallel-sessions/
   concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + classe
   `Runner`) e `__init__.py` (fachada que reexporta toda a superfície do
   módulo antigo). Desde a Fase 8, os modos parallel-sessions rodam EM

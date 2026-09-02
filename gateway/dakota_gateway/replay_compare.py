@@ -449,6 +449,8 @@ def wait_for_signature_match(
     should_pause_or_cancel=None,
     drain_event=None,
     return_first_result: bool = False,
+    early_exit_on_stable_mismatch: bool = False,
+    mismatch_grace_ms: int | None = None,
 ) -> tuple[bool, dict, dict]:
     """Máquina de espera de checkpoint compartilhada.
 
@@ -458,9 +460,22 @@ def wait_for_signature_match(
     (semântica do replay não-controlado). should_pause_or_cancel (opcional) é
     chamado a cada iteração. drain_event(key) (opcional) consome eventos
     legíveis do seletor; o default é session.read_out().
+
+    early_exit_on_stable_mismatch=True (replay send-anyway/skip): uma tela
+    estável que divergiu não vai virar a esperada — após uma carência
+    (mismatch_grace_ms, default max(quiet, 500ms)) sem saída nova, retorna a
+    divergência em vez de esperar o timeout cheio. Saída que chega durante a
+    carência reseta a janela (eco tardio continua sendo aguardado).
     Retorna (matched, match, observed).
     """
     deadline = int(time.time() * 1000) + checkpoint_timeout_ms
+    grace_ms = (
+        int(mismatch_grace_ms)
+        if mismatch_grace_ms is not None
+        else max(int(checkpoint_quiet_ms), 500)
+    )
+    mismatch_since_ms: int | None = None
+    mismatch_out_ms: int | None = None
     last_observed: dict = {}
     last_match = compare({})
     while int(time.time() * 1000) < deadline:
@@ -481,6 +496,15 @@ def wait_for_signature_match(
             last_match = compare(observed)
             if last_match.get("matched") or return_first_result:
                 return bool(last_match.get("matched")), last_match, observed
+            if early_exit_on_stable_mismatch:
+                now_ms = int(time.time() * 1000)
+                if mismatch_since_ms is None or session.last_out_ms != mismatch_out_ms:
+                    # Primeira divergência estável (ou saída nova desde a
+                    # anterior): começa a carência a partir daqui.
+                    mismatch_since_ms = now_ms
+                    mismatch_out_ms = session.last_out_ms
+                elif now_ms - mismatch_since_ms >= grace_ms:
+                    return False, last_match, observed
         time.sleep(0.02)
     observed = last_observed or observed_snapshot_from_session(session)
     return False, compare(observed), observed

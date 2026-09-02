@@ -421,6 +421,10 @@ def _wait_for_expected_observed(
         checkpoint_quiet_ms=checkpoint_quiet_ms,
         checkpoint_timeout_ms=checkpoint_timeout_ms,
         should_pause_or_cancel=should_pause_or_cancel,
+        # send-anyway/skip seguem após a divergência — uma tela estável que
+        # não casou nunca vai casar (dado sintético/eco), então não há por
+        # que esperar o timeout cheio do checkpoint.
+        early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
     )
 
 

@@ -45,6 +45,15 @@ Marcos posteriores relevantes:
   segue pendente (ver `docs/servidor-dakota-mig24.md`);
 - **Refinamento da taxonomia de falhas** — `timeout`, `screen_divergence`,
   `navigation_error`, `concurrency_error` ainda são heurísticas por fluxo;
+- **Substituição sintética com validação cruzada entre campos** — hoje cada
+  campo é substituído isoladamente; quando o destino valida um campo contra
+  outros (ex.: captura 81/OC: a quantidade do item deve ser igual à soma da
+  grade de numerações — trocar a qtd `12→11` sem cascatear a grade fez o
+  Recital rejeitar com "Quantidade digitada (12), difere do item" e a OC não
+  foi gravada, run 60). Caminho: extrair as regras de validação do fonte
+  (o `cmp311.prg`/`cmp312.prg` declaram a soma da grade) e cascatear a
+  substituição, ou manter o campo original quando a constraint não é
+  conhecida;
 - **Catálogo formal de cenários de carga** — hoje não existe;
 - **`replay_control.py` monolítico** — extração de `run_queue`/`run_executor`/
   `run_status` mapeada no `DEBT_MAP.md` (item G2);

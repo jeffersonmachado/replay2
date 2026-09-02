@@ -405,6 +405,27 @@ def test_two_builds_same_tree_same_sha256(tmp_path):
     assert h1 == h2, f"builds da mesma árvore divergem: {h1} != {h2}"
 
 
+def test_performance_corrections_evidence_packaged(tmp_path):
+    """Regressão 0.9.0: PERFORMANCE_CORRECTIONS_REPORT.md e
+    artifacts/performance-corrections/ entram no hash do aceite — precisam
+    estar no pacote, senão o verify-tarball aborta o build (observado no
+    pipeline real: 'árvore extraída diverge do aceite')."""
+    root = _make_fake_root(tmp_path / "tree")
+    (root / "PERFORMANCE_CORRECTIONS_REPORT.md").write_text(
+        "# relatório\n", encoding="utf-8")
+    pc = root / "artifacts" / "performance-corrections"
+    pc.mkdir(parents=True)
+    (pc / "baseline.json").write_text("{}\n", encoding="utf-8")
+    _make_release_artifacts(root)
+
+    r = _run_build(root)
+    assert r.returncode == 0, f"build falhou: {r.stderr[-600:]}"
+    names = _tarball_names(_only_tarball(root))
+    assert any(n.endswith("PERFORMANCE_CORRECTIONS_REPORT.md") for n in names)
+    assert any("artifacts/performance-corrections/baseline.json" in n
+               for n in names)
+
+
 def test_secrets_and_state_never_packaged(tmp_path):
     """segredo.key, foo.db, gateway/state/x, .env e id_rsa plantados NUNCA
     entram no tarball."""

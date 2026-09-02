@@ -113,6 +113,9 @@ if [ -f "$ROOT_DIR/conftest.py" ]; then cp -f "$ROOT_DIR/conftest.py" "$STAGE_DI
 # registrados (collection quebra sem PYTHONPATH externo — incidente 0.8.7)
 if [ -f "$ROOT_DIR/pytest.ini" ]; then cp -f "$ROOT_DIR/pytest.ini" "$STAGE_DIR/"; fi
 if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/"; fi
+# Evidência da missão de correções de performance da release (quando presente) — entra no hash
+# da árvore do aceite, então precisa estar no pacote (verify-tarball exige pacote == árvore do aceite)
+if [ -f "$ROOT_DIR/PERFORMANCE_CORRECTIONS_REPORT.md" ]; then cp -f "$ROOT_DIR/PERFORMANCE_CORRECTIONS_REPORT.md" "$STAGE_DIR/"; fi
 # package.json + package-lock.json: puppeteer pinned (§29) — a árvore
 # extraída resolve a dependência visual sem instalação global silenciosa
 if [ -f "$ROOT_DIR/package.json" ]; then cp -f "$ROOT_DIR/package.json" "$STAGE_DIR/"; fi
@@ -158,6 +161,10 @@ Não execute build-tarball.sh manualmente sem antes rodar o release completo."
     cp -R "$ROOT_DIR/artifacts/acceptance-logs" "$STAGE_DIR/artifacts/"
   else
     die "Missing artifacts/acceptance-logs/"
+  fi
+  # Evidência baseline/final da missão de correções de performance (quando presente)
+  if [ -d "$ROOT_DIR/artifacts/performance-corrections" ]; then
+    cp -R "$ROOT_DIR/artifacts/performance-corrections" "$STAGE_DIR/artifacts/"
   fi
   # Evidência do benchmark real AIX×Linux (§33): SOMENTE o experimento oficial
   # selecionado (FASE 11) — históricos (cap13-*-v1..vN antigos) NUNCA entram

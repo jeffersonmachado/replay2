@@ -331,6 +331,7 @@
 6b3267d9018b1784d1616d6eba712f35c7fa3d1e7e3f59ae0a69ecc208222906  artifacts/benchmarks/cap13-aix-linux-oficial-v2/runs/linux-x86-iter1-conc10/logs/session-vu-8.log
 6b8f421001b49d704d5d625189912898077be2ec0d542cfbfccca521aab27d70  artifacts/benchmarks/cap13-aix-linux-oficial-v1/runs/aix-power-iter1-conc5/logs/session-vu-4.log
 6ca7c4ce20310be7bfdcf182119c9b46c7ae62736105bb606cabc97852ccdfb4  artifacts/benchmarks/cap13-aix-linux-oficial-v4/runs/aix-power-iter1-conc20/logs/session-vu-20.log
+6dcccfcef8898f61abf047875886d7f7663fcf9a3d99d94714cc3fa5ec5078df  artifacts/performance-corrections/baseline.json
 6dd8c138212f76fc5f1ed8e415981de0291cdb4f25fde9207bc4f29de40c0030  artifacts/benchmarks/cap13-aix-linux-oficial-v7/runs/linux-x86-iter2-conc10/logs/session-vu-1.log
 6dd8c138212f76fc5f1ed8e415981de0291cdb4f25fde9207bc4f29de40c0030  artifacts/benchmarks/cap13-aix-linux-oficial-v7/runs/linux-x86-iter2-conc10/logs/session-vu-10.log
 6dd8c138212f76fc5f1ed8e415981de0291cdb4f25fde9207bc4f29de40c0030  artifacts/benchmarks/cap13-aix-linux-oficial-v7/runs/linux-x86-iter2-conc10/logs/session-vu-2.log

@@ -84,6 +84,33 @@ class EnvironmentRunResult:
     host_samples_path: str = ""
     database_metrics: dict = field(default_factory=dict)
     error_reason: str = ""
+    # Jornadas COMPLETAS da fase MEASUREMENT (passadas que executaram todos
+    # os passos — registradas pelo executor, que é quem conhece a jornada).
+    # ``None`` = não medido (trilhas antigas): as métricas de jornada são
+    # omitidas da comparação, nunca inferidas das amostras.
+    completed_journeys: int | None = None
+    # Duração PLANEJADA da fase MEASUREMENT (``measurement_seconds`` do
+    # contrato). ``None`` = desconhecida.
+    planned_duration_s: float | None = None
+    # Checkpoints obrigatórios da jornada na fase MEASUREMENT: quantos foram
+    # EXECUTADOS (o passo define expectativa de tela) e quantos foram
+    # EFETIVAMENTE COMPARADOS (a engine conseguiu calcular a observada).
+    # ``None`` = não registrado (artefatos antigos) — a cobertura funcional
+    # fica "não registrada", nunca inferida.
+    checkpoints_executed: int | None = None
+    checkpoints_checked: int | None = None
+    # Exceções de checkpoint (executados mas não comparados) com a razão
+    # auditável — ``None`` = não registrado.
+    checkpoint_exceptions: list | None = None
+    # Clock skew host × orquestrador medido na coleta de host metrics
+    # (``clock_offset_ms`` do script remoto). ``measured=False`` = coletor
+    # sem medição de offset — correção de skew NÃO comprovável.
+    host_clock_offset_ms: int | None = None
+    host_clock_offset_measured: bool = False
+    # Medição REAL de rede na janela da run (contadores remotos antes/depois
+    # — o sampler de host não instrumenta rede): taxas médias da janela.
+    # ``None`` = rede não medida nesta run.
+    net_window: dict | None = None
 
 
 @dataclass
@@ -100,3 +127,8 @@ class ExperimentResult:
     # iteration/concurrency/condition/value/limit. A decisão limita o
     # veredito a WARN quando presente (a validação completa não ocorreu).
     stop_reason: dict | None = None
+    # Recuperação pós-carga por ambiente (sonda REAL do executor, ligada por
+    # ``recovery_probe_seconds`` no contrato): {env: {"recovered": bool,
+    # "recovery_seconds": float|None, "baseline": {...}, ...}}.
+    # Vazio = não medido (o relatório diz "não medido" — nunca inventado).
+    recovery: dict = field(default_factory=dict)

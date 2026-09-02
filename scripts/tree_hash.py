@@ -23,10 +23,21 @@ Algorithm:
 Excludes:
   .git/, dist/, __pycache__/, .pytest_cache/, *.pyc,
   artifacts/acceptance-logs/, artifacts/visual-failure/,
+  artifacts/benchmarks/ (pinados pelo evidence-manifest.sha256 — o pacote pode
+    carregar só um subconjunto, ver build-tarball.sh --with-benchmarks),
   artifacts/visual-test-result.json,
   artifacts/final-acceptance-report.md, artifacts/final-acceptance-results.json,
-  artifacts/manual-validation.json
+  artifacts/manual-validation.json,
+  segredos/estado local (*.key, *.pem, .env*, id_*.*, *.db, ...) e subprodutos
+  de teste (.coverage, *.tmp, *.swp) — tudo que pode mudar durante o pipeline
+  é excluído de forma DETERMINÍSTICA, garantindo hash antes == depois.
+
+Options:
+  --manifest           grava artifacts/source-tree-manifest.sha256
+  --manifest-out PATH  grava o manifest em PATH (diagnóstico de diff do
+                       pipeline, sem tocar em artifacts/)
 """
+import fnmatch
 import hashlib
 import os
 import sys
@@ -40,7 +51,16 @@ EXCLUDE_DIRS = {
     ".claude", ".codex", ".github", ".vscode", ".local-secrets",
     "dev", "docs",
 }
-EXCLUDE_DIR_PREFIXES = ("artifacts/acceptance-logs", "artifacts/visual-failure", "tests/tmp")
+EXCLUDE_DIR_PREFIXES = (
+    "artifacts/acceptance-logs",
+    "artifacts/visual-failure",
+    # Evidência de benchmark é pinada pelo evidence-manifest.sha256 (hash do
+    # conteúdo recém-computado), não pelo hash da árvore: o pacote de runtime
+    # pode carregar só o experimento oficial selecionado (FASE 11 —
+    # build-tarball.sh --with-benchmarks) sem divergir do aceite.
+    "artifacts/benchmarks",
+    "tests/tmp",
+)
 
 EXCLUDE_FILES = {
     "artifacts/visual-test-result.json",
@@ -68,6 +88,8 @@ EXCLUDE_FILES = {
     "Makefile", "pytest.ini", "tailwind.config.cjs", "dev.sh",
     # Old artifacts not in tarball
     "artifacts/acceptance-matrix.json",
+    # Subproduto de coverage (gerado quando a suíte roda com coverage)
+    ".coverage",
     # Scripts excluded from tarball (contain credentials/hosts)
     "scripts/show-admin-credentials.sh",
     "scripts/tunnel-mig24.sh",
@@ -75,15 +97,30 @@ EXCLUDE_FILES = {
 
 EXCLUDE_FILE_EXTENSIONS = {".pyc", ".pyo", ".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3"}
 
-def _should_exclude_file(filename: str) -> bool:
+# Segredos, chaves e arquivos de estado/volatile locais: NUNCA fazem parte da
+# árvore canônica (espelha .gitignore e a lista de proibidos do
+# build-tarball.sh). Sem isso, um segredo local presente durante o aceite mas
+# removido do stage faria o hash da árvore extraída divergir do aceite.
+EXCLUDE_FILE_PATTERNS = (
+    "*.key", "*.pem", "*.crt", "*.pfx", "*.ppk",
+    "id_rsa*", "id_ed25519*", "id_ecdsa*",
+    ".env", ".env.*", ".token.env",
+    "*.tmp", "*.swp", "*.swo",
+    ".DS_Store", "Thumbs.db",
+)
+
+def should_exclude_file(filename: str) -> bool:
     if any(filename.endswith(ext) for ext in EXCLUDE_FILE_EXTENSIONS):
         return True
     if filename.endswith(".tar.gz"):
         return True
+    if any(fnmatch.fnmatch(filename, pat) for pat in EXCLUDE_FILE_PATTERNS):
+        return True
     return False
 
 
-def tree_hash(root: Path, *, manifest: bool = False) -> str:
+def tree_hash(root: Path, *, manifest: bool = False,
+              manifest_path: Path | None = None) -> str:
     entries = []
     manifest_lines = []
 
@@ -98,7 +135,7 @@ def tree_hash(root: Path, *, manifest: bool = False) -> str:
         for fn in sorted(filenames):
             fp = Path(dirpath) / fn
             # Skip excluded file extensions
-            if _should_exclude_file(fn):
+            if should_exclude_file(fn):
                 continue
             rel = str(fp.relative_to(root))
             if rel in EXCLUDE_FILES:
@@ -124,9 +161,9 @@ def tree_hash(root: Path, *, manifest: bool = False) -> str:
             manifest_lines.append(f"{content_hash}  {rel}")
 
     if manifest:
-        manifest_path = root / "artifacts/source-tree-manifest.sha256"
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text("\n".join(manifest_lines) + "\n")
+        out_path = manifest_path or (root / "artifacts/source-tree-manifest.sha256")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("\n".join(manifest_lines) + "\n")
 
     result = h.hexdigest()
     if result == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
@@ -136,8 +173,21 @@ def tree_hash(root: Path, *, manifest: bool = False) -> str:
 
 if __name__ == "__main__":
     manifest = "--manifest" in sys.argv
+    manifest_path = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--manifest-out="):
+            manifest = True
+            manifest_path = Path(arg.split("=", 1)[1])
+        elif arg == "--manifest-out":
+            idx = sys.argv.index(arg)
+            try:
+                manifest_path = Path(sys.argv[idx + 1])
+            except IndexError:
+                print("ERROR: --manifest-out requer um caminho", file=sys.stderr)
+                sys.exit(2)
+            manifest = True
     try:
-        h = tree_hash(ROOT, manifest=manifest)
+        h = tree_hash(ROOT, manifest=manifest, manifest_path=manifest_path)
         print(h)
     except SystemExit as e:
         print(e, file=sys.stderr)

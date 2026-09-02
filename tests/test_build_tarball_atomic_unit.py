@@ -65,6 +65,9 @@ def _make_fake_root(base: Path) -> Path:
     payload = os.urandom(256 * 1024)
     (base / "lib" / "payload.bin").write_bytes(payload)
     shutil.copy(SCRIPT, base / "scripts" / "build-tarball.sh")
+    # build_validate.py é chamado pelo build-tarball.sh (sanity pós-build)
+    shutil.copy(ROOT / "scripts" / "build_validate.py",
+                base / "scripts" / "build_validate.py")
     return base
 
 

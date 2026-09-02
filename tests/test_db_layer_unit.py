@@ -63,6 +63,24 @@ class DbLayerUnitTests(unittest.TestCase):
                 pool.close_all()
         self.assertIn("username", names)
 
+    def test_replay_failures_hot_path_indexes(self):
+        """Índices das consultas quentes (FASE 9): detalhe de sessão filtra
+        replay_failures por session_id; visões por run filtram
+        run_id+session_id e ordenam por seq_global."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "idx.db")
+            con = connect(db_path)
+            try:
+                init_db(con)
+                indexes = {
+                    row["name"]
+                    for row in con.execute("PRAGMA index_list(replay_failures)").fetchall()
+                }
+            finally:
+                con.close()
+        self.assertIn("replay_failures_session", indexes)
+        self.assertIn("replay_failures_run_session_seq", indexes)
+
 
 if __name__ == "__main__":
     unittest.main()

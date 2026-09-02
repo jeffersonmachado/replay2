@@ -91,6 +91,12 @@ DAKOTA_ENV=production npm run dev
 DAKOTA_RATE_LIMIT_RPM=600 npm run dev
 DAKOTA_RATE_LIMIT=0 npm run dev
 
+# Pragmas do SQLite (opt-in; defaults inalterados: journal delete + synchronous FULL)
+# WAL + NORMAL é ~14x mais rápido em escrita em lote (dev/bench_sqlite_batch.py),
+# mas synchronous=NORMAL pode perder as últimas transações comitadas em queda de
+# energia/SO (nunca corrompe o banco). synchronous=OFF é proibido.
+DAKOTA_DB_JOURNAL_MODE=wal DAKOTA_DB_SYNCHRONOUS=NORMAL npm run dev
+
 # Combinação completa para bootstrap após reset
 DAKOTA_ADMIN='admin:Dakota@2026!' \
   DAKOTA_GATEWAY_AUTO_ACTIVATE=true \

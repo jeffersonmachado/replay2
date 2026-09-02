@@ -13,6 +13,7 @@ import json
 import sqlite3
 import time
 
+from ..db.connection import batch_insert
 from ..db.migrations import migrate_benchmark_tables
 from .contract import ExperimentContract
 from .models import EnvironmentRunResult
@@ -78,8 +79,14 @@ def save_run(con: sqlite3.Connection, run_id: str, experiment_id: str,
     con.commit()
 
 
-def save_app_samples(con: sqlite3.Connection, run_id: str, samples: list) -> int:
-    """Grava amostras de aplicação (todas as fases) de uma run."""
+def save_app_samples(con: sqlite3.Connection, run_id: str, samples: list,
+                     *, chunk_size: int = 500) -> int:
+    """Grava amostras de aplicação (todas as fases) de uma run.
+
+    Escrita em lote: transação explícita + executemany em chunks curtos
+    (``chunk_size``) — a conexão roda em autocommit e o executemany solto
+    fazia um fsync por linha.
+    """
     if not samples:
         return 0
     linhas = [
@@ -97,25 +104,26 @@ def save_app_samples(con: sqlite3.Connection, run_id: str, samples: list) -> int
          getattr(s, "error_code", None))
         for s in samples
     ]
-    con.executemany(
+    return batch_insert(
+        con,
         "INSERT INTO benchmark_app_samples"
         "(run_id, virtual_user_id, journey_id, step_id, phase, started_ns,"
         " finished_ns, latency_ms, success, timeout, functional_divergence,"
         " error_code) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         linhas,
+        chunk_size=chunk_size,
     )
-    con.commit()
-    return len(linhas)
 
 
 def save_host_samples(con: sqlite3.Connection, *, experiment_id: str,
                       environment_id: str, run_id: str, iteration: int,
                       concurrency: int, phase: str,
-                      samples: list[dict]) -> int:
+                      samples: list[dict], chunk_size: int = 500) -> int:
     """Grava amostras de host associadas a experimento/ambiente/run (§13).
 
     Campos ausentes na amostra ficam NULL (nunca zero fingido); campos fora
-    das colunas diretas vão para ``extra_json``.
+    das colunas diretas vão para ``extra_json``. Escrita em lote com chunks
+    curtos (``chunk_size``), como em ``save_app_samples``.
     """
     if not samples:
         return 0
@@ -135,7 +143,8 @@ def save_host_samples(con: sqlite3.Connection, *, experiment_id: str,
             *[diretas[c] for c in _HOST_COLUNAS],
             json.dumps(extras, sort_keys=True, ensure_ascii=False),
         ))
-    con.executemany(
+    return batch_insert(
+        con,
         "INSERT INTO benchmark_host_samples"
         "(experiment_id, environment_id, run_id, iteration, concurrency,"
         " phase, host_id, platform, architecture, ts_ms,"
@@ -145,9 +154,8 @@ def save_host_samples(con: sqlite3.Connection, *, experiment_id: str,
         " net_rx_kbs, net_tx_kbs, processes, run_queue, extra_json)"
         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         linhas,
+        chunk_size=chunk_size,
     )
-    con.commit()
-    return len(linhas)
 
 
 def save_comparison(con: sqlite3.Connection, experiment_id: str,

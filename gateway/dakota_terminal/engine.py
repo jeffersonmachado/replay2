@@ -5,9 +5,18 @@ import base64
 from .attributes import Attributes
 from .decoder import TerminalDecoder, normalize_encoding
 from .geometry import validate_geometry
-from .model import Cell, blank_cell
+from .model import Cell, DEFAULT_CELL
 from .parser import DEC_SPECIAL_GRAPHICS_MAP, parse_csi_params
 from .snapshot import snapshot_from_engine
+
+
+def _blank_row(cols: int) -> list:
+    """Linha nova compartilhando a célula vazia imutável (FASE 6).
+
+    A lista é sempre nova (escrita na matriz substitui itens da lista), mas as
+    posições apontam para DEFAULT_CELL — zero alocação por posição em branco.
+    """
+    return [DEFAULT_CELL] * cols
 
 
 class TerminalEngine:
@@ -35,7 +44,7 @@ class TerminalEngine:
     def reset(self, *, reset_decoder: bool = True) -> None:
         if reset_decoder:
             self.decoder.reset(seq_global=self._decode_seq_global, direction=self._decode_direction)
-        self.cells = [[blank_cell() for _ in range(self.cols)] for _ in range(self.rows)]
+        self.cells = [_blank_row(self.cols) for _ in range(self.rows)]
         self.cursor_row = 0
         self.cursor_col = 0
         self.cursor_visible = True
@@ -296,13 +305,13 @@ class TerminalEngine:
 
     def _scroll_up(self) -> None:
         self.cells.pop(self.scroll_top)
-        self.cells.insert(self.scroll_bottom, [blank_cell() for _ in range(self.cols)])
+        self.cells.insert(self.scroll_bottom, _blank_row(self.cols))
         self.cursor_row = self.scroll_bottom
 
     def _reverse_index(self) -> None:
         if self.cursor_row == self.scroll_top:
             self.cells.pop(self.scroll_bottom)
-            self.cells.insert(self.scroll_top, [blank_cell() for _ in range(self.cols)])
+            self.cells.insert(self.scroll_top, _blank_row(self.cols))
         else:
             self.cursor_row = max(0, self.cursor_row - 1)
 
@@ -314,8 +323,9 @@ class TerminalEngine:
         else:
             ranges = ((r, 0, self.cols - 1) for r in range(self.rows))
         for r, start, end in ranges:
+            row = self.cells[r]
             for c in range(start, end + 1):
-                self.cells[r][c] = blank_cell()
+                row[c] = DEFAULT_CELL
 
     def _erase_line(self, mode: int) -> None:
         if mode == 0:
@@ -324,8 +334,9 @@ class TerminalEngine:
             start, end = 0, self.cursor_col
         else:
             start, end = 0, self.cols - 1
+        row = self.cells[self.cursor_row]
         for c in range(start, end + 1):
-            self.cells[self.cursor_row][c] = blank_cell()
+            row[c] = DEFAULT_CELL
 
     def _write_char(self, ch: str) -> None:
         if self.wrap_pending and self.autowrap:
@@ -336,7 +347,14 @@ class TerminalEngine:
             self._scroll_up()
         charset = self.g1_charset if self.shift_out else self.g0_charset
         rendered = DEC_SPECIAL_GRAPHICS_MAP.get(ch, ch) if charset == "0" else ch
-        self.cells[self.cursor_row][self.cursor_col] = Cell.from_attrs(rendered, self.attrs)
+        # Constrói a Cell direto dos campos de Attributes (mesmos valores de
+        # Cell.from_attrs, sem o round-trip attrs.to_dict() por caractere).
+        a = self.attrs
+        self.cells[self.cursor_row][self.cursor_col] = Cell(
+            ch=rendered or " ",
+            fg=a.fg, bg=a.bg, bold=a.bold, dim=a.dim,
+            underline=a.underline, blink=a.blink, reverse=a.reverse, hidden=a.hidden,
+        )
         self.cursor_col += 1
         if self.cursor_col >= self.cols:
             self.cursor_col = self.cols - 1
@@ -347,7 +365,7 @@ class TerminalEngine:
         geom = validate_geometry(rows, cols)
         old = self.cells
         self.rows, self.cols = geom.rows, geom.cols
-        self.cells = [[old[r][c] if r < len(old) and c < len(old[r]) else blank_cell() for c in range(self.cols)] for r in range(self.rows)]
+        self.cells = [[old[r][c] if r < len(old) and c < len(old[r]) else DEFAULT_CELL for c in range(self.cols)] for r in range(self.rows)]
         self.scroll_top = 0
         self.scroll_bottom = self.rows - 1
         self.tab_stops = set(range(8, self.cols, 8))

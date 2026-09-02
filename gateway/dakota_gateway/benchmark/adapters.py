@@ -230,6 +230,12 @@ class SSHReplayAdapter:
         # Forense: jornadas abortadas por morte/fechamento da sessão (steps
         # restantes NÃO executados — registrados aqui, não como amostras).
         self.journey_incompletions: list[dict] = []
+        # Cobertura da verificação funcional (FASE 4): um registro por passo
+        # COM expectativa de tela (checkpoint executado) — {"phase",
+        # "journey_id", "step_id", "checked", "reason"}; a razão da
+        # não-checação é auditável ("terminal_engine_unavailable",
+        # "sem_resposta", "timeout", código de erro da sessão).
+        self.checkpoint_log: list[dict] = []
         # Forense: tail da saída de cada usuário virtual (últimos 64KB) para
         # o run logs/ — evidência do que a sessão recebeu perto da morte.
         self._tails_by_vu: dict[str, bytearray] = {}
@@ -242,9 +248,19 @@ class SSHReplayAdapter:
     # -- contexto de iteração/concorrência (chamado pelo executor, duck typing)
 
     def set_iteration_context(self, iteration: int, concurrency: int) -> None:
-        """Estampa iteração/concorrência correntes nas próximas amostras."""
+        """Estampa iteração/concorrência correntes nas próximas amostras.
+
+        Também REINICIA o acúmulo forense de tails: o executor chama este
+        método no início de CADA run (nível × iteração × ambiente) e, sem a
+        limpeza, ``session_tails()`` da run N incluía VUs encerrados em runs
+        anteriores — uma run de concorrência 1 depois de uma de 10 gravava
+        ``session-vu-2.log``…``session-vu-10.log`` de sessões alheias
+        (evidência forense contaminada). As sessões AINDA ABERTAS mantêm
+        seus tails (``_sessions`` não é tocado).
+        """
         self._iteration = int(iteration)
         self._concurrency = int(concurrency)
+        self._tails_by_vu.clear()
 
     # -- resolução de acesso (sem segredo em texto claro) --------------------
 
@@ -532,6 +548,7 @@ class SSHReplayAdapter:
             checked = False
             check_kind = ""
             checkpoint_lag_imediato = False
+            engine_indisponivel = False
 
             # Checkpoint de TEXTO (quiet point, ground truth da captura): a
             # tela esperada é o estado em que o input i foi pressionado na
@@ -555,7 +572,11 @@ class SSHReplayAdapter:
                     check_basis = "env"
             if texto_esperado:
                 engine = self._ensure_terminal(session)
-                if engine is not None:
+                if engine is None:
+                    # engine indisponível: checkpoint executado mas NÃO
+                    # checado — fica registrado no checkpoint_log (FASE 4)
+                    engine_indisponivel = True
+                else:
                     checked = True
                     check_kind = "text"
                     obs_norm = _normalizar_texto_tela(
@@ -656,6 +677,32 @@ class SSHReplayAdapter:
             )
             self._samples.append(amostra)
             produzidas.append(amostra)
+
+            # FASE 4 — cobertura da verificação funcional: todo passo com
+            # expectativa de tela (texto ou sig) é um checkpoint EXECUTADO;
+            # quando não checado, a razão fica registrada para auditoria
+            # (a decisão exige cobertura 100% ou exceções com razão).
+            if texto_esperado or esperado_sig:
+                if checked:
+                    motivo = ""
+                elif engine_indisponivel:
+                    motivo = "terminal_engine_unavailable"
+                elif error_code:
+                    motivo = error_code
+                elif timeout:
+                    motivo = "timeout"
+                elif not saida:
+                    motivo = "sem_resposta"
+                else:
+                    motivo = "nao_checado"
+                self.checkpoint_log.append({
+                    "phase": phase,
+                    "journey_id": journey_id,
+                    "step_id": step_id,
+                    "checked": checked,
+                    "reason": motivo,
+                    "ts_ms": int(time.time() * 1000),
+                })
 
             # CIRCUIT BREAKER: sessão morta/fechada → ABORTA a jornada agora.
             # Os steps restantes NÃO são executados (e não viram amostras) —
@@ -982,6 +1029,42 @@ class SSHReplayAdapter:
         """§14 — sem coletor de banco para arquivos Recital/ISAM."""
         return {"available": False, "reason": "collector_not_supported"}
 
+    def collect_net_counters(self) -> dict | None:
+        """Contadores ABSOLUTOS de rede do host remoto (best-effort, FASE 3).
+
+        O sampler de host (``host_metrics``) não instrumenta rede; a
+        cobertura do grupo "rede" vem da leitura dos contadores antes/depois
+        das fases da run (taxas = delta/tempo — ver
+        ``BenchmarkExecutor._net_window``). Linux lê ``/proc/net/dev``
+        (bytes+pacotes das interfaces não-lo); AIX cai para ``netstat -i``
+        (pacotes — Ipkts/Opkts). Falha de transporte ou parse devolve None:
+        sem janela de rede a cobertura marca o grupo como AUSENTE — nunca
+        zero fingindo medição.
+        """
+        metrics_user = getattr(self.env, "metrics_ssh_user", "") or ""
+        argv = self._ssh_base_argv(user_override=metrics_user) + ["sh"]
+        try:
+            res = self._ssh_runner(argv, _REMOTE_NET_COUNTERS_SCRIPT, 20.0)
+        except Exception:
+            return None
+        if getattr(res, "returncode", 1) != 0:
+            return None
+        stdout = str(getattr(res, "stdout", "") or "")
+        for linha in stdout.splitlines():
+            linha = linha.strip()
+            if not linha:
+                continue
+            try:
+                dado = json.loads(linha)
+            except ValueError:
+                continue
+            if isinstance(dado, dict) and any(
+                    isinstance(dado.get(k), (int, float))
+                    for k in ("rx_bytes", "tx_bytes",
+                              "rx_packets", "tx_packets")):
+                return dado
+        return None
+
 
 #: Script Python executado no host remoto (via stdin do ssh) para extrair as
 #: amostras de host_metrics da janela temporal da run. Campos indisponíveis
@@ -1016,6 +1099,28 @@ _REMOTE_HOST_METRICS_SCRIPT = (
     "    print(json.dumps(dict(row)))\n"
     "print(json.dumps({'host_metrics_query': 'done', 'rows': len(rows),\n"
     "                  'clock_offset_ms': offset}))\n"
+)
+
+
+#: Script shell (POSIX, roda via ``sh`` no stdin do ssh) que emite UMA linha
+#: JSON com os contadores absolutos de rede do host. Linux: ``/proc/net/dev``
+#: (rx/tx bytes+pacotes das interfaces não-lo — colunas 2/3 e 10/11 após o
+#: nome da interface). AIX (sem /proc): ``netstat -i`` (Ipkts=$5, Opkts=$7,
+#: sem bytes). A fonte fica registrada no próprio JSON para auditoria.
+_REMOTE_NET_COUNTERS_SCRIPT = (
+    "if [ -r /proc/net/dev ]; then\n"
+    "awk 'NR>2 { nome=$1; sub(/:$/, \"\", nome); if (nome != \"lo\") "
+    "{ rx+=$2; rxp+=$3; tx+=$10; txp+=$11 } } END { printf "
+    "\"{\\\"rx_bytes\\\": %d, \\\"tx_bytes\\\": %d, "
+    "\\\"rx_packets\\\": %d, \\\"tx_packets\\\": %d, "
+    "\\\"fonte\\\": \\\"/proc/net/dev\\\"}\\n\", rx, tx, rxp, txp }' "
+    "/proc/net/dev\n"
+    "else\n"
+    "netstat -i 2>/dev/null | awk 'NR>1 && $1 !~ /^lo/ { rxp+=$5; "
+    "txp+=$7 } END { printf \"{\\\"rx_packets\\\": %d, "
+    "\\\"tx_packets\\\": %d, \\\"fonte\\\": \\\"netstat -i\\\"}\\n\", "
+    "rxp, txp }'\n"
+    "fi\n"
 )
 
 

@@ -39,6 +39,7 @@ done < <(find tests/acceptance -maxdepth 1 -type f -name 'test_*.py' | LC_ALL=C 
 
 for f in \
   tests/test_tree_hash_manifest_unit.py \
+  tests/test_build_hardening_unit.py \
 ; do
   [ -f "$f" ] && protected+=("$f")
 done
@@ -48,6 +49,9 @@ for f in \
   scripts/process_tree.py \
   scripts/test.sh \
   scripts/test-all.sh \
+  scripts/tree_hash.py \
+  scripts/build_validate.py \
+  scripts/build-tarball.sh \
   scripts/acceptance/_gate_lib.sh \
   scripts/acceptance/gen-evidence-manifest.sh \
   scripts/acceptance/run-phase-07-visual-runner.sh \

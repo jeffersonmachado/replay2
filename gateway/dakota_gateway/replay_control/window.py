@@ -173,6 +173,98 @@ def _selected_events(log_dir: str, params: dict | None):
             yield ev
 
 
+def index_session_events(log_dir: str, params: dict | None = None) -> tuple[dict[str, list[tuple[str, int]]], dict[str, dict]]:
+    """Uma passagem pelos audit-*.jsonl construindo um índice leve por sessão.
+
+    Retorna ``(indice, session_starts)``: ``indice`` mapeia session_id para a
+    lista ordenada de ``(arquivo, offset)`` das linhas dentro da janela de
+    replay; ``session_starts`` guarda o primeiro ``session_start`` de cada
+    sessão (também restrito à janela, espelhando ``_session_start_by_id``
+    sobre os eventos selecionados). Nenhum evento completo é retido — os
+    workers releem as linhas do disco sob demanda (``iter_indexed_events``),
+    mantendo o consumo de memória estável em captures grandes.
+    """
+    window = _resolve_replay_window(log_dir, params)
+    index: dict[str, list[tuple[str, int]]] = {}
+    starts: dict[str, dict] = {}
+    for path in sorted(Path(log_dir).glob("audit-*.jsonl")):
+        name = str(path)
+        with open(path, "rb") as fh:
+            while True:
+                offset = fh.tell()
+                line = fh.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                sid = str(ev.get("session_id") or "")
+                if not sid:
+                    continue
+                if not _event_in_replay_window(ev, window):
+                    continue
+                index.setdefault(sid, []).append((name, offset))
+                if ev.get("type") == "session_start" and sid not in starts:
+                    starts[sid] = ev
+    return index, starts
+
+
+def iter_indexed_events(entries):
+    """Re-lê do disco (seek por offset) os eventos apontados pelo índice.
+
+    ``entries`` é a lista ``(arquivo, offset)`` produzida por
+    ``index_session_events``; entradas consecutivas do mesmo arquivo
+    compartilham o handle aberto.
+    """
+    current_name: str | None = None
+    current_fh = None
+    try:
+        for name, offset in entries:
+            if name != current_name:
+                if current_fh is not None:
+                    current_fh.close()
+                current_fh = open(name, "rb")
+                current_name = name
+            current_fh.seek(offset)
+            line = current_fh.readline().strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(ev, dict):
+                yield ev
+    finally:
+        if current_fh is not None:
+            current_fh.close()
+
+
+def scan_capture_metadata(log_dir: str, params: dict | None = None) -> dict:
+    """Uma passagem pela janela de replay coletando os metadados da run.
+
+    Substitui as varreduras separadas de contagem de sessões e de
+    ``seq_end`` no ciclo de vida da run — os dois números saem da mesma
+    leitura e são compartilhados por todas as sessões/VUs.
+    """
+    sessions: set[str] = set()
+    seq_end = 0
+    for ev in _selected_events(log_dir, params):
+        sid = str(ev.get("session_id") or "")
+        if sid:
+            sessions.add(sid)
+        seq = int(ev.get("seq_global") or 0)
+        if seq > seq_end:
+            seq_end = seq
+    return {"sessions_total": len(sessions), "seq_end": seq_end}
+
+
 def compute_seq_end(log_dir: str, params: dict | None = None) -> int:
     if params:
         last_seq = 0

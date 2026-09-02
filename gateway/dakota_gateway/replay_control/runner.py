@@ -23,12 +23,12 @@ from .executors import (
     replay_strict_global_controlled,
 )
 from .window import (
-    _iter_events,
     _on_deterministic_mismatch,
     _replay_input_mode,
     _terminal_options_from_run,
     compute_fingerprint,
     compute_seq_end,
+    scan_capture_metadata,
 )
 
 def create_run(
@@ -137,6 +137,50 @@ def retry_run(con, run_id: int, created_by: int) -> int:
     if run["params_json"]:
         con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (run["params_json"], new_run_id))
     return new_run_id
+
+
+class _RunControlState:
+    """Estado de controle (pause/cancel) da run cacheado em memória.
+
+    Os executores chamam ``check()`` a cada evento; ler o SQLite a cada
+    chamada não escala (milhares de eventos × sessões). O status é relido no
+    máximo a cada ``poll_interval_s`` (fallback periódico de baixa frequência)
+    e, enquanto a run está pausada, o polling é contínuo (0.2s) para reagir
+    rápido a resume/cancel. O tempo de resposta a um cancelamento é então
+    limitado por ~``poll_interval_s`` + o trecho entre checks do executor.
+    """
+
+    def __init__(self, con, run_id: int, db_lock: Lock, poll_interval_s: float = 1.0):
+        self._con = con
+        self._run_id = run_id
+        self._db_lock = db_lock
+        self._poll_interval_s = float(poll_interval_s)
+        self._status: str | None = None
+        self._last_poll = 0.0
+        self._poll()
+
+    def _poll(self) -> None:
+        with self._db_lock:
+            run = get_run(self._con, self._run_id)
+        if not run:
+            raise ReplayError("run desapareceu")
+        self._status = str(run["status"] or "")
+        self._last_poll = time.monotonic()
+
+    def check(self) -> None:
+        """Levanta ReplayError em cancel; bloqueia enquanto pausado."""
+        while True:
+            status = self._status
+            if status == "cancelled":
+                raise ReplayError("cancelled")
+            if status == "paused":
+                time.sleep(0.2)
+                self._poll()
+                continue
+            if time.monotonic() - self._last_poll >= self._poll_interval_s:
+                self._poll()
+                continue
+            return
 
 
 class Runner:
@@ -268,19 +312,10 @@ class Runner:
 
         last_seq = int(run["last_seq_global_applied"] or 0)
 
+        control = _RunControlState(con, run_id, db_lock)
+
         def wait_if_paused_or_cancelled():
-            while True:
-                with db_lock:
-                    r = get_run(con, run_id)
-                if not r:
-                    raise ReplayError("run desapareceu")
-                st = r["status"]
-                if st == "cancelled":
-                    raise ReplayError("cancelled")
-                if st == "paused":
-                    time.sleep(0.2)
-                    continue
-                return
+            control.check()
 
         try:
             # Update progress by scanning seq_end from manifests when available.
@@ -292,6 +327,10 @@ class Runner:
                     params = json.loads(run["params_json"]) if isinstance(run["params_json"], str) else {}
             except Exception:
                 params = {}
+            # Metadados do capture lidos UMA vez por run e compartilhados:
+            # sessions_total (métricas) e seq_end (progresso final) saem da
+            # mesma passagem, em vez de varreduras separadas do log.
+            capture_meta = scan_capture_metadata(run["log_dir"], params)
             term_opts = _terminal_options_from_run(run["log_dir"], params)
 
             cfg = ReplayConfig(
@@ -450,10 +489,9 @@ class Runner:
                         input_mode=_replay_input_mode(params),
                         on_deterministic_mismatch=_on_deterministic_mismatch(params),
                     )
-                    # precompute totals
+                    # precompute totals (da passagem única de metadados)
                     with m_lock:
-                        metrics["sessions_total"] = 0
-                        metrics["sessions_total"] = len({(ev.get("session_id") or "") for ev in _iter_events(cfg.log_dir) if (ev.get("session_id") or "")})
+                        metrics["sessions_total"] = int(capture_meta.get("sessions_total") or 0)
                     write_metrics(throttle_ms=0)
                     replay_parallel_sessions_concurrent_controlled(
                         cfg,
@@ -473,8 +511,8 @@ class Runner:
                         on_failure=on_failure,
                     )
 
-            # set success
-            update_progress(con, run_id, last_seq_global=compute_seq_end(run["log_dir"], params))
+            # set success (seq_end da passagem única de metadados; fallback no manifest)
+            update_progress(con, run_id, last_seq_global=int(capture_meta.get("seq_end") or 0) or compute_seq_end(run["log_dir"], params))
             write_metrics(throttle_ms=0)
             exec1(con, "UPDATE replay_runs SET finished_at_ms=? WHERE id=?", (now_ms(), run_id))
             # If any session failed in loadtest mode, mark failed (but run completed)

@@ -54,6 +54,7 @@ from .executors import (
 )
 from .runner import (
     Runner,
+    _RunControlState,
     cancel_run,
     create_run,
     pause_run,
@@ -75,6 +76,9 @@ from .window import (
     compute_fingerprint,
     compute_last_hash_hint,
     compute_seq_end,
+    index_session_events,
+    iter_indexed_events,
+    scan_capture_metadata,
 )
 
 # Símbolos de módulos vizinhos que o replay_control monolítico reexportava

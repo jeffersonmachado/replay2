@@ -22,19 +22,32 @@
 #
 # Uso:
 #   cd <raiz do repositório> && bash scripts/acceptance/gen-evidence-manifest.sh
+#   bash scripts/acceptance/gen-evidence-manifest.sh --root <dir>
+#       Gera o manifest para OUTRA raiz (ex.: o stage do build-tarball.sh, que
+#       carrega só um subconjunto de artifacts/benchmarks — o manifest do
+#       pacote cobre exatamente o que foi empacotado).
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-if [ "$(pwd -P)" != "$ROOT_DIR" ]; then
+TARGET_ROOT="$ROOT_DIR"
+if [ "${1:-}" = "--root" ]; then
+  [ -n "${2:-}" ] || { echo "ERROR: --root requer um diretório" >&2; exit 2; }
+  TARGET_ROOT="$(cd "$2" && pwd -P)"
+elif [ $# -gt 0 ]; then
+  echo "uso: gen-evidence-manifest.sh [--root DIR]" >&2
+  exit 2
+fi
+
+if [ "$TARGET_ROOT" = "$ROOT_DIR" ] && [ "$(pwd -P)" != "$ROOT_DIR" ]; then
   echo "ERROR: gen-evidence-manifest.sh deve ser executado a partir da raiz do repositório:" >&2
   echo "  cd $ROOT_DIR && bash scripts/acceptance/gen-evidence-manifest.sh" >&2
   exit 1
 fi
 
-cd "$ROOT_DIR"
+cd "$TARGET_ROOT"
 
 python3 << 'PYEOF'
 import hashlib

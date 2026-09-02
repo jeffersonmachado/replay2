@@ -52,7 +52,15 @@ mkdir -p artifacts/acceptance-logs/
 # checksums) são preservadas como histórico.
 
 # ── 3. Source tree hash BEFORE ──
-SOURCE_TREE_SHA256_BEFORE=$(python3 scripts/tree_hash.py)
+# VERSION é gravada no results JSON: o build (build-tarball.sh via
+# build_validate.py check-acceptance) rejeita aceite de outra versão/árvore.
+VERSION=$(tr -d '\r\n' < VERSION)
+export VERSION
+# Manifesto completo (hash por arquivo) para diagnóstico de diff se a árvore
+# mudar durante os testes — gravado fora de artifacts/ para não sujar a árvore.
+HASH_WORKDIR=$(mktemp -d)
+trap 'rm -rf "$HASH_WORKDIR"' EXIT
+SOURCE_TREE_SHA256_BEFORE=$(python3 scripts/tree_hash.py --manifest-out "$HASH_WORKDIR/tree-before.manifest.sha256")
 echo "source_tree_sha256_before=$SOURCE_TREE_SHA256_BEFORE"
 
 # ── 4. Baseline ──
@@ -102,10 +110,24 @@ json.dump(v,open('artifacts/visual-test-result.json','w'),indent=2)
 fi
 echo "visual_ok=$VISUAL_OK contamination_ok=$CONTAMINATION_OK"
 
-# ── 8. Source tree hash AFTER ──
-SOURCE_TREE_SHA256_AFTER=$(python3 scripts/tree_hash.py)
+# ── 8. Source tree hash AFTER — FAIL-CLOSED ──
+# O aceite só é válido para a árvore exata que foi testada: qualquer
+# diferença entre o hash antes e o hash imediatamente depois dos testes
+# ABORTA o pipeline (incidente 0.8.85 — pacote carregou aceite de outra
+# árvore: 57 checksums divergentes + arquivos fora do manifesto).
+SOURCE_TREE_SHA256_AFTER=$(python3 scripts/tree_hash.py --manifest-out "$HASH_WORKDIR/tree-after.manifest.sha256")
 SOURCE_TREE_UNCHANGED=False
-[ "$SOURCE_TREE_SHA256_BEFORE" = "$SOURCE_TREE_SHA256_AFTER" ] && SOURCE_TREE_UNCHANGED=True
+if [ "$SOURCE_TREE_SHA256_BEFORE" = "$SOURCE_TREE_SHA256_AFTER" ]; then
+  SOURCE_TREE_UNCHANGED=True
+else
+  echo "ERROR: a árvore de código mudou DURANTE o aceite — o aceite não é válido para esta árvore." >&2
+  echo "  source_tree_sha256_before=$SOURCE_TREE_SHA256_BEFORE" >&2
+  echo "  source_tree_sha256_after =$SOURCE_TREE_SHA256_AFTER" >&2
+  echo "  arquivos divergentes (before × after):" >&2
+  diff -u "$HASH_WORKDIR/tree-before.manifest.sha256" "$HASH_WORKDIR/tree-after.manifest.sha256" | head -80 >&2 || true
+  echo "Corrija a classificação (EXCLUDE_* em scripts/tree_hash.py) ou refaça o aceite sobre a árvore final." >&2
+  exit 1
+fi
 echo "source_tree_unchanged=$SOURCE_TREE_UNCHANGED"
 
 # ── 9. Export env vars for safe Python consumption ──
@@ -249,6 +271,9 @@ if vp.exists(): vis = json.loads(vp.read_text())
 results = {
     'schema_version': '1.0', 'release_run_id': rrid, 'run_id': f'{rrid}-original',
     'generated_at': fin,
+    # VERSION da árvore testada — o build (build_validate.py check-acceptance)
+    # rejeita results JSON sem este campo ou com versão divergente (FASE 2).
+    'version': os.environ.get('VERSION', ''),
     'tree_validation_passed': env_bool('BOOL_TREE_GATE_PASSED'),
     'no_pending_issues': env_bool('BOOL_TREE_GATE_PASSED') and env_bool('BOOL_SOURCE_TREE_UNCHANGED') and env_bool('BOOL_CONTAMINATION_OK') and (int(os.environ.get('REMAINING_ORIG','1')) == 0) and (int(os.environ.get('ZOMBIES_ORIG','1')) == 0),
     'source_tree_sha256_before': os.environ['SOURCE_TREE_SHA256_BEFORE'],
@@ -294,29 +319,20 @@ Path('artifacts/manual-validation.json').write_text(json.dumps({
     'all_gates_passed': env_bool('BOOL_TREE_GATE_PASSED'),
 }, indent=2))
 
-# source-tree-manifest.sha256 — uses tree_hash.py rules (including EXCLUDE_DIR_PREFIXES)
+# source-tree-manifest.sha256 — gerado pela MESMA função canônica do
+# tree_hash.py (regras de exclusão únicas; o walk inline duplicado divergia —
+# ex.: não aplicava EXCLUDE_FILE_PATTERNS de segredos/subprodutos).
 sys.path.insert(0, str(Path('scripts').resolve()))
-from tree_hash import EXCLUDE_DIRS, EXCLUDE_DIR_PREFIXES, EXCLUDE_FILE_EXTENSIONS, EXCLUDE_FILES
-def should_exclude(fn):
-    for ext in EXCLUDE_FILE_EXTENSIONS:
-        if fn.endswith(ext): return True
-    return fn.endswith('.tar.gz')
-mlines = []; fcount = 0
-for dp, dns, fns in os.walk('.'):
-    dns[:] = [
-        d for d in dns
-        if d not in EXCLUDE_DIRS
-        and not any(str(Path(dp) / d).startswith(str(Path('.') / p)) for p in EXCLUDE_DIR_PREFIXES)
-    ]
-    for fn in sorted(fns):
-        if should_exclude(fn): continue
-        fp = Path(dp) / fn; rel = str(fp.relative_to('.'))
-        if rel in EXCLUDE_FILES: continue
-        try: content = fp.read_bytes()
-        except: continue
-        mlines.append(f'{hashlib.sha256(content).hexdigest()}  {rel}')
-        fcount += 1
-Path('artifacts/source-tree-manifest.sha256').write_text('\n'.join(sorted(mlines)) + '\n')
+from tree_hash import tree_hash
+_manifest_hash = tree_hash(Path('.'), manifest=True)
+assert _manifest_hash == os.environ['SOURCE_TREE_SHA256_BEFORE'], (
+    f'hash mudou durante a geração dos relatórios: {_manifest_hash} != '
+    f"{os.environ['SOURCE_TREE_SHA256_BEFORE']}"
+)
+fcount = sum(
+    1 for line in Path('artifacts/source-tree-manifest.sha256').read_text().splitlines()
+    if line.strip()
+)
 Path('artifacts/source-tree-hash.json').write_text(json.dumps({
     'schema_version': '1.0', 'algorithm': 'sha256-path-mode-size-content-v1',
     'file_count': fcount, 'tree_sha256': os.environ['SOURCE_TREE_SHA256_BEFORE'],

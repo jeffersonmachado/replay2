@@ -306,3 +306,129 @@ def test_client_erro_quando_daemon_cai(tmp_path):
     fx.stop()
     with pytest.raises((AuditClientError, OSError)):
         client.append(_event("bytes"))
+
+
+# -- append_many (FASE 7: lotes + fila single-writer por captura) --------------
+
+
+def _event_dict(ev_type: str = "bytes", **kw) -> dict:
+    from dataclasses import asdict
+
+    return asdict(_event(ev_type, **kw))
+
+
+def test_append_many_assina_e_verifica(daemon):
+    fx, _db, log_dir, _uuid = daemon
+    client = AuditClient(fx.socket_path, log_dir)
+    try:
+        batch = [_event("bytes", seq_session=i + 1) for i in range(5)]
+        signed = client.append_many(batch)
+    finally:
+        client.close()
+
+    assert signed == batch  # confirmação individual, mesmos objetos
+    for i, ev in enumerate(signed, start=1):
+        assert ev.seq_global == i
+        assert ev.hash and ev.hmac
+        if i > 1:
+            assert ev.prev_hash == signed[i - 2].hash
+    verify_log(log_dir, HMAC_KEY)
+
+
+def test_append_many_preserva_ordem_do_lote(daemon):
+    """Eventos de um mesmo lote ficam contíguos e na ordem enviada."""
+    fx, _db, log_dir, _uuid = daemon
+    resp = daemon_request(
+        fx.socket_path,
+        {
+            "op": "append_many",
+            "log_dir": log_dir,
+            "events": [_event_dict(seq_session=i + 1, session_id="s-ord") for i in range(7)],
+        },
+    )
+    assert resp["ok"] is True
+    assert [e["seq_global"] for e in resp["events"]] == list(range(1, 8))
+    assert [e["seq_session"] for e in resp["events"]] == list(range(1, 8))
+    verify_log(log_dir, HMAC_KEY)
+
+
+def test_append_many_vazio_rejeitado(daemon):
+    fx, _db, log_dir, _uuid = daemon
+    resp = daemon_request(fx.socket_path, {"op": "append_many", "log_dir": log_dir, "events": []})
+    assert resp["ok"] is False
+    assert resp["error"] == "invalid_append"
+
+
+def test_append_many_evento_malformado_nao_grava_nada(daemon):
+    """Tudo-ou-nada por requisição: um evento malformado no meio do lote
+    rejeita o lote inteiro e não consome seq_global."""
+    fx, _db, log_dir, _uuid = daemon
+    resp = daemon_request(
+        fx.socket_path,
+        {
+            "op": "append_many",
+            "log_dir": log_dir,
+            "events": [_event_dict(), "nao-e-dict", _event_dict()],
+        },
+    )
+    assert resp["ok"] is False
+
+    # nada gravado: o próximo append válido começa do seq 1, sem buraco
+    resp2 = daemon_request(
+        fx.socket_path, {"op": "append", "log_dir": log_dir, "event": _event_dict()}
+    )
+    assert resp2["ok"] is True
+    assert resp2["event"]["seq_global"] == 1
+    verify_log(log_dir, HMAC_KEY)
+
+
+def test_append_many_acima_do_limite_rejeitado(daemon):
+    fx, _db, log_dir, _uuid = daemon
+    resp = daemon_request(
+        fx.socket_path,
+        {"op": "append_many", "log_dir": log_dir, "events": [_event_dict() for _ in range(600)]},
+    )
+    assert resp["ok"] is False
+    assert resp["error"] == "too_many_events"
+
+
+def test_append_many_concorrente_mesma_captura(daemon):
+    """Vários clientes mandando lotes ao mesmo tempo: a fila single-writer
+    por captura serializa sem buracos de seq nem quebra de cadeia."""
+    fx, _db, log_dir, _uuid = daemon
+    erros: list[Exception] = []
+
+    def worker(sid: str, n_lotes: int) -> None:
+        try:
+            client = AuditClient(fx.socket_path, log_dir)
+            try:
+                for lote in range(n_lotes):
+                    client.append_many(
+                        [_event("bytes", session_id=sid, seq_session=lote * 5 + i + 1) for i in range(5)]
+                    )
+            finally:
+                client.close()
+        except Exception as exc:  # pragma: no cover - só em falha
+            erros.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"sess-{t}", 10)) for t in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert not erros
+    verify_log(log_dir, HMAC_KEY)
+    total = sum(
+        1 for f in Path(log_dir).glob("audit-*.jsonl") for ln in f.read_text().splitlines() if ln.strip()
+    )
+    assert total == 8 * 10 * 5
+
+
+def test_client_append_many_erro_quando_daemon_cai(tmp_path):
+    db_path, log_dir, _uuid = _make_db(tmp_path)
+    fx = DaemonFixture(tmp_path, db_path)
+    client = AuditClient(fx.socket_path, log_dir)
+    fx.stop()
+    with pytest.raises((AuditClientError, OSError)):
+        client.append_many([_event("bytes")])

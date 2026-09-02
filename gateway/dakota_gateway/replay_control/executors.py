@@ -6,8 +6,9 @@ import random
 import re
 import selectors
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from threading import Lock, Semaphore, Thread
+from threading import Event, Lock
 
 from ..replay import ReplayConfig, ReplayError, SessionReplayState, _TargetSession, _decode_replay_input  # type: ignore
 from ..replay_compare import (
@@ -27,7 +28,6 @@ from .deterministic import (
     _expected_snapshot_from_event,
     _match_failure_values,
     _observed_snapshot_from_session,
-    _session_start_by_id,
     _should_apply_deterministic_input,
     _state_for_session,
     _wait_for_expected_observed,
@@ -37,9 +37,20 @@ from .deterministic import (
     content_present_override,
     synthetic_swap_override,
 )
-from .window import _is_replay_input_event, _on_deterministic_mismatch, _replay_input_mode, _selected_events
+from .window import (
+    _is_replay_input_event,
+    _on_deterministic_mismatch,
+    _replay_input_mode,
+    _selected_events,
+    index_session_events,
+    iter_indexed_events,
+)
 
 _MAX_RECENT_KEYS = 3
+
+# Workers default do modo parallel-sessions quando os params não trazem
+# "concurrency" (o runner só roteia concurrency>1 para o executor de carga).
+_DEFAULT_PARALLEL_SESSION_WORKERS = 4
 
 
 def _remember_key(recent: list, data: bytes) -> None:
@@ -413,23 +424,45 @@ def replay_parallel_sessions_controlled(
     on_failure,
     checkpoint_timeout_ms: int = 5000,
 ):
-    input_mode = _replay_input_mode(params)
-    per_session: dict[str, list[dict]] = {}
-    for ev in _selected_events(cfg.log_dir, params):
-        sid = ev.get("session_id") or ""
-        if sid:
-            per_session.setdefault(sid, []).append(ev)
+    """Replay por sessão em paralelo real, com pool de workers limitado.
 
-    for sid, events in per_session.items():
-        should_pause_or_cancel()
-        state = _state_for_session(cfg, sid, _session_start_by_id(events, sid))
+    Cada session_id roda em um worker de um ``ThreadPoolExecutor`` — o número
+    de threads nunca passa de ``max_workers`` (params.concurrency ou o default
+    ``_DEFAULT_PARALLEL_SESSION_WORKERS``), mesmo com milhares de sessões. Os
+    eventos não são materializados: uma passagem prévia monta o índice de
+    offsets por sessão (``index_session_events``) e cada worker relê as suas
+    linhas do disco sob demanda (``iter_indexed_events``).
+
+    A ordem é preservada DENTRO de cada sessão; entre sessões não há
+    ordenação global (diferente do strict-global). A primeira falha (ou um
+    cancelamento) interrompe as demais sessões e propaga para o runner.
+    """
+    input_mode = _replay_input_mode(params)
+    index, session_starts = index_session_events(cfg.log_dir, params)
+    session_ids = sorted(index.keys())
+    if not session_ids:
+        return
+    try:
+        workers = int((params or {}).get("concurrency") or 0)
+    except Exception:
+        workers = 0
+    if workers < 1:
+        workers = _DEFAULT_PARALLEL_SESSION_WORKERS
+    workers = max(1, min(workers, len(session_ids)))
+
+    stop = Event()
+
+    def run_session(sid: str):
+        state = _state_for_session(cfg, sid, session_starts.get(sid) or {"session_id": sid})
         s = _TargetSession(state.config, sid)
         state.engine = s.screen_state
         sel = selectors.DefaultSelector()
         sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
         recent_keys: list = []
         try:
-            for ev in events:
+            for ev in iter_indexed_events(index[sid]):
+                if stop.is_set():
+                    return
                 should_pause_or_cancel()
                 seq_global = int(ev.get("seq_global") or 0)
                 typ = ev.get("type") or ""
@@ -563,6 +596,31 @@ def replay_parallel_sessions_controlled(
                 pass
             s.close()
 
+    first_error: list[BaseException] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="replay-sess") as pool:
+        futures = {pool.submit(run_session, sid): sid for sid in session_ids}
+        pending = set(futures)
+        try:
+            while pending:
+                should_pause_or_cancel()
+                done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                for f in done:
+                    exc = f.exception()
+                    if exc is not None and not first_error:
+                        first_error.append(exc)
+                        stop.set()
+                        for p in pending:
+                            p.cancel()
+        except BaseException:
+            # cancelamento/pausa propagado pelo should_pause_or_cancel:
+            # interrompe os workers ainda na fila e sinaliza os ativos.
+            stop.set()
+            for p in pending:
+                p.cancel()
+            raise
+    if first_error:
+        raise first_error[0]
+
 
 @dataclass
 class LoadTestParams:
@@ -608,23 +666,22 @@ def replay_parallel_sessions_concurrent_controlled(
 ):
     """
     Replay por sessão com concorrência limitada e ramp-up.
-    - Cada session_id roda em uma thread, preservando ordem por sessão.
+    - Cada session_id roda em um worker de um ThreadPoolExecutor com
+      max_workers=concurrency — nunca 1 thread por sessão (mil sessões com
+      concurrency=10 usam 10 threads), preservando ordem por sessão.
+    - Os eventos não são materializados: uma passagem prévia monta o índice
+      de offsets por sessão e cada worker relê as suas linhas do disco.
     - Checkpoint mismatch pode falhar só a sessão (continue) ou o run inteiro (fail-fast).
     - speed/jitter controlam pacing entre eventos de input (bytes dir=in) baseado em ts_ms.
     - target_user_pool distribui sessões entre usuários no destino.
     """
 
     input_mode = _replay_input_mode(load_params.__dict__)
-    per_session: dict[str, list[dict]] = {}
-    for ev in _selected_events(cfg.log_dir, window_params):
-        sid = ev.get("session_id") or ""
-        if sid:
-            per_session.setdefault(sid, []).append(ev)
+    index, session_starts = index_session_events(cfg.log_dir, window_params)
 
-    session_ids = sorted(per_session.keys())
+    session_ids = sorted(index.keys())
     if load_params.concurrency < 1:
         load_params.concurrency = 1
-    sem = Semaphore(load_params.concurrency)
 
     stop_all = {"flag": False, "err": ""}
     stop_lock = Lock()
@@ -637,9 +694,7 @@ def replay_parallel_sessions_concurrent_controlled(
         idx = int(hashlib.sha256(str(sid).encode("utf-8")).hexdigest(), 16) % len(pool)
         return pool[idx]
 
-    def worker(sid: str, events: list[dict]):
-        nonlocal stop_all
-        sem.acquire()
+    def worker(sid: str):
         try:
             should_pause_or_cancel()
             with stop_lock:
@@ -648,7 +703,7 @@ def replay_parallel_sessions_concurrent_controlled(
                     return
 
             user_override = pick_user(sid)
-            state = _state_for_session(cfg, sid, _session_start_by_id(events, sid))
+            state = _state_for_session(cfg, sid, session_starts.get(sid) or {"session_id": sid})
             s = _TargetSession(state.config, sid, target_user_override=user_override)
             state.engine = s.screen_state
             sel = selectors.DefaultSelector()
@@ -656,7 +711,7 @@ def replay_parallel_sessions_concurrent_controlled(
             last_in_ts = None
             recent_keys: list = []
             try:
-                for ev in events:
+                for ev in iter_indexed_events(index[sid]):
                     should_pause_or_cancel()
                     with stop_lock:
                         if stop_all["flag"]:
@@ -844,32 +899,58 @@ def replay_parallel_sessions_concurrent_controlled(
                 with stop_lock:
                     stop_all["flag"] = True
                     stop_all["err"] = msg
-        finally:
-            sem.release()
 
-    threads: list[Thread] = []
-    # ramp-up: start threads gradually
+    # ramp-up: submissão gradual ao pool (o pool limita as threads ativas —
+    # nunca 1 thread por sessão esperando em semáforo)
     interval = 0.0
     if load_params.ramp_up_per_sec and load_params.ramp_up_per_sec > 0:
         interval = 1.0 / float(load_params.ramp_up_per_sec)
 
-    for idx, sid in enumerate(session_ids):
-        should_pause_or_cancel()
-        t = Thread(target=worker, args=(sid, per_session[sid]), daemon=True)
-        threads.append(t)
-        t.start()
-        if interval > 0 and idx < len(session_ids) - 1:
-            end = time.time() + interval
-            while time.time() < end:
-                should_pause_or_cancel()
-                time.sleep(min(0.05, end - time.time()))
-
-    # wait all
-    for t in threads:
-        while t.is_alive():
+    pool = ThreadPoolExecutor(max_workers=load_params.concurrency, thread_name_prefix="replay-vu")
+    futures: dict = {}
+    control_exc: list[BaseException] = []
+    try:
+        for idx, sid in enumerate(session_ids):
             should_pause_or_cancel()
-            t.join(timeout=0.1)
+            with stop_lock:
+                stopped, stop_err = stop_all["flag"], stop_all["err"]
+            if stopped:
+                # fail-fast em outra sessão: as ainda não submetidas são skipped
+                on_session_result(sid, "skipped", stop_err)
+                continue
+            futures[pool.submit(worker, sid)] = sid
+            if interval > 0 and idx < len(session_ids) - 1:
+                end = time.time() + interval
+                while time.time() < end:
+                    should_pause_or_cancel()
+                    time.sleep(min(0.05, end - time.time()))
 
+        pending = set(futures)
+        while pending:
+            should_pause_or_cancel()
+            done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+            for f in done:
+                exc = f.exception()
+                # ReplayError já foi tratada pelo worker (session_result/fail-fast);
+                # qualquer outra exceção é inesperada e sobe para o runner.
+                if exc is not None and not isinstance(exc, ReplayError):
+                    raise exc
+    except ReplayError as exc:
+        # cancelamento: interrompe as sessões ainda na fila do pool e
+        # sinaliza as ativas (cada worker checa should_pause_or_cancel por
+        # evento, então a parada é rápida).
+        control_exc.append(exc)
+        with stop_lock:
+            stop_all["flag"] = True
+            stop_all["err"] = stop_all["err"] or str(exc)
+        for f, sid in futures.items():
+            if f.cancel():
+                on_session_result(sid, "skipped", str(exc))
+    finally:
+        pool.shutdown(wait=True)
+
+    if control_exc:
+        raise control_exc[0]
     with stop_lock:
         if stop_all["flag"] and load_params.on_checkpoint_mismatch == "fail-fast":
             raise ReplayError(stop_all["err"])

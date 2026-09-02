@@ -7,7 +7,9 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -137,6 +139,7 @@ from control.auth_support import (
     get_cookie as _get_cookie_helper,
     require_page_user as _require_page_user_helper,
     require_user as _require_user_helper,
+    reset_auth_cache as _reset_auth_cache_helper,
     set_cookie as _set_cookie_helper,
 )
 from control.engineering_route_support import (
@@ -158,6 +161,7 @@ from control.websocket_support import (
     ws_recv_frame,
     ws_send_pong,
     get_broadcaster,
+    shutdown_broadcaster as _shutdown_broadcaster,
 )
 
 
@@ -218,6 +222,11 @@ class _RuntimeContentCaptureRunner(RuntimeContentCaptureRunner):
 
 
 class ControlServer(ThreadingHTTPServer):
+    # Backlog de accept maior que o default (5) da stdlib: com o limite de
+    # conexões ativo, conexões na fila do SO aguardam um slot em vez de serem
+    # derrubadas por backlog cheio.
+    request_queue_size = 128
+
     def __init__(
         self,
         addr,
@@ -235,6 +244,25 @@ class ControlServer(ThreadingHTTPServer):
         self.db_path = db_path
         self.cookie_secret = cookie_secret
         self.hmac_key = hmac_key
+        # ── Limite de conexões simultâneas (threads) ──
+        # ThreadingHTTPServer cria uma thread por conexão SEM teto; N conexões
+        # lentas/travadas esgotam o processo. O semáforo limita a cota de
+        # conexões curtas: sem slot livre, process_request responde 503 e fecha
+        # (fail-fast — bloquear o accept pararia também o shutdown).
+        # Conexões WebSocket (/ws/*) são longas por natureza e NÃO contam na
+        # cota: ao concluir o upgrade, o handler devolve o slot via
+        # release_connection_slot() — é a cota separada das conexões longas.
+        # DAKOTA_HTTP_MAX_CONNECTIONS (default 128; 0 = sem limite).
+        try:
+            max_connections = int(os.environ.get("DAKOTA_HTTP_MAX_CONNECTIONS", "128") or 128)
+        except ValueError:
+            max_connections = 128
+        self.max_connections = max_connections
+        self._conn_slots: threading.BoundedSemaphore | None = (
+            threading.BoundedSemaphore(max_connections) if max_connections > 0 else None
+        )
+        self._detached_lock = threading.Lock()
+        self._detached_requests: set[int] = set()
         self.capture_log_dir = capture_log_dir or os.path.join(os.path.dirname(db_path), "captures")
         os.makedirs(self.capture_log_dir, exist_ok=True)
         self.db_pool = ConnectionPool(db_path, min_size=1, max_size=16)
@@ -350,15 +378,74 @@ class ControlServer(ThreadingHTTPServer):
         finally:
             self.db_pool.release(con4)
 
+    def process_request(self, request, client_address):
+        """Admite a conexão somente se houver slot livre; senão 503 + fecha.
+
+        O acquire é não-bloqueante de propósito: process_request roda no loop
+        de accept e um acquire bloqueante congelaria também o shutdown().
+        """
+        slots = self._conn_slots
+        if slots is None or slots.acquire(blocking=False):
+            super().process_request(request, client_address)
+            return
+        log.warning("[limite] conexão recusada (503): %s conexões curtas ativas", self.max_connections)
+        try:
+            body = b'{"error":"servidor ocupado; tente novamente em breve"}'
+            request.sendall(
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Type: application/json; charset=utf-8\r\n"
+                b"Retry-After: 1\r\n"
+                b"Connection: close\r\n"
+                b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
+            )
+        except OSError:
+            pass
+        try:
+            request.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        request.close()
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            slots = self._conn_slots
+            if slots is not None:
+                with self._detached_lock:
+                    was_detached = id(request) in self._detached_requests
+                    self._detached_requests.discard(id(request))
+                # Conexão "detached" (WebSocket): o slot já foi devolvido no
+                # upgrade — não liberar de novo.
+                if not was_detached:
+                    slots.release()
+
+    def release_connection_slot(self, request) -> None:
+        """Devolve o slot da cota de conexões curtas (upgrade WebSocket).
+
+        A thread do handler segue viva cuidando da conexão longa, mas deixa de
+        contar no limite — senão poucos clientes de tempo real esgotariam o
+        servidor. Idempotente por conexão.
+        """
+        slots = self._conn_slots
+        if slots is None:
+            return
+        with self._detached_lock:
+            key = id(request)
+            if key in self._detached_requests:
+                return
+            self._detached_requests.add(key)
+        slots.release()
+
     def server_close(self):
         """Para os componentes de fundo antes de fechar o socket.
 
         Sem isto, cada instância vaza threads (host metrics a cada 5s, cache
-        janitor, sampler da porta 22, runtime capture) que seguem vivas após
-        o teardown — em suítes que sobem dezenas de servidores, as threads
-        residuais contendem no GIL e gravam em DBs já apagados (flake de
-        timeout em requisição loopback na árvore extraída do release 0.8.7).
-        Todos os stop() são idempotentes.
+        janitor, sampler da porta 22, runtime capture, broadcaster WebSocket)
+        que seguem vivas após o teardown — em suítes que sobem dezenas de
+        servidores, as threads residuais contendem no GIL e gravam em DBs já
+        apagados (flake de timeout em requisição loopback na árvore extraída
+        do release 0.8.7). Todos os stop() são idempotentes.
         """
         for attr in ("port22_sampler", "host_metrics_sampler",
                      "replay_cache_janitor", "runtime_capture"):
@@ -369,6 +456,10 @@ class ControlServer(ThreadingHTTPServer):
                 component.stop()
             except Exception:
                 pass
+        try:
+            _shutdown_broadcaster()
+        except Exception:
+            pass
         super().server_close()
 
     def _auto_activate_gateway(self, con):
@@ -382,6 +473,13 @@ class ControlServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        # O handler é reutilizado em keep-alive: o cache de autenticação é por
+        # requisição — invalida antes de cada request para não reutilizar uma
+        # sessão revogada/expirada da request anterior na mesma conexão.
+        _reset_auth_cache_helper(self)
+        super().handle_one_request()
+
     def _db(self):
         return self.server.db_pool.acquire()
 
@@ -507,6 +605,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.end_headers()
             return
+        # Conexão longa: devolve o slot da cota de conexões curtas
+        # (DAKOTA_HTTP_MAX_CONNECTIONS) — ver ControlServer.release_connection_slot.
+        release_slot = getattr(self.server, "release_connection_slot", None)
+        if callable(release_slot):
+            release_slot(self.connection)
         def full_status():
             con = self._db()
             try:
@@ -639,8 +742,12 @@ class Handler(BaseHTTPRequestHandler):
         if p.path == "/ready":
             try:
                 con = self._db()
-                con.execute("SELECT 1")
-                self._db_release(con)
+                try:
+                    con.execute("SELECT 1")
+                finally:
+                    # release em finally: query quebrada não pode prender a
+                    # conexão no pool (vazamento a cada /ready com erro).
+                    self._db_release(con)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()

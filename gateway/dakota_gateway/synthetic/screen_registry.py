@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from .schema import FieldSchema, ScreenSchema
+from ..db.connection import transaction
 
 
 @dataclass
@@ -132,17 +133,17 @@ class ScreenRegistry:
         return cur.lastrowid or 0
 
     def register_fields_from_schema(self, screen_id: int, schema: ScreenSchema) -> list[int]:
+        """Registra todos os campos da tela em UMA transação.
+
+        Antes cada campo comitava sozinho (``register_field`` chama commit):
+        N campos = N fsyncs. Aqui o loop roda dentro de um único BEGIN/COMMIT
+        (execute por linha porque o retorno precisa do lastrowid de cada
+        campo; o ganho vem de eliminar os N commits, não do executemany).
+        """
         ids: list[int] = []
-        for fs in schema.fields:
-            record = ScreenFieldRecord(
-                screen_id=screen_id,
-                field_name=fs.name,
-                prompt=fs.prompt or fs.name,
-                datatype=fs.datatype,
-                required=fs.required,
-                unique_flag=fs.unique,
-                lookup_table=fs.lookup,
-                constraints_json=json.dumps(
+        with transaction(self.con):
+            for fs in schema.fields:
+                constraints = json.dumps(
                     {
                         "min_length": fs.min_length,
                         "max_length": fs.max_length,
@@ -153,11 +154,23 @@ class ScreenRegistry:
                     },
                     ensure_ascii=False,
                     default=None,
+                ) if any([fs.min_length, fs.max_length, fs.min_value, fs.max_value, fs.choices, fs.format]) else None
+                cur = self.con.execute(
+                    """INSERT INTO screen_fields
+                       (screen_id, field_name, prompt, datatype, required, unique_flag, lookup_table, constraints_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        screen_id,
+                        fs.name,
+                        fs.prompt or fs.name,
+                        fs.datatype,
+                        1 if fs.required else 0,
+                        1 if fs.unique else 0,
+                        fs.lookup,
+                        constraints,
+                    ),
                 )
-                if any([fs.min_length, fs.max_length, fs.min_value, fs.max_value, fs.choices, fs.format])
-                else None,
-            )
-            ids.append(self.register_field(record))
+                ids.append(cur.lastrowid or 0)
         return ids
 
     def get_fields_by_screen(self, screen_id: int) -> list[ScreenFieldRecord]:

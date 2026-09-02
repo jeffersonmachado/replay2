@@ -20,7 +20,21 @@ Protocolo: JSON-lines, uma requisição por linha, uma resposta por linha.
   (``ok: false, error: "no_active_capture"`` quando não há);
 - ``{"op": "append", "log_dir": "...", "event": {...}}`` → evento assinado
   em ``{"ok": true, "event": {...}}`` (``seq_global``/``prev_hash``/``hash``/
-  ``hmac`` sempre (re)calculados pelo daemon — valores do cliente ignorados).
+  ``hmac`` sempre (re)calculados pelo daemon — valores do cliente ignorados);
+- ``{"op": "append_many", "log_dir": "...", "events": [{...}, ...]}`` → lote
+  assinado em ``{"ok": true, "events": [...]}`` (tudo-ou-nada por requisição;
+  máx. ``MAX_BATCH_EVENTS`` eventos).
+
+Escrita em fila (FASE 7): cada captura (log_dir) tem UMA fila com UMA thread
+de escrita (single-writer por captura). As threads do servidor apenas
+enfileiram e bloqueiam à espera da confirmação individual; a thread de
+escrita drena o que estiver pendente e grava num único ``append_many`` —
+a ordem global é a ordem FIFO de chegada na fila (determinística) e o
+checkpoint do ``audit.state`` acontece uma vez por drenagem. O agrupamento
+não muda a semântica dos eventos: cada evento continua assinado e
+confirmado individualmente; eventos do mesmo input (ex.: tela estável +
+input) já chegam combinados num único ``deterministic_input`` do cliente,
+então nenhum agrupamento semântico extra é necessário — só o de transporte.
 
 Portável para AIX 7: apenas stdlib (``socketserver`` AF_UNIX).
 """
@@ -29,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import signal
 import socketserver
 import threading
@@ -42,6 +57,13 @@ from .schema import AuditEvent
 # Eventos carregam payloads grandes (screen_raw_b64 de telas 25x80+, diffs);
 # 4 MiB por linha é folga suficiente sem abrir margem para abuso.
 MAX_LINE_BYTES = 4 * 1024 * 1024
+
+# Teto de eventos por requisição append_many (proteção contra abuso; a fila
+# por captura aceita qualquer volume em requisições separadas).
+MAX_BATCH_EVENTS = 512
+
+# Teto de eventos fundidos numa única drenagem da fila de escrita.
+MAX_DRAIN_EVENTS = 1024
 
 _EVENT_FIELDS = frozenset(AuditEvent.__dataclass_fields__)
 
@@ -100,35 +122,147 @@ def resolve_capture(db_path: str, capture_id: int = 0) -> dict | None:
         con.close()
 
 
+class _QueueItem:
+    """Uma requisição de escrita enfileirada (1+ eventos) + confirmação."""
+
+    __slots__ = ("events", "done", "signed", "error")
+
+    def __init__(self, events: list[AuditEvent]):
+        self.events = events
+        self.done = threading.Event()
+        self.signed: list[AuditEvent] | None = None
+        self.error: BaseException | None = None
+
+    def set_result(self, signed: list[AuditEvent]) -> None:
+        self.signed = signed
+        self.done.set()
+
+    def set_error(self, exc: BaseException) -> None:
+        self.error = exc
+        self.done.set()
+
+    def result(self) -> list[AuditEvent]:
+        self.done.wait()
+        if self.error is not None:
+            raise self.error
+        return self.signed or []
+
+
+class _CaptureWriter:
+    """Fila single-writer de UMA captura: uma thread drena e grava em lotes.
+
+    A hash-chain é por captura, então basta UMA thread de escrita por
+    log_dir: ela é a única que toca no AuditWriter, o que preserva a ordem
+    global (FIFO de chegada na fila) e permite fundir eventos pendentes num
+    único ``append_many`` (1 checkpoint de state por drenagem).
+    """
+
+    def __init__(self, log_dir: str, hmac_key: bytes):
+        self.log_dir = log_dir
+        self.writer = AuditWriter(log_dir, hmac_key)
+        self._queue: queue.Queue = queue.Queue()
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run, name=f"audit-writer-{Path(log_dir).name}", daemon=True
+        )
+        self._thread.start()
+
+    def submit(self, events: list[AuditEvent]) -> list[AuditEvent]:
+        """Enfileira e bloqueia até a confirmação individual dos eventos."""
+        if self._closed:
+            raise RuntimeError("writer da captura encerrado")
+        item = _QueueItem(events)
+        self._queue.put(item)
+        return item.result()
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:  # sentinel de encerramento
+                return
+            batch = [item]
+            total = len(item.events)
+            while total < MAX_DRAIN_EVENTS:
+                try:
+                    nxt = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if nxt is None:  # sentinel: reprocessa após o lote
+                    self._queue.put(None)
+                    break
+                batch.append(nxt)
+                total += len(nxt.events)
+            self._write_batch(batch)
+
+    def _write_batch(self, batch: list[_QueueItem]) -> None:
+        events = [ev for item in batch for ev in item.events]
+        try:
+            signed = self.writer.append_many(events)
+        except Exception:
+            # fallback por requisição: um lote ruim não derruba os vizinhos
+            # (o append_many fundido é tudo-ou-nada; isolando, cada
+            # requisição mantém sua própria semântica tudo-ou-nada).
+            for item in batch:
+                try:
+                    item.set_result(self.writer.append_many(item.events))
+                except Exception as exc:
+                    item.set_error(exc)
+            return
+        pos = 0
+        for item in batch:
+            item.set_result(signed[pos : pos + len(item.events)])
+            pos += len(item.events)
+
+    def close(self) -> None:
+        """Sinaliza encerramento, drena o pendente e fecha o writer."""
+        if self._closed:
+            return
+        self._closed = True
+        self._queue.put(None)
+        self._thread.join(timeout=30)
+        self.writer.close()
+
+
 class _WriterCache:
-    """Um AuditWriter por log_dir, com lock dedicado por captura.
+    """Um _CaptureWriter (fila + thread) por log_dir.
 
     A hash-chain é por captura, então a serialização exigida é por log_dir —
-    capturas distintas fazem append em paralelo. O AuditWriter já se protege
-    contra escritores locais concorrentes via flock (``audit.lock``).
+    capturas distintas escrevem em paralelo. Cada captura tem sua fila com
+    thread dedicada; o AuditWriter também se protege via lock interno +
+    flock (``audit.lock``) contra escritores de outros processos.
     """
 
     def __init__(self, hmac_key: bytes):
         self._hmac_key = hmac_key
-        self._writers: dict[str, tuple[AuditWriter, threading.Lock]] = {}
+        self._writers: dict[str, _CaptureWriter] = {}
         self._guard = threading.Lock()
+        self._closed = False
+
+    def _get(self, log_dir: str) -> _CaptureWriter:
+        with self._guard:
+            if self._closed:
+                # sem isso, uma conexão ainda viva após o shutdown recriava o
+                # writer e gravava numa captura já encerrada
+                raise RuntimeError("daemon encerrado: writers fechados")
+            writer = self._writers.get(log_dir)
+            if writer is None:
+                writer = _CaptureWriter(log_dir, self._hmac_key)
+                self._writers[log_dir] = writer
+            return writer
 
     def append(self, log_dir: str, event: dict) -> AuditEvent:
-        with self._guard:
-            entry = self._writers.get(log_dir)
-            if entry is None:
-                entry = (AuditWriter(log_dir, self._hmac_key), threading.Lock())
-                self._writers[log_dir] = entry
-        writer, lock = entry
-        ev = event_from_dict(event)
-        with lock:
-            return writer.append(ev)
+        return self.append_many(log_dir, [event])[0]
+
+    def append_many(self, log_dir: str, events: list[dict]) -> list[AuditEvent]:
+        parsed = [event_from_dict(e) for e in events]
+        return self._get(log_dir).submit(parsed)
 
     def close_all(self) -> None:
         with self._guard:
+            self._closed = True
             entries = list(self._writers.values())
             self._writers.clear()
-        for writer, _lock in entries:
+        for writer in entries:
             writer.close()
 
 
@@ -179,6 +313,23 @@ class _Handler(socketserver.StreamRequestHandler):
             except Exception as exc:
                 return {"ok": False, "error": f"append_failed: {exc}"}
             return {"ok": True, "event": _event_to_dict(ev)}
+        if op == "append_many":
+            log_dir = str(req.get("log_dir") or "").strip()
+            events = req.get("events")
+            if (
+                not log_dir
+                or not isinstance(events, list)
+                or not events
+                or not all(isinstance(e, dict) for e in events)
+            ):
+                return {"ok": False, "error": "invalid_append"}
+            if len(events) > MAX_BATCH_EVENTS:
+                return {"ok": False, "error": "too_many_events"}
+            try:
+                signed = server.writers.append_many(log_dir, events)
+            except Exception as exc:
+                return {"ok": False, "error": f"append_failed: {exc}"}
+            return {"ok": True, "events": [_event_to_dict(ev) for ev in signed]}
         return {"ok": False, "error": "unknown_op"}
 
 

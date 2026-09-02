@@ -16,8 +16,15 @@ HMAC nem o banco de estado.
 - Socket: `gateway/state/daemon/capture.sock` (criado pelo daemon, `0666`;
   diretório `daemon/` `0755`). Default derivado do `--db`:
   `<dir do replay.db>/daemon/capture.sock`.
-- Protocolo: JSON-lines — `ping`, `resolve` (captura ativa) e `append`
-  (daemon calcula `seq_global`/hash-chain/HMAC e grava via `AuditWriter`).
+- Protocolo: JSON-lines — `ping`, `resolve` (captura ativa), `append` e
+  `append_many` (lote tudo-ou-nada, máx. 512 eventos/requisição; o daemon
+  calcula `seq_global`/hash-chain/HMAC e grava via `AuditWriter`). Cada
+  captura tem uma fila single-writer (thread dedicada) que funde os eventos
+  pendentes num único lote — a ordem global é a ordem FIFO de chegada. O
+  `AuditWriter` faz flush por lote; `fsync` por lote é opcional
+  (`DAKOTA_AUDIT_FSYNC=1`, default off — sem ele, uma queda de energia pode
+  perder os lotes ainda só no page cache; a cadeia em si nunca é corrompida
+  porque o `audit.state` só avança após o flush).
 
 Subir/parar (o `deploy.sh` já faz isso automaticamente):
 

@@ -110,15 +110,31 @@ class AuditClient:
         daemon; o evento local é atualizado por referência, como faz o
         ``AuditWriter.append``.
         """
-        payload = asdict(ev)
-        resp = self.request({"op": "append", "log_dir": self.log_dir, "event": payload})
+        return self.append_many([ev])[0]
+
+    def append_many(self, events: list[AuditEvent]) -> list[AuditEvent]:
+        """Envia um lote ao daemon (tudo-ou-nada) e aplica as assinaturas.
+
+        Confirmação individual: cada evento local é atualizado por
+        referência com os campos assinados, na mesma ordem do envio.
+        """
+        events = list(events)
+        if not events:
+            raise ValueError("append_many exige ao menos um evento")
+        payload = [asdict(ev) for ev in events]
+        resp = self.request({"op": "append_many", "log_dir": self.log_dir, "events": payload})
         if not resp.get("ok"):
-            raise AuditClientError(f"append recusado pelo daemon: {resp.get('error')}")
-        signed = resp.get("event") or {}
-        for key, value in signed.items():
-            if key in _EVENT_FIELDS:
-                setattr(ev, key, value)
-        return ev
+            raise AuditClientError(f"append_many recusado pelo daemon: {resp.get('error')}")
+        signed_list = resp.get("events") or []
+        if len(signed_list) != len(events):
+            raise AuditClientError(
+                f"append_many: daemon confirmou {len(signed_list)} de {len(events)} eventos"
+            )
+        for ev, signed in zip(events, signed_list):
+            for key, value in signed.items():
+                if key in _EVENT_FIELDS:
+                    setattr(ev, key, value)
+        return events
 
 
 def daemon_request(socket_path: str, req: dict, timeout: float = 5.0) -> dict | None:

@@ -1,10 +1,69 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from dakota_gateway.compliance import normalize_target_policy, summarize_capture_sessions
 from dakota_gateway.state_db import query_all
+
+from control.services import session_index_cache
+
+# Bloco do tail reverso (monitor): lê do fim para o início até juntar
+# `limit` eventos — nunca o arquivo inteiro (capturas chegam a 100MB+).
+_TAIL_BLOCK_BYTES = 256 * 1024
+
+# Capturas abaixo deste tamanho total não valem o índice em disco: a
+# varredura direta do detalhe de sessão já é barata.
+CAPTURE_INDEX_MIN_BYTES = 4 * 1024 * 1024
+
+
+def read_last_audit_events(file_path, limit: int, *, block_size: int = _TAIL_BLOCK_BYTES) -> list[dict]:
+    """Últimos `limit` eventos JSON do arquivo, em ordem cronológica.
+
+    Tail reverso: lê blocos do fim para o início e para assim que junta
+    `limit` linhas — o custo é proporcional à cauda, não ao tamanho do
+    arquivo. Linhas truncadas/inválidas são ignoradas (fail-safe), como na
+    varredura antiga.
+    """
+    limite = max(1, int(limit or 1))
+    try:
+        tamanho = os.path.getsize(file_path)
+    except OSError:
+        return []
+    if tamanho <= 0:
+        return []
+
+    eventos: list[dict] = []  # coletados do mais novo para o mais antigo
+    fim = tamanho
+    resto = b""
+    try:
+        with open(file_path, "rb") as fh:
+            while fim > 0 and len(eventos) < limite:
+                inicio = max(0, fim - int(block_size))
+                fh.seek(inicio)
+                dados = fh.read(fim - inicio) + resto
+                partes = dados.split(b"\n")
+                # partes[0] pode ser o meio de uma linha: volta ao buffer
+                resto = partes[0] if inicio > 0 else b""
+                candidatas = partes[1:] if inicio > 0 else partes
+                for raw in reversed(candidatas):
+                    texto = raw.decode("utf-8", errors="replace").strip()
+                    if not texto:
+                        continue
+                    try:
+                        item = json.loads(texto)
+                    except Exception:
+                        continue
+                    if isinstance(item, dict):
+                        eventos.append(item)
+                    if len(eventos) >= limite:
+                        break
+                fim = inicio
+    except OSError:
+        return []
+    eventos.reverse()
+    return eventos
 
 
 def summarize_gateway_events(events: list[dict]) -> dict:
@@ -62,25 +121,13 @@ def read_gateway_monitor(log_dir: str, limit: int = 40) -> dict:
 
     events: list[dict] = []
     for file_path in reversed(files):
-        try:
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as exc:
-            return {"log_dir": clean_dir, "files_scanned": 0, "events": [], "summary": summarize_gateway_events([]), "error": str(exc)}
-        for line in reversed(lines):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(item, dict):
-                events.append(item)
-            if len(events) >= limit:
-                break
-        if len(events) >= limit:
+        faltam = int(limit) - len(events)
+        if faltam <= 0:
             break
-    events.reverse()
+        # tail reverso: só a cauda de cada arquivo é lida, do mais novo ao
+        # mais antigo, até completar o limite (nunca o arquivo inteiro).
+        bloco = read_last_audit_events(file_path, faltam)
+        events = bloco + events
     return {
         "log_dir": clean_dir,
         "files_scanned": len(files),
@@ -211,6 +258,68 @@ def read_gateway_sessions(
     }
 
 
+def _varrer_eventos_sessao(files: list, clean_sid: str) -> list[dict] | None:
+    """Varredura completa dos arquivos filtrando a sessão (caminho de
+    fallback). None em erro de leitura."""
+    eventos: list[dict] = []
+    for file_path in files:
+        try:
+            with open(file_path, "rb") as fh:
+                for raw in fh:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("session_id") or "").strip() != clean_sid:
+                        continue
+                    eventos.append(item)
+        except OSError:
+            return None
+    return eventos
+
+
+def _materializar_eventos_sessao(log_path: Path, index: dict, clean_sid: str) -> list[dict] | None:
+    """Materializa os eventos da sessão por seek a partir do índice global
+    da captura. None em qualquer falha (o chamador cai na varredura)."""
+    locs = session_index_cache.session_event_locations(index, clean_sid)
+    if locs is None:
+        return None
+    por_arquivo: dict[int, list[int]] = {}
+    for loc in locs:
+        por_arquivo.setdefault(int(loc[0]), []).append(int(loc[1]))
+    linhas: dict[tuple[int, int], bytes] = {}
+    try:
+        for file_idx, offsets in por_arquivo.items():
+            caminho = log_path / index["files"][file_idx]["name"]
+            with open(caminho, "rb") as fh:
+                for off in offsets:
+                    fh.seek(off)
+                    linhas[(file_idx, off)] = fh.readline()
+    except (OSError, IndexError, KeyError, TypeError):
+        return None
+    eventos: list[dict] = []
+    for loc in locs:
+        chave = (int(loc[0]), int(loc[1]))
+        raw = linhas.get(chave)
+        if raw is None:
+            return None
+        try:
+            item = json.loads(raw.decode("utf-8", errors="replace").strip())
+        except Exception:
+            return None
+        if not isinstance(item, dict):
+            return None
+        if str(item.get("session_id") or "").strip() != clean_sid:
+            return None  # índice inconsistente com o arquivo — não confiar
+        eventos.append(item)
+    return eventos
+
+
 def read_gateway_session_detail(
     log_dir: str,
     session_id: str,
@@ -221,6 +330,7 @@ def read_gateway_session_detail(
     ts_from: int = 0,
     ts_to: int = 0,
     con=None,
+    state_cache_dir: str | None = None,
 ) -> dict:
     clean_dir = str(log_dir or "").strip()
     clean_sid = str(session_id or "").strip()
@@ -242,25 +352,22 @@ def read_gateway_session_detail(
         return {"log_dir": clean_dir, "session": None, "events": [], "failures": [], "error": "sessão não encontrada"}
 
     files = sorted(Path(clean_dir).rglob("audit-*.jsonl"))
-    events: list[dict] = []
-    for file_path in files:
-        try:
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as exc:
-            return {"log_dir": clean_dir, "session": target_session, "events": [], "failures": [], "error": str(exc)}
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("session_id") or "").strip() != clean_sid:
-                continue
-            events.append(item)
+    log_path = Path(clean_dir)
+    events = None
+    # Índice global da captura (FASE 9): em capturas grandes o detalhe
+    # materializa os eventos da sessão por seek, sem reler os arquivos
+    # inteiros. Só vale para capturas planas (o índice usa glob não
+    # recursivo); qualquer falha cai na varredura completa.
+    if files and all(f.parent == log_path for f in files):
+        cache_dir = str(state_cache_dir or log_path.parent / "replay_state_cache")
+        index = session_index_cache.get_capture_index(
+            cache_dir, log_path, min_total_bytes=CAPTURE_INDEX_MIN_BYTES)
+        if index is not None:
+            events = _materializar_eventos_sessao(log_path, index, clean_sid)
+    if events is None:
+        events = _varrer_eventos_sessao(files, clean_sid)
+        if events is None:
+            return {"log_dir": clean_dir, "session": target_session, "events": [], "failures": [], "error": "falha ao ler os logs da captura"}
     events.sort(key=lambda item: (int(item.get("seq_global") or 0), int(item.get("seq_session") or 0), int(item.get("ts_ms") or 0)))
     filtered_events = []
     for item in events:

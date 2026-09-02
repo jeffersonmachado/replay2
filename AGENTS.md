@@ -123,12 +123,26 @@ replay2/
 - `gateway.py` — proxy SSH auditável; captura `bytes in/out`, `checkpoint`,
   `session_start/end` e eventos `deterministic_input` (tela estável + input);
 - `audit_writer.py` — ordem global (`seq_global`), hash-chain, HMAC e manifest;
+  escrita em lotes (`append_many`: tudo-ou-nada por lote na validação, 1
+  checkpoint do `audit.state` por lote, confirmação individual), thread-safe
+  (lock interno + flock), descritor do JSONL mantido aberto, estado
+  `seq_global`/`prev_hash` em memória com self-healing pela cauda do log,
+  fsync por lote opcional (`DAKOTA_AUDIT_FSYNC=1`, default off — janela de
+  perda documentada na docstring da classe);
 - `capture_daemon.py` — daemon privilegiado de captura (AF_UNIX, JSON-lines):
   resolve a captura ativa e assina/grava os eventos como usuário de serviço;
+  fila single-writer por captura (uma thread de escrita por log_dir drena a
+  fila e grava em lotes — ordem global FIFO determinística; ops `append` e
+  `append_many`, máx. 512 eventos/requisição);
 - `audit_client.py` — cliente/sink remoto do daemon, usado pelo
   `capture-session` (roda como o usuário SSH final, sem chave HMAC nem DB);
+  `append`/`append_many` com confirmação individual por referência;
 - `crypto.py` — primitivas criptográficas (HMAC, hash-chain);
-- `verifier.py` — verificação de integridade da trilha;
+- `verifier.py` — verificação de integridade da trilha em UMA passagem de
+  streaming por arquivo (chunks de 1 MiB; hash-chain, HMAC, sequências e as
+  estatísticas dos manifests — file_sha256/bytes/seq_start/seq_end/
+  first/last hash — saem da mesma leitura; nunca `read_bytes()` em logs
+  grandes);
 - `replay.py` — replay no destino (modos `raw` e `deterministic`);
   `ReplayConfig.term_override` (param `term` da run) vence o TERM gravado no
   `session_start` da captura — terminais com sequências de porta auxiliar
@@ -146,11 +160,21 @@ replay2/
 - `replay_control/` — pacote (decomposto do módulo monolítico em 2026-08-03,
   dívida G2): runner de runs, concorrência, métricas, falhas estruturadas,
   reprocessamento por faixa/sessão/checkpoint. Submódulos: `window.py`
-  (helpers de janela/hash/params), `deterministic.py` (comparação
+  (helpers de janela/hash/params + `index_session_events`/`iter_indexed_events`,
+  índice de offsets por sessão para replay sem materializar o capture, e
+  `scan_capture_metadata`, passagem única de metadados da run), `deterministic.py`
+  (comparação
   determinística), `executors.py` (executores strict-global/parallel-sessions/
   concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + classe
   `Runner`) e `__init__.py` (fachada que reexporta toda a superfície do
-  módulo antigo);
+  módulo antigo). Desde a Fase 8, os modos parallel-sessions rodam EM
+  PARALELO de verdade sobre `ThreadPoolExecutor(max_workers=concurrency)` —
+  nunca 1 thread por sessão esperando em semáforo; os workers releem seus
+  eventos do disco via índice de offsets (memória limitada em captures
+  grandes), a ordem é preservada apenas DENTRO de cada sessão, e o
+  pause/cancel do runner usa `_RunControlState` (status cacheado em memória,
+  SQLite relido no máximo a cada `poll_interval_s`=1s, polling contínuo só
+  enquanto pausado) em vez de consulta ao banco por evento;
 - `replay_failures.py` / `replay_run_state.py` — taxonomia de falhas e estado
   de runs;
 - `screen.py` — normalização e assinatura de tela (fonte central do gateway);
@@ -445,7 +469,13 @@ terminal — isso é garantido pelo teste
   eventos da sessão (tipo/seq/arquivo/offset + direção/tamanho decodificado
   dos "bytes"): a janela de replay é materializada por seek e os totais de
   playback saem de somas de arrays, sem reparsear os audit-*.jsonl a cada
-  request (kill-switch `REPLAY_SESSION_INDEX=0`). Ambos são ligados
+  request (kill-switch `REPLAY_SESSION_INDEX=0`). O mesmo módulo também
+  guarda o índice GLOBAL da captura (FASE 9, `get_capture_index`):
+  arquivos/offsets/sessões/primeiro-último evento e seq_global/tipos/
+  contagens/timestamps/bytes/checkpoints em uma passagem de streaming, com
+  invalidação por mtime+size por arquivo e reindexação incremental só do
+  delta (append no último arquivo + arquivos novos) — usado pelo detalhe de
+  sessão da observabilidade para materializar eventos por seek. Ambos são ligados
   automaticamente acima de `MAX_FULL_REPLAY_EVENTS` (20000) ou quando a
   request vem com `stream=1` — a página de replay da captura marca assim
   as janelas sequenciais do player/timeline, senão cada janela reprocessa
@@ -532,10 +562,22 @@ Variáveis de ambiente de dev: `LISTEN` (default `127.0.0.1:8090`), `DB_PATH`
 `SECRETS_DIR`, `COOKIE_SECRET_FILE`, `HMAC_KEY_FILE`, `WATCH_MODE` (0 desliga
 hot-reload), `HOST_METRICS_ENABLED` (0 desliga o sampler de recursos do host),
 `HOST_METRICS_INTERVAL_S` (default `5`), `HOST_METRICS_RETENTION_DAYS`
-(default `7`). `DAKOTA_RATE_LIMIT_RPM`
+(default `7`). `DAKOTA_DB_JOURNAL_MODE` (ex.: `wal`) e
+`DAKOTA_DB_SYNCHRONOUS` (`NORMAL`/`FULL`/`EXTRA`; `OFF` proibido) ajustam os
+pragmas do SQLite em `db/connection.py` — opt-in, defaults inalterados
+(`delete`/`FULL`); `synchronous=NORMAL` pode perder as últimas transações
+comitadas em queda de energia (ver DESENVOLVIMENTO.md). `DAKOTA_RATE_LIMIT_RPM`
 (default `600`) e `DAKOTA_RATE_LIMIT` (`0` desliga) controlam o rate limiting por IP
 de `/api/*` (`gateway/control/rate_limit.py`); `/api/login` tem throttle
-próprio mais estrito em `admin_routes.py` e não passa pelo limiter genérico. O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
+próprio mais estrito em `admin_routes.py` e não passa pelo limiter genérico.
+`DAKOTA_HTTP_MAX_CONNECTIONS` (default `128`; `0` = sem limite) limita as
+conexões curtas simultâneas do control plane (uma thread por conexão): sem
+slot livre a conexão recebe 503 fail-fast em vez de criar thread ilimitada;
+conexões WebSocket (`/ws/*`) não contam na cota — o handler devolve o slot ao
+concluir o upgrade (`ControlServer.release_connection_slot`). Assets
+estáticos (`/assets/*`) são servidos de cache em memória invalidado por
+mtime/size, com ETag/304, `Cache-Control: public, max-age=3600` e gzip
+quando o cliente aceita (`ui_routes._serve_static_asset`). O `dev.sh` gera os segredos em `.local-secrets/` se ausentes e
 sobe o servidor com `--gateway-auto-activate`.
 
 Execução manual do control plane:
@@ -617,12 +659,23 @@ bash scripts/bump.sh [patch|minor|major]   # incrementa VERSION
 ```
 
 **Importante:** `build-tarball.sh` **falha** se os artefatos de aceitação em
-`artifacts/` não existirem — rode `scripts/final-acceptance.sh` antes. O build
+`artifacts/` não existirem — rode `scripts/final-acceptance.sh` antes. Com
+`artifacts/` presente (modo release), o build também **exige que o aceite
+seja da MESMA árvore e da MESMA VERSION** (`build_validate.py
+check-acceptance`: hash `source_tree_sha256_before/after` do results JSON ==
+hash atual, campo `version` == `VERSION`, suíte completa aprovada) e valida o
+tarball extraído contra o aceite (`verify-tarball`: hash da árvore extraída
+pelo tree_hash.py do próprio pacote + sanity de conteúdo) — reaproveitar
+`final-acceptance-results.json` antigo aborta o build (FASE 2, incidente
+0.8.85). O build
 remove automaticamente do artefato: segredos (`*.key`, `*.pem`, `.env*`, chaves
 SSH), bancos (`*.db*`, `*.sqlite*`), `gateway/state/`, `__pycache__`, `.venv`,
-`node_modules`, `dist/`, `log/`. Quando existe, `artifacts/benchmarks/`
-(evidência do benchmark real AIX×Linux: contrato, runs, agregados, relatório)
-é incluído no pacote. Ver `CHECKLIST_EMPACOTAMENTO.md` para a
+`node_modules`, `dist/`, `log/`. De `artifacts/benchmarks/` entra SOMENTE o
+experimento oficial selecionado — por default o mais recente com
+`experiment-manifest.json` válido, ou o id de `--with-benchmarks <id>`;
+históricos ficam fora do pacote de runtime (FASE 11). O tarball é
+determinístico quando o tar/gzip suportam (ordem estável, owner/group 0,
+mtime de `SOURCE_DATE_EPOCH`, `gzip -n`). Ver `CHECKLIST_EMPACOTAMENTO.md` para a
 verificação pós-build e o processo de release completo (build → copiar para
 `remoto_dakota/artifacts/` → homologação → `git tag v$(cat VERSION)`).
 

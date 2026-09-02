@@ -6,7 +6,7 @@ from dataclasses import dataclass
 DEFAULT_COLOR = "default"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Attributes:
     fg: str | int = DEFAULT_COLOR
     bg: str | int = DEFAULT_COLOR

@@ -1,0 +1,37 @@
+{
+  "descricao": "Baseline da missão de correções de performance (FASE 0) — árvore limpa do commit 7d1ed4a",
+  "captured_at": "2026-09-02T08:46:00-03:00",
+  "commit": "7d1ed4a",
+  "versao": "0.8.87",
+  "source_tree_sha256": "e748dfd0e97f97ccc62b31ba36e28f13c60c81e94b08c90c5025e5c9b10267c8",
+  "ambiente": {
+    "os": "Linux jmachado-Precision-5530 6.8.0-138-generic x86_64 (Ubuntu)",
+    "cpus": 12,
+    "mem_mb": 31713,
+    "python": "3.12.3",
+    "node": "v22.12.0",
+    "tcl": "8.6.14",
+    "expect": "/usr/bin/expect"
+  },
+  "comandos": [
+    {"cmd": "python3 -m pytest tests/ gateway/tests/ -q -m \"not slow and not selenium and not external\"", "duracao_s": 325.08, "resultado": "1392 passed, 195 deselected, 72 subtests passed"},
+    {"cmd": "node --test <17 arquivos de scripts/js-tests.manifest>", "duracao_s": 2.36, "resultado": "17/17 ok"},
+    {"cmd": "tclsh tests/all.tcl", "duracao_s": 0.93, "resultado": "68 passed, 0 failed (12 arquivos)"},
+    {"cmd": "python3 -m compileall -q gateway lib bin tests scripts", "duracao_s": 0.78, "resultado": "rc=0 (árvore limpa /tmp/replay2-baseline)"},
+    {"cmd": "python3 scripts/tree_hash.py (sobre git archive HEAD)", "resultado": "e748dfd0e97f97ccc62b31ba36e28f13c60c81e94b08c90c5025e5c9b10267c8"}
+  ],
+  "tamanhos": {
+    "dist_total": "2,7G",
+    "artifacts_total": "76M",
+    "tarball_0.8.86_bytes": 10343112,
+    "gateway_dakota_gateway": "3,6M",
+    "gateway_dakota_terminal": "224K",
+    "gateway_control": "5,8M",
+    "tests": "8,2M"
+  },
+  "metricas_antes": {
+    "observacao": "Benchmarks específicos (terminal 6,4KB, SQLite 5000 inserts, audit writer p50/p95/p99) são medidos pelos respectivos agentes de fase e consolidados em final.json",
+    "throughput_benchmark_v7_metodologia": "comparison.py _level_stats/_janela_segundos usam max(fins)-min(inicios) sobre repetições sequenciais (inclui ociosidade) — host_series=[] hard-coded em build_comparison:183"
+  },
+  "bloqueios": []
+}

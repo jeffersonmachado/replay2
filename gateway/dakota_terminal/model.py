@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from .attributes import Attributes, DEFAULT_COLOR
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Cell:
     ch: str = " "
     fg: str | int = DEFAULT_COLOR
@@ -51,5 +51,17 @@ class Cell:
 
 
 def blank_cell(attrs: Attributes | None = None) -> Cell:
-    return Cell.from_attrs(" ", attrs or Attributes())
+    if attrs is None:
+        # Célula vazia sem atributos especiais: instância imutável (frozen)
+        # compartilhada. A engine nunca muta Cell — toda escrita substitui a
+        # referência na matriz (copy-on-write natural), então o
+        # compartilhamento é seguro e elimina a alocação de
+        # Attributes+dict+Cell por posição vazia (reset/scroll/erase).
+        return DEFAULT_CELL
+    return Cell.from_attrs(" ", attrs)
+
+
+# Célula vazia padrão: imutável (dataclass frozen), reutilizada por todas as
+# posições em branco sem atributos especiais.
+DEFAULT_CELL = Cell()
 

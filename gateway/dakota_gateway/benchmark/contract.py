@@ -78,6 +78,15 @@ class ExperimentContract:
     think_time_profile: ThinkTimeProfile
     stop_conditions: StopConditions
     environments: tuple[str, ...]  # environment_ids
+    #: Sonda de recuperação pós-carga (FASE 3): > 0 habilita a medição REAL
+    #: de recuperação (janela em segundos após o fim da carga). 0 = desligada
+    #: (default — compatível com manifestos antigos).
+    recovery_probe_seconds: int = 0
+    #: Justificativas registradas quando dois hashes de proveniência são
+    #: iguais (ex.: {"journey_set_sha256==dataset_sha256": "mesma captura
+    #: de origem"}) — exigidas na criação quando hashes coincidem, pois a
+    #: igualdade só é legítima com confirmação explícita e auditável.
+    hash_justifications: dict = field(default_factory=dict)
 
     def to_manifest_dict(self) -> dict:
         """Manifesto completo do experimento (todos os campos do §6)."""
@@ -109,6 +118,8 @@ class ExperimentContract:
                     self.stop_conditions.host_cpu_sustained_samples,
             },
             "environments": list(self.environments),
+            "recovery_probe_seconds": self.recovery_probe_seconds,
+            "hash_justifications": dict(self.hash_justifications),
         }
 
     def canonical_json(self) -> str:
@@ -140,7 +151,15 @@ def create_contract(**kwargs) -> ExperimentContract:
 
     ``created_at`` pode ser informado explicitamente (reprodutibilidade);
     caso contrário usa o instante UTC atual em ISO8601.
+
+    Proveniência (FASE 4): hashes placeholder (vazio NÃO é rejeitado aqui
+    por compatibilidade de criação via UI, mas vira problema na decisão) são
+    rejeitados na criação; hashes iguais entre si exigem justificativa
+    registrada (``hash_justifications``). ``_validar_proveniencia=False`` é
+    reservado ao ``load_contract`` (manifestos legados carregam para
+    auditoria — a decisão ainda barra os problemas).
     """
+    validar = bool(kwargs.pop("_validar_proveniencia", True))
     kwargs.setdefault("schema_version", SCHEMA_VERSION)
     if not kwargs.get("created_at"):
         kwargs["created_at"] = (
@@ -155,13 +174,119 @@ def create_contract(**kwargs) -> ExperimentContract:
         kwargs["concurrency_levels"] = tuple(int(n) for n in kwargs["concurrency_levels"])
     if "environments" in kwargs:
         kwargs["environments"] = tuple(str(e) for e in kwargs["environments"])
-    return ExperimentContract(**kwargs)
+    if "hash_justifications" in kwargs and isinstance(kwargs["hash_justifications"], dict):
+        kwargs["hash_justifications"] = dict(kwargs["hash_justifications"])
+    contrato = ExperimentContract(**kwargs)
+    if validar:
+        problemas = validate_provenance_hashes(
+            contrato, exigir_presenca=False)
+        duros = [p for p in problemas if p["severidade"] == "erro"]
+        if duros:
+            raise ContractViolation(
+                "hashes de proveniência inválidos: "
+                + "; ".join(p["problema"] for p in duros))
+    return contrato
 
 
 def load_contract(manifest_path: Path) -> ExperimentContract:
-    """Recarrega o contrato de um ``experiment-manifest.json`` (round-trip)."""
+    """Recarrega o contrato de um ``experiment-manifest.json`` (round-trip).
+
+    Manifestos legados podem conter hashes placeholder (ex.: o v7 usou
+    ``"def1277b"`` + zeros no think time): o carregamento NÃO valida a
+    proveniência para permitir auditoria/recálculo — quem barra é a decisão
+    (``build_comparison``/``decide`` com o contrato em mãos).
+    """
     dados = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    return create_contract(**dados)
+    return create_contract(_validar_proveniencia=False, **dados)
+
+
+#: Campos de proveniência cujos hashes identificam os artefatos comparados.
+_CAMPOS_HASH = (
+    "journey_set_sha256",
+    "dataset_sha256",
+    "application_version_sha256",
+)
+
+
+def _hash_do_campo(contrato: ExperimentContract, campo: str) -> str:
+    """Lê o hash de um campo de proveniência (inclui o do think time)."""
+    if campo == "think_time_profile.sha256":
+        return contrato.think_time_profile.sha256 or ""
+    return getattr(contrato, campo, "") or ""
+
+
+def validate_provenance_hashes(
+    contrato: ExperimentContract, *, exigir_presenca: bool = True
+) -> list[dict]:
+    """Valida os hashes de proveniência do contrato (FASE 4).
+
+    Devolve uma lista de problemas ``{"campo", "problema", "severidade"}``
+    (``severidade`` = ``"erro"`` | ``"aviso"``). Regras:
+
+    - vazio/ausente: tolerado com ``exigir_presenca=False`` (criação via UI
+      ainda não conhece todos os artefatos); com ``True`` vira erro — a
+      decisão não pode comparar o que não está identificado;
+    - formato que não é sha256 hex de 64 chars → erro;
+    - placeholder evidente (literal "unknown" ou sequência de ≥ 32 zeros
+      consecutivos, padrão dos manifestos gerados à mão como o v7) → erro;
+    - dois hashes VÁLIDOS iguais entre si sem justificativa registrada em
+      ``hash_justifications`` (chave ``"campoA==campoB"``) → erro: a
+      igualdade só é legítima com confirmação explícita e auditável.
+    """
+    campos = list(_CAMPOS_HASH) + ["think_time_profile.sha256"]
+    problemas: list[dict] = []
+    validos: dict[str, str] = {}
+    for campo in campos:
+        valor = _hash_do_campo(contrato, campo).strip()
+        if not valor:
+            if exigir_presenca:
+                problemas.append({
+                    "campo": campo,
+                    "problema": "hash de proveniência ausente/vazio",
+                    "severidade": "erro",
+                })
+            continue
+        if valor.lower() == "unknown":
+            problemas.append({
+                "campo": campo,
+                "problema": "hash de proveniência inválido ('unknown')",
+                "severidade": "erro",
+            })
+            continue
+        if len(valor) != 64 or any(
+            c not in "0123456789abcdefABCDEF" for c in valor
+        ):
+            problemas.append({
+                "campo": campo,
+                "problema": "formato inválido (não é sha256 hex de 64 "
+                            "caracteres)",
+                "severidade": "erro",
+            })
+            continue
+        if "0" * 32 in valor:
+            problemas.append({
+                "campo": campo,
+                "problema": "hash de proveniência fictício (sequência de "
+                            "≥ 32 zeros consecutivos)",
+                "severidade": "erro",
+            })
+            continue
+        validos[campo] = valor.lower()
+    # igualdade entre hashes válidos exige justificativa registrada
+    itens = sorted(validos.items())
+    for i, (campo_a, hash_a) in enumerate(itens):
+        for campo_b, hash_b in itens[i + 1:]:
+            if hash_a != hash_b:
+                continue
+            chave = f"{campo_a}=={campo_b}"
+            if chave not in (contrato.hash_justifications or {}):
+                problemas.append({
+                    "campo": chave,
+                    "problema": "hashes idênticos sem justificativa "
+                                "registrada no contrato",
+                    "severidade": "erro",
+                })
+    return problemas
 
 
 def validate_environment_parity(env_configs: list[dict]) -> None:

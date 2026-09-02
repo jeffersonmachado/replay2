@@ -1028,6 +1028,7 @@ def _bench_rebuild_result(experiment_dir, contract):
         resultado.verdict = dados.get("verdict", "INCONCLUSIVE")
         resultado.reason = dados.get("reason", "")
         resultado.stop_reason = dados.get("stop_reason")
+        resultado.recovery = dados.get("recovery") or {}
     runs_dir = experiment_dir / "runs"
     if not runs_dir.is_dir():
         return resultado
@@ -1056,7 +1057,24 @@ def _bench_rebuild_result(experiment_dir, contract):
             cooldown_samples=por_fase.get("COOLDOWN", []),
             host_samples_path=str(run_dir / "host-samples.jsonl"),
             error_reason=resumo.get("error_reason", ""),
+            # artefatos antigos (ex.: v7) não registram a contagem — None =
+            # "não medido" e as métricas de jornada são omitidas, nunca
+            # inferidas das amostras
+            completed_journeys=resumo.get("completed_journeys"),
+            planned_duration_s=resumo.get(
+                "planned_duration_s", float(contract.measurement_seconds)),
+            # FASE 3/4: janela de rede, cobertura funcional e clock offset
+            # (None/ausente em artefatos antigos = "não registrado")
+            net_window=resumo.get("net_window"),
+            checkpoints_executed=resumo.get("checkpoints_executed"),
+            checkpoints_checked=resumo.get("checkpoints_checked"),
+            checkpoint_exceptions=resumo.get("checkpoint_exceptions"),
         )
+        # clock offset medido na coleta (FASE 3): vem do status do coletor
+        host_status = (resumo.get("host_metrics") or {}).get("status") or {}
+        if host_status.get("clock_offset_ms") is not None:
+            run.host_clock_offset_ms = int(host_status["clock_offset_ms"])
+            run.host_clock_offset_measured = True
         resultado.runs.append(run)
     return resultado
 
@@ -1213,7 +1231,7 @@ def _handle_benchmark(ns) -> int:
                                      Path(ns.artifacts_dir), journeys=journeys)
         result = executor.run()
 
-        comparison = build_comparison(result, env_models)
+        comparison = build_comparison(result, env_models, contract=contract)
         capacity = build_capacity(result)
         decision = build_decision(result, comparison)
         result.verdict = decision.verdict
@@ -1286,7 +1304,8 @@ def _handle_benchmark(ns) -> int:
         from .benchmark import persistence as bp
 
         result = _bench_rebuild_result(experiment_dir, contract)
-        comparison = build_comparison(result, env_models or None)
+        comparison = build_comparison(result, env_models or None,
+                                      contract=contract)
         capacity = build_capacity(result)
         decision = build_decision(result, comparison)
         if ns.benchmark_cmd == "report":

@@ -81,6 +81,12 @@ def _normalizar_ambiente(tps: float | None, modelo: EnvironmentModel,
     return {
         "environment_id": modelo.environment_id,
         "tps": tps,
+        # Proveniência da vazão normalizada (quando informada pelo chamador):
+        # de qual nível de concorrência e qual métrica vieram — a vazão
+        # normalizada é sempre de UM nível identificado (limite operacional
+        # seguro), nunca de um agregado heterogêneo entre níveis.
+        "throughput_level": extras.get("throughput_level"),
+        "throughput_metric": extras.get("throughput_metric"),
         "tps_per_vcpu": tps_per_vcpu,
         "tps_per_physical_core": tps_per_physical,
         "tps_per_entitled_capacity": tps_per_entitled,
@@ -105,8 +111,13 @@ def normalize(env_results: dict[str, dict],
     """Normaliza o throughput de todos os ambientes (§5.10/§19).
 
     ``env_results``: ``{"<env_id>": {"tps": x, "cpu_consumed"?: y,
-    "cost_per_hour"?: z}}`` — TPS medido (e dados de consumo/custo quando
-    coletados). Retorna ``{"per_environment": {...}, "formulas": {...},
+    "cost_per_hour"?: z, "throughput_level"?: n, "throughput_metric"?: m}}``
+    — a vazão medida (``operations_per_second`` de UM nível de concorrência
+    explicitamente identificado, tipicamente o limite operacional seguro —
+    nunca um agregado entre níveis) e dados de consumo/custo quando
+    coletados. ``throughput_level``/``throughput_metric`` (proveniência da
+    vazão) são repassados à saída de cada ambiente.
+    Retorna ``{"per_environment": {...}, "formulas": {...},
     "status": str}``; o status global é ``NORMALIZATION_INCONCLUSIVE`` se
     QUALQUER ambiente tiver campo aplicável ausente/zero.
     """

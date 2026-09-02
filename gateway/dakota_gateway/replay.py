@@ -420,7 +420,7 @@ def _wait_for_screen_signature(
             match,
             expected_event=expected_event,
             observed_snapshot=observed_snap,
-            session_config=s.cfg,
+            session_config=getattr(s, "cfg", None),
         )
 
     _, match, _ = wait_for_signature_match(

@@ -52,6 +52,17 @@ FAILED_PASS_BACKOFF_S = 0.5
 #: é fim natural de jornada — o app/shell encerrou — e não conta como falha).
 _SESSION_FATAL_CODES = ("session_io_error",)
 
+# ── Sonda de recuperação pós-carga (FASE 3) ────────────────────────────────
+#: O host é considerado RECUPERADO quando a CPU volta a
+#: baseline + max(RECOVERY_CPU_MARGIN_PP, baseline × RECOVERY_CPU_MARGIN_REL)
+#: E o load1 volta a baseline + RECOVERY_LOAD_MARGIN — tolerância documentada
+#: ao ruído de fundo do host (nunca "recuperou quando chegou a zero").
+RECOVERY_CPU_MARGIN_PP = 5.0
+RECOVERY_CPU_MARGIN_REL = 0.10
+RECOVERY_LOAD_MARGIN = 0.5
+#: Janela pré-carga consultada para a baseline de host (ms).
+RECOVERY_BASELINE_WINDOW_MS = 60_000
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -78,6 +89,10 @@ class BenchmarkExecutor:
         self._journeys = list(journeys or [])
         self.order_history: list[dict] = []
         self.stop_reason: dict | None = None
+        # FASE 3 — sonda de recuperação: baseline de host pré-carga por
+        # ambiente e fim de carga (ms) da ÚLTIMA run de cada ambiente
+        self._host_baseline: dict[str, list[dict]] = {}
+        self._load_end_ms: dict[str, int] = {}
 
     # -- fases -----------------------------------------------------------
 
@@ -110,7 +125,7 @@ class BenchmarkExecutor:
             self.adapters[env_id].prepare_dataset(dataset_ref)
 
     def _run_phase(self, adapter, phase: str, seconds: int,
-                   iteration: int, concurrency: int) -> tuple[list, str]:
+                   iteration: int, concurrency: int) -> tuple[list, str, int]:
         """Executa uma fase cronometrada com ``concurrency`` usuários virtuais.
 
         Cada passada da jornada é um ciclo completo (§9): o usuário virtual
@@ -125,13 +140,19 @@ class BenchmarkExecutor:
         ``MAX_ERROR_SAMPLES_PER_PHASE`` amostras de erro abortam a fase com
         razão de falha — SEM gerar amostras sintéticas.
 
-        Devolve ``(amostras, fatal_reason)`` — ``fatal_reason`` vazio = ok.
+        Devolve ``(amostras, fatal_reason, jornadas_completas)`` —
+        ``fatal_reason`` vazio = ok. ``jornadas_completas`` conta as
+        passadas que executaram TODOS os passos da jornada (sem exceção e
+        sem corte por morte de sessão — o corte é registrado pelo adaptador
+        em ``journey_incompletions``): é a única fonte confiável de jornada
+        completa, pois quem conhece a lista de passos é o executor/adaptador,
+        não a amostra.
         """
         coletadas: list = []
         lock = threading.Lock()
         deadline = time.monotonic() + max(0, seconds)
         journeys = self._journeys
-        estado = {"erros_fase": 0, "fatal": ""}
+        estado = {"erros_fase": 0, "fatal": "", "completas": 0}
 
         def worker(vu_id: str) -> None:
             primeira = True
@@ -149,9 +170,17 @@ class BenchmarkExecutor:
                     except Exception as exc:
                         estado["fatal"] = f"start_session_failed: {exc}"
                         return
+                    incompletas_antes = len(
+                        getattr(adapter, "journey_incompletions", None) or [])
                     try:
                         produzidas = adapter.execute_journey(
                             handle, journey, phase=phase)
+                        incompletas_depois = len(
+                            getattr(adapter, "journey_incompletions", None) or [])
+                        if incompletas_depois == incompletas_antes:
+                            # passada sem corte: todos os passos executados
+                            with lock:
+                                estado["completas"] += 1
                     except Exception as exc:
                         produzidas = []
                         estado["fatal"] = f"execute_journey_failed: {exc}"
@@ -198,7 +227,7 @@ class BenchmarkExecutor:
             t.start()
         for t in threads:
             t.join()
-        return coletadas, estado["fatal"]
+        return coletadas, estado["fatal"], estado["completas"]
 
     # -- escada / parada ---------------------------------------------------
 
@@ -264,21 +293,37 @@ class BenchmarkExecutor:
             if callable(set_ctx):
                 set_ctx(iteration, concurrency)
             started_ms = _now_ms()
+            # contadores de rede da janela da run (FASE 3 — cobertura do
+            # grupo "rede", que o sampler de host não instrumenta): leitura
+            # antes/depois das fases, taxas = delta/tempo (best-effort;
+            # adaptador sem o método ou falha remota → sem janela)
+            collect_net = getattr(adapter, "collect_net_counters", None)
+            net_antes = None
+            if callable(collect_net):
+                try:
+                    net_antes = collect_net()
+                except Exception:
+                    net_antes = None
             por_fase: dict[str, list] = {f: [] for f in _TIMED_PHASES}
+            completas_por_fase: dict[str, int] = {f: 0 for f in _TIMED_PHASES}
             host_metrics: list[dict] = []
             database_metrics: dict = {"available": False,
                                       "reason": "collector_not_run"}
+            net_window: dict | None = None
             status = "COMPLETED"
             error_reason = ""
             inc_antes = len(getattr(adapter, "journey_incompletions", []) or [])
+            # cobertura funcional (FASE 4): delta do checkpoint_log da run
+            chk_antes = len(getattr(adapter, "checkpoint_log", []) or [])
             try:
                 fases = (("WARMUP", self.contract.warmup_seconds),
                          ("MEASUREMENT", self.contract.measurement_seconds),
                          ("COOLDOWN", self.contract.cooldown_seconds))
                 for phase, seconds in fases:
-                    amostras, fatal = self._run_phase(
+                    amostras, fatal, completas = self._run_phase(
                         adapter, phase, seconds, iteration, concurrency)
                     por_fase[phase] = amostras
+                    completas_por_fase[phase] = completas
                     # janitor de órfãos entre fases: sessões mortas no meio
                     # da jornada deixam a árvore remota viva comendo CPU e
                     # distorcendo as fases seguintes (duck typing; falha do
@@ -294,6 +339,7 @@ class BenchmarkExecutor:
                         error_reason = fatal
                         break
                 finished_ms = _now_ms()
+                self._load_end_ms[env_id] = finished_ms
                 try:
                     host_metrics = list(
                         adapter.collect_host_metrics(started_ms, finished_ms) or [])
@@ -303,6 +349,15 @@ class BenchmarkExecutor:
                     database_metrics = dict(adapter.collect_database_metrics() or {})
                 except Exception as exc:
                     database_metrics = {"available": False, "reason": str(exc)}
+                if callable(collect_net):
+                    try:
+                        net_depois = collect_net()
+                    except Exception:
+                        net_depois = None
+                    net_window = self._net_window(net_antes, net_depois,
+                                                  started_ms, finished_ms)
+                else:
+                    net_window = None
             except Exception as exc:
                 status = "FAILED"
                 error_reason = str(exc)
@@ -324,14 +379,73 @@ class BenchmarkExecutor:
                 cooldown_samples=list(por_fase["COOLDOWN"]),
                 database_metrics=database_metrics,
                 error_reason=error_reason,
+                completed_journeys=completas_por_fase["MEASUREMENT"],
+                planned_duration_s=float(self.contract.measurement_seconds),
             )
+            # clock skew (FASE 3): o offset medido pelo coletor remoto é
+            # estampado na run — a comparação exige a prova de correção da
+            # janela temporal (sem offset medido → INCONCLUSIVE)
+            host_status = getattr(adapter, "host_metrics_status", None)
+            if (isinstance(host_status, dict)
+                    and host_status.get("clock_offset_ms") is not None):
+                result.host_clock_offset_ms = int(host_status["clock_offset_ms"])
+                result.host_clock_offset_measured = True
+            result.net_window = net_window
+            # Cobertura da verificação funcional (FASE 4): checkpoints da
+            # fase MEASUREMENT desta run — executados/checados/exceções com
+            # razão auditada. Adaptador sem checkpoint_log → None ("não
+            # registrado"), nunca zero fingindo cobertura.
+            if getattr(adapter, "checkpoint_log", None) is not None:
+                checkpoints_meas = [
+                    e for e in (adapter.checkpoint_log or [])[chk_antes:]
+                    if e.get("phase") == "MEASUREMENT"]
+                result.checkpoints_executed = len(checkpoints_meas)
+                result.checkpoints_checked = sum(
+                    1 for e in checkpoints_meas if e.get("checked"))
+                result.checkpoint_exceptions = [
+                    e for e in checkpoints_meas if not e.get("checked")]
             run_id = f"{env_id}-iter{iteration}-conc{concurrency}"
             result.host_samples_path = self._write_run_artifacts(
                 run_id, result, host_metrics, env_order,
                 session_logs=session_logs, incompletions=incompletas,
-                host_status=getattr(adapter, "host_metrics_status", None))
+                host_status=host_status)
             results.append(result)
         return results
+
+    @staticmethod
+    def _net_window(net_antes: dict | None, net_depois: dict | None,
+                    started_ms: int, finished_ms: int) -> dict | None:
+        """Taxas de rede da janela da run a partir dos contadores remotos.
+
+        ``net_*`` são contadores absolutos (bytes/pacotes desde o boot);
+        as taxas são ``delta / duração_da_janela``. Contador que andou para
+        trás (reboot/overflow) invalida a taxa correspondente — nunca gera
+        número negativo inventado.
+        """
+        if not net_antes or not net_depois:
+            return None
+        janela_s = max((finished_ms - started_ms) / 1000.0, 0.001)
+        janela: dict = {"fonte": "contadores_remotos",
+                        "window_s": round(janela_s, 3)}
+        for rotulo, chave, fator in (
+                ("net_rx_kbs", "rx_bytes", 1024.0),
+                ("net_tx_kbs", "tx_bytes", 1024.0),
+                ("net_rx_pps", "rx_packets", 1.0),
+                ("net_tx_pps", "tx_packets", 1.0)):
+            antes = net_antes.get(chave)
+            depois = net_depois.get(chave)
+            if not isinstance(antes, (int, float)) or not isinstance(
+                    depois, (int, float)):
+                continue
+            delta = float(depois) - float(antes)
+            if delta < 0:
+                continue
+            janela[rotulo] = round(delta / janela_s / fator, 3)
+        # cobertura exige ao menos UMA taxa calculada — dict sem taxa não é
+        # evidência de rede
+        return janela if any(
+            k.startswith("net_") and isinstance(v, float)
+            for k, v in janela.items()) else None
 
     def _persist_run_status(self, result: EnvironmentRunResult) -> None:
         """Atualiza o status no execution-result.json da run (pós-reclassificação)."""
@@ -403,6 +517,18 @@ class BenchmarkExecutor:
             "warmup_samples": len(result.warmup_samples),
             "cooldown_samples": len(result.cooldown_samples),
             "incomplete_journeys": list(incompletions or []),
+            # jornadas COMPLETAS da fase MEASUREMENT (fonte confiável de
+            # journeys_count/completed_journeys_per_second na comparação) e
+            # duração planejada da fase — None em artefatos antigos
+            "completed_journeys": result.completed_journeys,
+            "planned_duration_s": result.planned_duration_s,
+            # cobertura da verificação funcional (FASE 4 — deltas do
+            # checkpoint_log do adaptador; None = não registrado) e janela
+            # de rede por contadores remotos (FASE 3)
+            "checkpoints_executed": result.checkpoints_executed,
+            "checkpoints_checked": result.checkpoints_checked,
+            "checkpoint_exceptions": result.checkpoint_exceptions,
+            "net_window": result.net_window,
             # evidência da coleta de host: disponibilidade, tentativas e
             # clock offset medido (auditoria do skew orquestrador×host, §13)
             "host_metrics": {
@@ -438,6 +564,10 @@ class BenchmarkExecutor:
 
         # PREPARE
         self._prepare()
+
+        # Baseline de host pré-carga (FASE 3 — sonda de recuperação; sem
+        # baseline o ambiente fica sem medição, nunca inventada)
+        self._coletar_baselines_host()
 
         # WARMUP → MEASUREMENT → COOLDOWN por nível × iteração (§11 pareado)
         all_runs: list[EnvironmentRunResult] = []
@@ -538,6 +668,11 @@ class BenchmarkExecutor:
             except Exception:
                 pass
 
+        # Sonda de recuperação pós-carga (FASE 3): medição REAL do retorno
+        # do host à faixa da baseline — gravada no execution-result.json e
+        # consumida pela comparação/relatório (recovery_seconds)
+        recovery = self._sonda_recuperacao()
+
         # Stop_condition (§17): as falhas do NÍVEL PARADO (ex.: sessões que
         # não abrem sob saturação, "User limit exceeded" de licença) são o
         # achado de capacidade — reclassificadas como ABORTED, não derrubam
@@ -578,6 +713,7 @@ class BenchmarkExecutor:
             verdict="INCONCLUSIVE",
             reason=reason,
             stop_reason=self.stop_reason,
+            recovery=recovery,
         )
         self._write_experiment_result(resultado, preflight)
         return resultado
@@ -604,6 +740,95 @@ class BenchmarkExecutor:
             amostras.extend(self._read_run_host_samples(run))
         return amostras
 
+    # -- sonda de recuperação (FASE 3) --------------------------------------
+
+    def _coletar_baselines_host(self) -> None:
+        """Baseline de host PRÉ-CARGA por ambiente (sonda de recuperação).
+
+        Só roda quando ``recovery_probe_seconds > 0`` no contrato. Sem
+        baseline o ambiente fica sem medição de recuperação (relatório diz
+        "não medido" — nunca inventado).
+        """
+        probe_s = int(getattr(self.contract, "recovery_probe_seconds", 0) or 0)
+        if probe_s <= 0:
+            return
+        agora = _now_ms()
+        for env_id in self.contract.environments:
+            adapter = self.adapters.get(env_id)
+            if adapter is None:
+                continue
+            try:
+                amostras = list(adapter.collect_host_metrics(
+                    agora - RECOVERY_BASELINE_WINDOW_MS, agora) or [])
+            except Exception:
+                amostras = []
+            validas = [a for a in amostras
+                       if isinstance(a, dict) and a.get("available") is not False]
+            if validas:
+                self._host_baseline[env_id] = validas
+
+    def _sonda_recuperacao(self) -> dict:
+        """Medição REAL da recuperação pós-carga (§18, FASE 3).
+
+        Aguarda a janela de sonda e consulta as amostras pós-carga de cada
+        ambiente: ``recovery_seconds`` = tempo entre o fim da carga e a
+        PRIMEIRA amostra de volta à faixa da baseline (CPU e load1, com as
+        margens documentadas ``RECOVERY_*``). Host que não recuperou dentro
+        da janela → ``recovered=False`` + ``recovery_seconds=None``.
+        """
+        probe_s = int(getattr(self.contract, "recovery_probe_seconds", 0) or 0)
+        if probe_s <= 0 or not self._host_baseline:
+            return {}
+        time.sleep(probe_s)
+        recovery: dict = {}
+        for env_id in self.contract.environments:
+            adapter = self.adapters.get(env_id)
+            baseline = self._host_baseline.get(env_id)
+            fim_carga = self._load_end_ms.get(env_id)
+            if adapter is None or not baseline or fim_carga is None:
+                continue
+            cpus = [float(a["cpu_pct"]) for a in baseline
+                    if isinstance(a.get("cpu_pct"), (int, float))]
+            loads = [float(a["load1"]) for a in baseline
+                     if isinstance(a.get("load1"), (int, float))]
+            if not cpus or not loads:
+                continue
+            base_cpu = sum(cpus) / len(cpus)
+            base_load = sum(loads) / len(loads)
+            lim_cpu = base_cpu + max(RECOVERY_CPU_MARGIN_PP,
+                                     base_cpu * RECOVERY_CPU_MARGIN_REL)
+            lim_load = base_load + RECOVERY_LOAD_MARGIN
+            try:
+                amostras = list(adapter.collect_host_metrics(
+                    fim_carga, fim_carga + probe_s * 1000) or [])
+            except Exception:
+                continue
+            validas = [a for a in amostras
+                       if isinstance(a, dict) and a.get("available") is not False]
+            recuperou_em: float | None = None
+            for amostra in sorted(
+                    validas, key=lambda a: int(a.get("ts_ms", 0))):
+                cpu = amostra.get("cpu_pct")
+                load = amostra.get("load1")
+                ts = amostra.get("ts_ms")
+                if not all(isinstance(v, (int, float))
+                           for v in (cpu, load, ts)):
+                    continue
+                if float(cpu) <= lim_cpu and float(load) <= lim_load:
+                    recuperou_em = (int(ts) - fim_carga) / 1000.0
+                    break
+            recovery[env_id] = {
+                "recovered": recuperou_em is not None,
+                "recovery_seconds": recuperou_em,
+                "baseline": {"cpu_pct": round(base_cpu, 3),
+                             "load1": round(base_load, 3)},
+                "margins": {"cpu_pct": round(lim_cpu, 3),
+                            "load1": round(lim_load, 3)},
+                "probe_window_s": probe_s,
+                "samples": len(validas),
+            }
+        return recovery
+
     def _write_experiment_result(self, resultado: ExperimentResult,
                                  preflight: dict) -> None:
         """Grava o execution-result.json do experimento (nível raiz)."""
@@ -617,6 +842,8 @@ class BenchmarkExecutor:
             "preflight": preflight,
             "order_history": self.order_history,
             "stop_reason": self.stop_reason,
+            # sonda de recuperação pós-carga (FASE 3): {} quando desligada
+            "recovery": dict(getattr(resultado, "recovery", None) or {}),
             "runs": [
                 {
                     "environment_id": r.environment_id,

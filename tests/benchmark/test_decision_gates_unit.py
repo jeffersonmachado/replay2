@@ -151,16 +151,30 @@ class TestDecisionGates(unittest.TestCase):
 
     def test_caminho_feliz_pass(self) -> None:
         """Tudo comprovado: sigs checadas sem divergência, host válidas nos
-        dois ambientes, latências constantes (CI aceitável) → PASS."""
-        host_base = _host_file(self.tmp, "host-base.jsonl",
-                               [{"ts_ms": 1, "cpu_pct": 12.5}])
+        dois ambientes com TODOS os grupos essenciais cobertos, clock offset
+        medido e dentro do gate, latências constantes (CI aceitável) → PASS.
+
+        FASE 3: o "caminho feliz" exige cobertura completa de coletores
+        (sem rede/memória/disco o gargalo não é declarável → INCONCLUSIVE)
+        e offset de relógio medido (sem ele a correção da janela temporal
+        não é comprovável → INCONCLUSIVE)."""
+        completa = {"ts_ms": 1, "cpu_pct": 12.5, "mem_pct": 30.0,
+                    "swap_pct": 0.5, "disk_latency_ms": 2.0, "iops": 40.0,
+                    "disk_busy_pct": 5.0, "load1": 0.4,
+                    "net_rx_kbs": 120.0, "net_tx_kbs": 90.0}
+        host_base = _host_file(self.tmp, "host-base.jsonl", [dict(completa)])
         host_alvo = _host_file(self.tmp, "host-alvo.jsonl",
-                               [{"ts_ms": 1, "cpu_pct": 30.0}])
+                               [dict(completa, cpu_pct=30.0)])
+        run_base = _run(BASELINE, host_base,
+                        [_amostra(BASELINE, i) for i in range(20)])
+        run_alvo = _run(TARGET, host_alvo,
+                        [_amostra(TARGET, i) for i in range(20)])
+        for run in (run_base, run_alvo):
+            run.host_clock_offset_ms = 0
+            run.host_clock_offset_measured = True
         result = ExperimentResult(
-            contract_sha256="c" * 64, status="COMPLETED", runs=[
-                _run(BASELINE, host_base, [_amostra(BASELINE, i) for i in range(20)]),
-                _run(TARGET, host_alvo, [_amostra(TARGET, i) for i in range(20)]),
-            ])
+            contract_sha256="c" * 64, status="COMPLETED",
+            runs=[run_base, run_alvo])
         comparison, decision = self._decide(result)
         self.assertEqual(20, comparison["functional_evidence"][TARGET])
         self.assertEqual("PASS", decision.verdict)

@@ -14,6 +14,7 @@ from .inferencer import SyntheticInferencer, InferenceResult
 from .screen_registry import ScreenRegistry
 from ..source_analyzer.entity_catalog import EntityDefinition
 from ..source_analyzer.parser import SourceParser
+from ..db.connection import batch_insert, transaction
 
 
 def _merge_entity_meta(ent):
@@ -151,8 +152,13 @@ class SyntheticEngine:
     # Persist dataset
     # ------------------------------------------------------------------
 
-    def save_dataset(self, dataset: Dataset) -> int:
-        """Salva dataset no banco e retorna o ID."""
+    def save_dataset(self, dataset: Dataset, *, chunk_size: int = 500) -> int:
+        """Salva dataset no banco e retorna o ID.
+
+        Cabeçalho em transação própria (precisa do lastrowid) e registros em
+        lote (transação + executemany em chunks curtos): a conexão roda em
+        autocommit e o INSERT por registro fazia um fsync por linha.
+        """
         if not self.screen_registry:
             raise RuntimeError("screen_registry nao configurado")
 
@@ -173,20 +179,22 @@ class SyntheticEngine:
         )
         dataset_id = cur.lastrowid or 0
 
-        for rec in dataset.records:
-            self.screen_registry.con.execute(
-                """INSERT INTO synthetic_records
-                   (dataset_id, record_index, data_json, created_at)
-                   VALUES (?, ?, ?, ?)""",
+        batch_insert(
+            self.screen_registry.con,
+            """INSERT INTO synthetic_records
+               (dataset_id, record_index, data_json, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (
                 (
                     dataset_id,
                     rec.record_index,
                     json.dumps(rec.data, ensure_ascii=False),
                     now,
-                ),
-            )
-
-        self.screen_registry.con.commit()
+                )
+                for rec in dataset.records
+            ),
+            chunk_size=chunk_size,
+        )
         return dataset_id
 
     def load_dataset(self, dataset_id: int) -> Optional[Dataset]:
@@ -242,45 +250,49 @@ class SyntheticEngine:
 
         con = self.screen_registry.con
 
-        # Limpeza completa antes de reinserir
-        con.execute("DELETE FROM source_entity_fields")
-        con.execute("DELETE FROM source_entities")
-        con.execute("DELETE FROM entity_tests")
-
+        # Rebuild atômico: antes a limpeza e cada INSERT comitavam sozinhos
+        # (autocommit — o commit() final era no-op), e uma falha no meio
+        # deixava as tabelas já limpas e parcialmente recriadas.
         now = datetime.now().isoformat()
-        for ent in entities:
-            cur = con.execute(
-                """INSERT INTO source_entities (name, storage_type, source, metadata_json, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    ent.name,
-                    ent.storage_type,
-                    ent.source,
-                    _merge_entity_meta(ent),
-                    now,
-                ),
-            )
-            entity_id = cur.lastrowid or 0
+        with transaction(con):
+            # Limpeza completa antes de reinserir
+            con.execute("DELETE FROM source_entity_fields")
+            con.execute("DELETE FROM source_entities")
+            con.execute("DELETE FROM entity_tests")
 
-            for ef in ent.fields:
-                constraints = ef.constraints_json or json.dumps(
-                    {"required": ef.required, "unique": ef.unique_flag}, ensure_ascii=False
+            for ent in entities:
+                cur = con.execute(
+                    """INSERT INTO source_entities (name, storage_type, source, metadata_json, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        ent.name,
+                        ent.storage_type,
+                        ent.source,
+                        _merge_entity_meta(ent),
+                        now,
+                    ),
                 )
-                con.execute(
+                entity_id = cur.lastrowid or 0
+
+                con.executemany(
                     """INSERT INTO source_entity_fields
                        (entity_id, field_name, datatype, required, unique_flag, constraints_json)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        entity_id,
-                        ef.name,
-                        ef.datatype,
-                        1 if ef.required else 0,
-                        1 if ef.unique_flag else 0,
-                        constraints,
-                    ),
+                    [
+                        (
+                            entity_id,
+                            ef.name,
+                            ef.datatype,
+                            1 if ef.required else 0,
+                            1 if ef.unique_flag else 0,
+                            ef.constraints_json or json.dumps(
+                                {"required": ef.required, "unique": ef.unique_flag},
+                                ensure_ascii=False,
+                            ),
+                        )
+                        for ef in ent.fields
+                    ],
                 )
-
-        con.commit()
 
     # ------------------------------------------------------------------
     # Screen-entity bindings (knowledge base persistida)
@@ -298,28 +310,33 @@ class SyntheticEngine:
             raise RuntimeError("screen_registry nao configurado")
 
         con = self.screen_registry.con
-        con.execute("DELETE FROM screen_entity_bindings")
         now = datetime.now().isoformat()
-        for b in bindings:
-            con.execute(
+        with transaction(con):
+            con.execute("DELETE FROM screen_entity_bindings")
+            # Lote único dentro da transação do rebuild (volumes de
+            # analyze-source); chunking fica para os caminhos de massa
+            # (datasets, amostras de benchmark).
+            con.executemany(
                 """INSERT INTO screen_entity_bindings
                    (screen_title, program_name, source_file,
                     source_line_start, source_line_end, entity_name, operation,
                     matched_fields_json, unmatched_fields_json, confidence,
                     evidence_json, created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    b.screen_title, b.program_name, b.source_file,
-                    b.source_lines[0], b.source_lines[1], b.entity_name,
-                    b.operation,
-                    json.dumps(b.matched_fields, ensure_ascii=False),
-                    json.dumps(b.unmatched_screen_fields, ensure_ascii=False),
-                    b.confidence,
-                    json.dumps(b.evidence, ensure_ascii=False),
-                    now,
-                ),
+                [
+                    (
+                        b.screen_title, b.program_name, b.source_file,
+                        b.source_lines[0], b.source_lines[1], b.entity_name,
+                        b.operation,
+                        json.dumps(b.matched_fields, ensure_ascii=False),
+                        json.dumps(b.unmatched_screen_fields, ensure_ascii=False),
+                        b.confidence,
+                        json.dumps(b.evidence, ensure_ascii=False),
+                        now,
+                    )
+                    for b in bindings
+                ],
             )
-        con.commit()
 
     def load_entities(self) -> list[EntityDefinition]:
         """Carrega entidades + campos do banco (base do analyze-source)."""

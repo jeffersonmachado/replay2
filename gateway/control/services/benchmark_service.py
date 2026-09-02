@@ -95,6 +95,8 @@ def _rebuild_result(experiment_dir: Path, contract) -> ExperimentResult:
         resultado.status = dados.get("status", "COMPLETED")
         resultado.verdict = dados.get("verdict", "INCONCLUSIVE")
         resultado.reason = dados.get("reason", "")
+        resultado.stop_reason = dados.get("stop_reason")
+        resultado.recovery = dados.get("recovery") or {}
     runs_dir = Path(experiment_dir) / "runs"
     if not runs_dir.is_dir():
         return resultado
@@ -123,7 +125,24 @@ def _rebuild_result(experiment_dir: Path, contract) -> ExperimentResult:
             cooldown_samples=por_fase.get("COOLDOWN", []),
             host_samples_path=str(run_dir / "host-samples.jsonl"),
             error_reason=resumo.get("error_reason", ""),
+            # artefatos antigos (ex.: v7) não registram a contagem — None =
+            # "não medido" e as métricas de jornada são omitidas, nunca
+            # inferidas das amostras
+            completed_journeys=resumo.get("completed_journeys"),
+            planned_duration_s=resumo.get(
+                "planned_duration_s", float(contract.measurement_seconds)),
+            # FASE 3/4: janela de rede, cobertura funcional e clock offset
+            # (None/ausente em artefatos antigos = "não registrado")
+            net_window=resumo.get("net_window"),
+            checkpoints_executed=resumo.get("checkpoints_executed"),
+            checkpoints_checked=resumo.get("checkpoints_checked"),
+            checkpoint_exceptions=resumo.get("checkpoint_exceptions"),
         )
+        # clock offset medido na coleta (FASE 3): vem do status do coletor
+        host_status = (resumo.get("host_metrics") or {}).get("status") or {}
+        if host_status.get("clock_offset_ms") is not None:
+            run.host_clock_offset_ms = int(host_status["clock_offset_ms"])
+            run.host_clock_offset_measured = True
         resultado.runs.append(run)
     return resultado
 
@@ -561,7 +580,7 @@ def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None
             "environments": ambientes,
             "result_type": "INCONCLUSIVE",
         }
-    comparison = build_comparison(result, modelos or None)
+    comparison = build_comparison(result, modelos or None, contract=contract)
     capacity = build_capacity(result)
     decision = build_decision(result, comparison)
     return {
@@ -715,7 +734,8 @@ class BenchmarkSupervisor:
                                          journeys=journeys)
             result = executor.run()
 
-            comparison = build_comparison(result, modelos or None)
+            comparison = build_comparison(result, modelos or None,
+                                          contract=contract)
             capacity = build_capacity(result)
             decision = build_decision(result, comparison)
             result.verdict = decision.verdict

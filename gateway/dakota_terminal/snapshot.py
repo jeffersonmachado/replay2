@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from .signatures import text_sig, visual_sig, semantic_sig
+from .serializer import FORMAT_VERSION, MAGIC_TEXT, MAGIC_VISUAL, _codepoints
+from .signatures import sha256_prefixed
 
 
 @dataclass(frozen=True)
@@ -54,17 +55,75 @@ class RenderSnapshot:
     signature_version: str
 
 
+# Conjunto de box drawing normalizado para "#" pelo semantic_sig (mesmo
+# conjunto de signatures.semantic_sig).
+_SEMANTIC_BOX_CHARS = frozenset("┌┐└┘├┤┬┴┼─│")
+
+
 def snapshot_from_engine(engine) -> dict:
-    cells = [cell.to_dict() for row in engine.cells for cell in row]
+    # FASE 6: passagem única sobre a matriz. Antes eram 4 travessias
+    # independentes (to_dict + text_sig + visual_sig + semantic_sig), cada uma
+    # relendo rows*cols dicionários; agora a lista de células e as três
+    # serializações canônicas saem do mesmo loop. O resultado é
+    # byte-idêntico: mesmas primitivas (_codepoints, memo de linha visual,
+    # normalização de box drawing do semantic_sig) e mesma ordem de chaves.
+    rows = engine.rows
+    cols = engine.cols
+    term = engine.term
+    encoding = engine.encoding
+
+    text_parts = [MAGIC_TEXT, str(FORMAT_VERSION), str(rows), str(cols), encoding, term]
+    visual_parts = [MAGIC_VISUAL, str(FORMAT_VERSION), str(rows), str(cols), encoding, term]
+    visual_append = visual_parts.append
+    line_memo: dict[tuple, str] = {}
+    memo_get = line_memo.get
+    cp = _codepoints
+    cells: list[dict] = []
+    cells_append = cells.append
+    sem_lines: list[str] = []
+    box_chars = _SEMANTIC_BOX_CHARS
+    for row in engine.cells:
+        line_chars: list[str] = []
+        line_append = line_chars.append
+        for cell in row:
+            ch = cell.ch
+            # Dict novo por célula: consumidores podem mutar o snapshot
+            # (ex.: montagem de diffs) — compartilhar dicts entre posições
+            # ou entre snapshots corromperia todos eles.
+            cells_append(cell.to_dict())
+            text_parts.append(cp(ch))
+            vch = ch or " "
+            key = (vch, cell.fg, cell.bg, cell.bold, cell.dim, cell.underline, cell.blink, cell.reverse, cell.hidden)
+            vline = memo_get(key)
+            if vline is None:
+                flags = (
+                    (1 if key[3] else 0)
+                    | (2 if key[4] else 0)
+                    | (4 if key[5] else 0)
+                    | (8 if key[6] else 0)
+                    | (16 if key[7] else 0)
+                    | (32 if key[8] else 0)
+                )
+                vline = f"{cp(vch)}|{key[1]}|{key[2]}|{flags}"
+                line_memo[key] = vline
+            visual_append(vline)
+            line_append("#" if ch in box_chars else ch)
+        sem_lines.append("".join(line_chars).rstrip())
+
+    while sem_lines and not sem_lines[0].strip():
+        sem_lines.pop(0)
+    while sem_lines and not sem_lines[-1].strip():
+        sem_lines.pop()
+
     snap = {
         "version": 1,
         "engine_version": engine.engine_version,
         "signature_version": "1.0",
         "snapshot_version": "1.0",
-        "rows": engine.rows,
-        "cols": engine.cols,
-        "term": engine.term,
-        "encoding": engine.encoding,
+        "rows": rows,
+        "cols": cols,
+        "term": term,
+        "encoding": encoding,
         "cursor": {
             "row": engine.cursor_row,
             "col": engine.cursor_col,
@@ -85,9 +144,9 @@ def snapshot_from_engine(engine) -> dict:
         "seq_global": int(getattr(engine, "seq_global", 0) or 0),
         "cells": cells,
     }
-    snap["text_sig"] = text_sig(snap)
-    snap["visual_sig"] = visual_sig(snap)
-    snap["semantic_sig"] = semantic_sig(snap)
+    snap["text_sig"] = sha256_prefixed(("\n".join(text_parts) + "\n").encode("ascii"))
+    snap["visual_sig"] = sha256_prefixed(("\n".join(visual_parts) + "\n").encode("ascii"))
+    snap["semantic_sig"] = sha256_prefixed("\n".join(sem_lines).encode("utf-8"))
     return snap
 
 

@@ -54,7 +54,30 @@ def get_cookie(handler, name: str) -> str | None:
     return cookie[name].value
 
 
+# Cache de autenticação POR REQUISIÇÃO: o guard central (_api_auth_guard) e os
+# endpoints (_require/_auth) consultam a mesma requisição; sem cache, cada um
+# refazia parse de cookie + verify_cookie + query no banco. O resultado (inclui
+# None = não autenticado) fica no handler e é invalidado a cada nova requisição
+# (keep-alive reutiliza a instância do handler — ver Handler.handle_one_request).
+_AUTH_CACHE_ATTR = "_dakota_auth_user"
+_NOT_CACHED = object()
+
+
+def reset_auth_cache(handler) -> None:
+    """Invalida o cache de autenticação (chamado no início de cada requisição)."""
+    setattr(handler, _AUTH_CACHE_ATTR, _NOT_CACHED)
+
+
 def authenticate_request(handler):
+    cached = getattr(handler, _AUTH_CACHE_ATTR, _NOT_CACHED)
+    if cached is not _NOT_CACHED:
+        return cached
+    user = _authenticate_request_uncached(handler)
+    setattr(handler, _AUTH_CACHE_ATTR, user)
+    return user
+
+
+def _authenticate_request_uncached(handler):
     cookie_value = get_cookie(handler, "dakota_session")
     if not cookie_value:
         return None

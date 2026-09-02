@@ -41,8 +41,10 @@ def _nivel_degradado(anterior: dict, atual: dict, criterios: DegradationCriteria
     conc_atu = float(atual.get("concurrency", 0))
     crescimento_conc = ((conc_atu - conc_ant) / conc_ant * 100.0) if conc_ant > 0 else 0.0
 
-    tps_ant = float(anterior.get("tps", 0.0))
-    tps_atu = float(atual.get("tps", 0.0))
+    tps_ant = float(anterior.get("operations_per_second",
+                                 anterior.get("tps", 0.0)) or 0.0)
+    tps_atu = float(atual.get("operations_per_second",
+                              atual.get("tps", 0.0)) or 0.0)
     if tps_ant > 0 and crescimento_conc >= criterios.concurrency_growth_pct:
         # saturação: concorrência subiu e o TPS quase não acompanhou
         if (tps_atu - tps_ant) / tps_ant * 100.0 < criterios.throughput_growth_min_pct:
@@ -87,14 +89,18 @@ def _gargalo_dominante(host_series: list[dict]) -> str:
 
 
 def analyze_ladder(level_stats: list[dict], criteria: DegradationCriteria,
-                   host_series: list[dict]) -> DegradationReport:
+                   host_series: list[dict],
+                   *, recovery_seconds: float | None = None
+                   ) -> DegradationReport:
     """Analisa a escada de carga (§5.9/§18).
 
     ``level_stats``: lista de dicts ``{"concurrency", "tps", "p95_ms",
     "p99_ms", "error_pct"}`` (ordenada por concorrência aqui dentro).
     ``host_series``: dicts com métricas de host por nível (só para o gargalo
-    dominante). ``recovery_seconds`` fica ``None`` quando não há série de
-    recuperação instrumentada (nunca é inventado).
+    dominante). ``recovery_seconds`` vem da sonda de recuperação REAL do
+    executor (``recovery_probe_seconds`` no contrato); fica ``None`` quando
+    a sonda está desligada ou o host não recuperou dentro da janela — nunca
+    é inventado.
     """
     if not level_stats:
         return DegradationReport(
@@ -102,7 +108,7 @@ def analyze_ladder(level_stats: list[dict], criteria: DegradationCriteria,
             safe_operational_limit=None,
             maximum_observed_limit=None,
             dominant_bottleneck="unknown",
-            recovery_seconds=None,
+            recovery_seconds=recovery_seconds,
         )
 
     niveis = sorted(level_stats, key=lambda d: int(d["concurrency"]))
@@ -126,5 +132,5 @@ def analyze_ladder(level_stats: list[dict], criteria: DegradationCriteria,
         safe_operational_limit=ultimo_saudavel,
         maximum_observed_limit=maximo,
         dominant_bottleneck=_gargalo_dominante(host_series),
-        recovery_seconds=None,
+        recovery_seconds=recovery_seconds,
     )

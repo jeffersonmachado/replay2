@@ -27,6 +27,7 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
             "flows_coverage": [],
             "message": "Execute o Pipeline primeiro",
         }
+        con = None
         try:
             con = db_acquire()
             con.row_factory = sqlite3.Row
@@ -52,7 +53,6 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
 
                     engine = BusinessRuleEngine()
                     eval_data = engine.evaluate(entities)
-            db_release(con)
         except Exception as exc:
             eval_data = {
                 "rules_evaluated": 0,
@@ -60,11 +60,15 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
                 "flows_coverage": [],
                 "message": str(exc),
             }
+        finally:
+            if con is not None:
+                db_release(con)
         _send_json(req, 200, eval_data)
         return True
 
     if p.path == "/api/business/gaps":
         gap_data = {"gaps": [], "open_count": 0, "total_count": 0}
+        con = None
         try:
             con = db_acquire()
             con.row_factory = sqlite3.Row
@@ -96,14 +100,17 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
             gap_data["gaps"] = gaps_list
             gap_data["open_count"] = sum(1 for gap in gaps_list if gap["status"] == "open")
             gap_data["total_count"] = len(gaps_list)
-            db_release(con)
         except Exception as exc:
             gap_data = {"gaps": [], "open_count": 0, "total_count": 0, "error": str(exc)}
+        finally:
+            if con is not None:
+                db_release(con)
         _send_json(req, 200, gap_data)
         return True
 
     if p.path == "/api/journeys/report":
         reports_data = []
+        con = None
         try:
             con = db_acquire()
             rows = con.execute(
@@ -140,14 +147,17 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
                             "created_at": row[4],
                         }
                     )
-            db_release(con)
         except Exception:
             pass
+        finally:
+            if con is not None:
+                db_release(con)
         _send_json(req, 200, {"reports": reports_data})
         return True
 
     if p.path == "/api/catalog/entities":
         entities_data = []
+        con = None
         try:
             con = db_acquire()
             con.row_factory = lambda _c, row: row
@@ -181,9 +191,11 @@ def handle_engineering_api_get_route(req, p: ParseResult, *, db_acquire, db_rele
                         "operations": [],
                     }
                 )
-            db_release(con)
         except Exception:
             pass
+        finally:
+            if con is not None:
+                db_release(con)
         _send_json(req, 200, {"entities": entities_data})
         return True
 

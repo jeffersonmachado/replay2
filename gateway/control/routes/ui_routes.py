@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import os
+import threading
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -8,6 +10,64 @@ from control.ui_templates import LOGIN_HTML, ROUTES_CONFIG, render_page
 
 
 STATIC_ROOT = Path(__file__).resolve().parents[1] / "static"
+
+# ── Cache em memória de assets estáticos ──
+# mermaid.min.js tem ~3,3 MB: reler do disco a cada requisição drenava CPU/IO
+# do control plane. O cache é invalidado por (mtime_ns, size) — um deploy que
+# troca o arquivo atualiza a entrada na próxima requisição, sem restart.
+_ASSET_CACHE: dict[str, dict] = {}
+_ASSET_CACHE_LOCK = threading.Lock()
+_ASSET_CACHE_CONTROL = "public, max-age=3600"
+_ASSET_GZIP_MIN_BYTES = 1024
+# Tipos que compensam comprimir (texto); binários já comprimidos ficam crus.
+_ASSET_GZIP_TYPES = frozenset({
+    "text/css; charset=utf-8",
+    "application/javascript; charset=utf-8",
+    "image/svg+xml",
+})
+
+
+def _reset_asset_cache() -> None:
+    """Esvazia o cache de assets (uso em testes; a invalidação normal é por mtime)."""
+    with _ASSET_CACHE_LOCK:
+        _ASSET_CACHE.clear()
+
+
+def _load_asset_entry(fs_path: Path, content_type: str) -> dict | None:
+    """Retorna a entrada cacheada do asset, relendo do disco só se mudou."""
+    try:
+        st = fs_path.stat()
+    except OSError:
+        return None
+    key = str(fs_path)
+    with _ASSET_CACHE_LOCK:
+        entry = _ASSET_CACHE.get(key)
+        if entry and entry["mtime_ns"] == st.st_mtime_ns and entry["size"] == st.st_size:
+            return entry
+    # Leitura/compressão fora do lock (arquivo grande não bloqueia os demais).
+    raw = fs_path.read_bytes()
+    gz = (
+        gzip.compress(raw)
+        if st.st_size >= _ASSET_GZIP_MIN_BYTES and content_type in _ASSET_GZIP_TYPES
+        else None
+    )
+    entry = {
+        "mtime_ns": st.st_mtime_ns,
+        "size": st.st_size,
+        "etag": '"%x-%x"' % (st.st_mtime_ns, st.st_size),
+        "raw": raw,
+        "gzip": gz,
+    }
+    with _ASSET_CACHE_LOCK:
+        # Recheca: se o arquivo mudou durante a leitura, não cacheia a entrada
+        # (responde com ela nesta requisição e a próxima relê).
+        try:
+            st2 = fs_path.stat()
+        except OSError:
+            return entry
+        if st2.st_mtime_ns == st.st_mtime_ns and st2.st_size == st.st_size:
+            _ASSET_CACHE[key] = entry
+    return entry
 
 
 def _send_html(handler, html: str, *, status_code: int = 200) -> None:
@@ -47,11 +107,32 @@ def _serve_static_asset(handler, asset_path: str) -> bool:
         content_type = "application/javascript; charset=utf-8"
     elif fs_path.suffix == ".svg":
         content_type = "image/svg+xml"
+    entry = _load_asset_entry(fs_path, content_type)
+    if entry is None:
+        handler.send_response(404)
+        handler.end_headers()
+        return True
+    etag = entry["etag"]
+    if_none_match = handler.headers.get("If-None-Match") or ""
+    if etag in [tag.strip() for tag in if_none_match.split(",")]:
+        handler.send_response(304)
+        handler.send_header("ETag", etag)
+        handler.send_header("Cache-Control", _ASSET_CACHE_CONTROL)
+        handler.end_headers()
+        return True
+    accept_encoding = (handler.headers.get("Accept-Encoding") or "").lower()
+    use_gzip = entry["gzip"] is not None and "gzip" in accept_encoding
+    body = entry["gzip"] if use_gzip else entry["raw"]
     handler.send_response(200)
     handler.send_header("Content-Type", content_type)
-    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Cache-Control", _ASSET_CACHE_CONTROL)
+    handler.send_header("ETag", etag)
+    handler.send_header("Vary", "Accept-Encoding")
+    if use_gzip:
+        handler.send_header("Content-Encoding", "gzip")
+    handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
-    handler.wfile.write(fs_path.read_bytes())
+    handler.wfile.write(body)
     return True
 
 

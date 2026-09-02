@@ -74,26 +74,69 @@ Além do código, o tarball carrega as evidências da cadeia de aceitação:
 
 - [ ] `artifacts/final-acceptance-report.md` e `final-acceptance-results.json`
 - [ ] `artifacts/source-tree-manifest.sha256` e `source-tree-hash.json`
-- [ ] `artifacts/evidence-manifest.sha256` (validado por `sha256sum -c` antes do build)
+- [ ] `artifacts/evidence-manifest.sha256` (regenerado no stage pelo gerador
+  único `scripts/acceptance/gen-evidence-manifest.sh --root <stage>` — cobre
+  EXATAMENTE o que foi empacotado; validado por `sha256sum -c`)
 - [ ] `artifacts/acceptance-test-baseline.sha256` (hashes reais, sem linha vazia `e3b0c442...  -`)
 - [ ] `artifacts/acceptance-logs/` — logs das fases de aceitação
-- [ ] `artifacts/benchmarks/` — evidência do benchmark real AIX×Linux
-  (contrato imutável, runs com amostras de aplicação/host, agregados,
-  relatório e manifesto de evidência do experimento), quando presente
+- [ ] `artifacts/benchmarks/<experimento-oficial>/` — SOMENTE o experimento
+  oficial de benchmark AIX×Linux (contrato imutável, runs com amostras de
+  aplicação/host, agregados, relatório e manifesto de evidência do
+  experimento). Seleção (FASE 11):
+  - default: o mais recente com `experiment-manifest.json` válido;
+  - `--with-benchmarks <id>`: experimento específico;
+  - históricos (ex.: `cap13-*-v1..v6`) NUNCA entram automaticamente no
+    pacote de runtime — ficam no repositório de evidências, fora do pacote.
 
-Verificar a presença das evidências de benchmark:
+Verificar a presença da evidência de benchmark (exatamente UM experimento):
 
 ```bash
 tar tzf dist/dakota-replay2-*.tar.gz | grep 'artifacts/benchmarks/.*/experiment-manifest.json' \
   || echo "SEM evidência de benchmark no pacote"
+tar tzf dist/dakota-replay2-*.tar.gz | grep -o 'artifacts/benchmarks/[^/]*' | sort -u
 ```
+
+## Vinculação Aceite × Árvore × Pacote (FASE 2)
+
+Desde a correção do incidente 0.8.85 (pacote com aceite de outra árvore):
+
+1. `final-acceptance.sh` calcula o hash da árvore ANTES dos testes, recalcula
+   IMEDIATAMENTE DEPOIS e **aborta o pipeline** se divergirem (com diff por
+   arquivo no log);
+2. `final-acceptance-results.json` grava `version` + hashes before/after;
+3. `build-tarball.sh` (com `artifacts/` presente) exige results JSON da MESMA
+   árvore e da MESMA VERSION, com a suíte completa aprovada — aceite antigo
+   reaproveitado reprova o build;
+4. após gerar o tarball, o build o extrai, hasheia a árvore extraída com o
+   `tree_hash.py` do próprio pacote e exige igualdade com o aceite, além de
+   sanity checks (VERSION, `gateway/control/server.py`, nenhum
+   `*.key`/`*.db`/segredo/estado local).
+
+## Reprodutibilidade do Tarball (FASE 11)
+
+Com GNU tar + gzip (Linux), o build usa `--sort=name --owner=0 --group=0
+--numeric-owner --mtime=@$SOURCE_DATE_EPOCH` e `gzip -n`: dois builds da
+mesma árvore com `DAKOTA_TARBALL_TIMESTAMP` e `SOURCE_DATE_EPOCH` pinados
+produzem o MESMO sha256 (coberto por
+`tests/test_build_hardening_unit.py::test_two_builds_same_tree_same_sha256`).
+
+```bash
+DAKOTA_TARBALL_TIMESTAMP=fixo SOURCE_DATE_EPOCH=1700000000 bash scripts/build-tarball.sh
+```
+
+Compromisso AIX: o tar do AIX não suporta essas flags — o build detecta e cai
+no caminho clássico (tar + gzip), SEM reprodutibilidade bitwise. O build de
+release oficial é feito em Linux; o AIX só consome o `.run` gerado lá.
 
 ## Processo de Release
 
 1. Atualizar `VERSION`
 2. Executar testes: `npm run test`
-3. Build: `bash scripts/build-tarball.sh`
-4. Verificar com checklist acima
-5. Copiar para `remoto_dakota/artifacts/`
-6. Testar instalação limpa em ambiente de homologação
-7. Tag no Git: `git tag v$(cat VERSION)`
+3. Aceitação completa: `bash scripts/final-acceptance.sh` (se arquivos
+   protegidos mudaram, regerar antes a baseline:
+   `bash scripts/acceptance/regen-baseline.sh`)
+4. Build: `bash scripts/build-tarball.sh` (ou já chamado pelo passo 3)
+5. Verificar com checklist acima
+6. Copiar para `remoto_dakota/artifacts/`
+7. Testar instalação limpa em ambiente de homologação
+8. Tag no Git: `git tag v$(cat VERSION)`

@@ -105,6 +105,15 @@ ON replay_failures(run_id, failure_type);
 CREATE INDEX IF NOT EXISTS replay_failures_run_severity
 ON replay_failures(run_id, severity);
 
+-- Consultas quentes (FASE 9): o detalhe de sessão da observabilidade filtra
+-- replay_failures por session_id; as visões por run combinam
+-- run_id+session_id e ordenam por seq_global.
+CREATE INDEX IF NOT EXISTS replay_failures_session
+ON replay_failures(session_id, id DESC);
+
+CREATE INDEX IF NOT EXISTS replay_failures_run_session_seq
+ON replay_failures(run_id, session_id, seq_global);
+
 CREATE TABLE IF NOT EXISTS target_environments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   env_id TEXT NOT NULL UNIQUE,

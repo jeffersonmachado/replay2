@@ -1190,6 +1190,12 @@ def start_synthetic_replay(
             # replay classificar a divergência explicada pela troca como
             # synthetic_data_swap em vez de screen_divergence.
             "synthetic_substitutions": [[s[0], s[1]] for s in substitutions if s[0] != s[1]],
+            # Registros estruturados (campo + seqs da trilha) — fonte de
+            # verdade do feedback loop POR RUN: o trail dir é fixo por
+            # captura (<log_dir>/synthetic/capture-<id>-replay/trail) e
+            # sobrescrito a cada síntese, então o de-para.json em disco pode
+            # ser de outra run.
+            "synthetic_applied": trail.get("applied_detail") or [],
         },
     }
     if entry:

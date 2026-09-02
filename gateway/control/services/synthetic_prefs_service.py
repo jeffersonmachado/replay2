@@ -17,6 +17,13 @@ Antes deste módulo, parte dos "aprendizados" da síntese vivia só no browser
   ou veio de outro diretório;
 - feedback loop: as falhas de validação das runs sintéticas anteriores da
   captura viram sugestão de campo para o ``skip_fields`` do próximo replay.
+  A fonte das substituições é o ``synthetic_applied`` dos params da run
+  (exato por execução): o trail dir da síntese é fixo por captura
+  (``<log_dir>/synthetic/capture-<id>-replay/trail``) e sobrescrito a cada
+  síntese, então o ``de-para.json`` em disco pode ser de outra run — ele é
+  só fallback. Limitação: runs anteriores à v0.8.86 não têm o applied
+  estruturado nos params e podem ter o de-para sobrescrito, então o
+  feedback só é confiável para runs criadas com o código novo.
 """
 from __future__ import annotations
 
@@ -340,13 +347,26 @@ def _substitution_before_from_trail(trail_dir: Path, depara: dict, failure_seq: 
     return best_field
 
 
-def _feedback_for_run_row(con, run_id: int, log_dir: str) -> list[dict]:
+def _feedback_for_run_row(con, run_id: int, log_dir: str,
+                          applied: list | None = None) -> list[dict]:
     """Sugestão de skip_fields para UMA run sintética (0 ou 1 item).
 
     Procura a falha de ``screen_divergence`` mais cedo cuja tela observada
     mostra rejeição de validação do ERP ("Codigo nao cadastrado", "não
     confere"...) e mapeia a substituição mais próxima ANTES do seq da falha
     — o campo cujo valor sintético provavelmente disparou a rejeição.
+
+    Ordem de preferência da fonte das substituições:
+    1. ``applied`` dos params da run (``synthetic_applied``) — exato daquela
+       execução. É a fonte confiável: o trail dir é FIXO por captura e
+       sobrescrito a cada síntese, então o de-para.json em disco pode ser de
+       outra run;
+    2. ``de-para.json`` do trail dir (runs anteriores à gravação do applied
+       nos params) — applied estruturado, depois fallback por valor digitado.
+
+    Runs antigas (sem ``synthetic_applied`` e de-para sobrescrito/antigo)
+    retornam ``[]`` legitimamente — o feedback só é confiável para runs
+    criadas com o applied estruturado nos params.
     """
     failures = con.execute(
         "SELECT seq_global, message, observed_value, evidence_json"
@@ -368,18 +388,19 @@ def _feedback_for_run_row(con, run_id: int, log_dir: str) -> list[dict]:
     except (TypeError, ValueError):
         return []
 
-    trail_dir = _trail_dir_of_run(log_dir)
-    field = ""
-    if trail_dir is not None:
-        manifest = trail_dir / "de-para.json"
-        if manifest.exists():
-            try:
-                depara = json.loads(manifest.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                depara = {}
-            field = _substitution_before_from_applied(depara.get("applied"), failure_seq)
-            if not field:
-                field = _substitution_before_from_trail(trail_dir, depara, failure_seq)
+    field = _substitution_before_from_applied(applied, failure_seq)
+    if not field:
+        trail_dir = _trail_dir_of_run(log_dir)
+        if trail_dir is not None:
+            manifest = trail_dir / "de-para.json"
+            if manifest.exists():
+                try:
+                    depara = json.loads(manifest.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    depara = {}
+                field = _substitution_before_from_applied(depara.get("applied"), failure_seq)
+                if not field:
+                    field = _substitution_before_from_trail(trail_dir, depara, failure_seq)
     if not field:
         return []
     message = str(culprit["message"] or "").strip()
@@ -410,7 +431,11 @@ def _synthetic_runs_of_capture(con, capture_id: int, *, limit: int = 10) -> list
             continue
         if source != int(capture_id):
             continue
-        runs.append({"id": int(row["id"]), "log_dir": str(row["log_dir"] or "")})
+        runs.append({
+            "id": int(row["id"]),
+            "log_dir": str(row["log_dir"] or ""),
+            "applied": params.get("synthetic_applied"),
+        })
         if len(runs) >= max(1, int(limit or 10)):
             break
     return runs
@@ -426,7 +451,8 @@ def feedback_for_capture(con, capture_id: int, *, limit: int = 10) -> list[dict]
     """
     suggestions: list[dict] = []
     for run in _synthetic_runs_of_capture(con, capture_id, limit=limit):
-        suggestions.extend(_feedback_for_run_row(con, run["id"], run["log_dir"]))
+        suggestions.extend(_feedback_for_run_row(con, run["id"], run["log_dir"],
+                                                 applied=run.get("applied")))
     return suggestions
 
 
@@ -444,4 +470,5 @@ def feedback_for_run(con, run_id: int) -> list[dict]:
         return []
     if not isinstance(params, dict) or not params.get("synthetic"):
         return []
-    return _feedback_for_run_row(con, int(row["id"]), str(row["log_dir"] or ""))
+    return _feedback_for_run_row(con, int(row["id"]), str(row["log_dir"] or ""),
+                                 applied=params.get("synthetic_applied"))

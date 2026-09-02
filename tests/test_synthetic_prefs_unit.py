@@ -48,14 +48,17 @@ def _create_capture(con, user_id: int, log_dir: str) -> int:
     return int(cur.lastrowid)
 
 
-def _create_synthetic_run(con, capture_id: int, log_dir: str) -> int:
+def _create_synthetic_run(con, capture_id: int, log_dir: str,
+                          extra_params: dict | None = None) -> int:
+    params = {"synthetic": True, "source_capture_id": capture_id}
+    params.update(extra_params or {})
     cur = con.execute(
         "INSERT INTO replay_runs(log_dir,target_host,target_user,target_command,mode,params_json,run_fingerprint,status,created_at_ms,created_by)"
         " VALUES(?,?,?,?,?,?,?,?,?,?)",
         (
             log_dir, "127.0.0.1", "ferblo", "", "strict-global",
-            json.dumps({"synthetic": True, "source_capture_id": capture_id}),
-            f"fp-{log_dir}-{now_ms()}-{capture_id}", "success", now_ms(), 1,
+            json.dumps(params),
+            f"fp-{log_dir}-{now_ms()}-{capture_id}-{len(json.dumps(params))}", "success", now_ms(), 1,
         ),
     )
     return int(cur.lastrowid)
@@ -373,6 +376,39 @@ class FeedbackTests(unittest.TestCase):
         _add_failure(self.con, int(cur.lastrowid), 40, "Codigo nao cadastrado")
         self.assertEqual(prefs_svc.feedback_for_run(self.con, int(cur.lastrowid)), [])
 
+    def test_applied_dos_params_imune_a_sobrescrita_do_trail_dir(self):
+        """O trail dir é FIXO por captura e sobrescrito a cada síntese — o
+        de-para.json pode ser de outra run. O applied dos params da run é a
+        fonte de verdade e deve vencer."""
+        # de-para.json "atual" (de uma re-síntese posterior) aponta outro campo
+        self._write_depara(applied=[
+            {"field": "qtd", "original": "2", "synthetic": "9",
+             "seq_start": 30, "seq_end": 30},
+        ])
+        run_id = _create_synthetic_run(
+            self.con, self.capture_id, str(self.trail_dir),
+            extra_params={"synthetic_applied": [
+                {"field": "modelo", "original": "g2511", "synthetic": "zz999",
+                 "seq_start": 20, "seq_end": 24},
+            ]},
+        )
+        _add_failure(self.con, run_id, 40, "Codigo nao cadastrado")
+        sugestoes = prefs_svc.feedback_for_capture(self.con, self.capture_id)
+        self.assertEqual(len(sugestoes), 1)
+        self.assertEqual(sugestoes[0]["field"], "modelo")
+
+    def test_sem_applied_nos_params_cai_no_depara_json(self):
+        """Compatibilidade: runs sem synthetic_applied usam o de-para.json."""
+        self._write_depara(applied=[
+            {"field": "modelo", "original": "g2511", "synthetic": "zz999",
+             "seq_start": 20, "seq_end": 24},
+        ])
+        run_id = _create_synthetic_run(self.con, self.capture_id, str(self.trail_dir))
+        _add_failure(self.con, run_id, 40, "Codigo nao cadastrado")
+        sugestoes = prefs_svc.feedback_for_run(self.con, run_id)
+        self.assertEqual(len(sugestoes), 1)
+        self.assertEqual(sugestoes[0]["field"], "modelo")
+
 
 # ---------------------------------------------------------------------------
 # Wiring: synthesize/start_synthetic_replay × prefs, KB meta e rotas novas
@@ -658,6 +694,25 @@ class SyntheticReplayPrefsRouteTests(unittest.TestCase):
         applied = depara.get("applied")
         self.assertIsInstance(applied, list)
         self.assertTrue(applied, "de-para.json deve gravar as substituições estruturadas")
+        for rec in applied:
+            self.assertIn("field", rec)
+            self.assertIn("seq_start", rec)
+            self.assertIn("seq_end", rec)
+
+    def test_params_da_run_carregam_synthetic_applied(self):
+        """Fonte de verdade do feedback loop: os params da run (o trail dir é
+        compartilhado entre runs da captura e sobrescrito a cada síntese)."""
+        data = self._post_replay({"source_dir": str(self.source_dir)})
+        con = connect(self.db_path)
+        init_db(con)
+        row = con.execute(
+            "SELECT params_json FROM replay_runs WHERE id=?", (data["run_id"],)
+        ).fetchone()
+        con.close()
+        params = json.loads(row["params_json"] or "{}")
+        applied = params.get("synthetic_applied")
+        self.assertIsInstance(applied, list)
+        self.assertTrue(applied, "params da run devem carregar synthetic_applied")
         for rec in applied:
             self.assertIn("field", rec)
             self.assertIn("seq_start", rec)

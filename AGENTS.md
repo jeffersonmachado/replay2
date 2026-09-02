@@ -468,8 +468,9 @@ terminal — isso é garantido pelo teste
   analyze-source; a síntese só avisa, nunca bloqueia) e o feedback loop
   (`feedback_for_capture`/`feedback_for_run`): a falha de validação mais
   cedo de cada run sintética vira sugestão de campo para o `skip_fields` do
-  próximo replay, mapeada pelo `applied` estruturado do `de-para.json` da
-  trilha (campo + seqs). O `benchmark_service.py` também faz a adoção de
+  próximo replay, mapeada pelo `synthetic_applied` dos params da run (campo
+  + seqs; o `de-para.json` do trail dir é só fallback — o dir é compartilhado
+  e sobrescrito a cada síntese). O `benchmark_service.py` também faz a adoção de
   experimentos de benchmark no boot do control plane
   (`import_experiments_from_artifacts`): experimentos cujos artefatos vieram
   no tarball (`artifacts/benchmarks/`, §33) são registrados em

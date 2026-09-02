@@ -9,7 +9,8 @@
     "5af0dd6 fix(build): empacota evidência performance-corrections (verify-tarball abortava 0.9.0)",
     "9958a19 chore(release): artefatos de aceitação da 0.9.0 (release-20260902T162216Z, tree 2b41b397)",
     "0ee4669 fix(compat): reverte dataclass(slots=True) — AIX roda Python 3.9",
-    "7ec5806 chore(release): artefatos de aceitação da 0.9.0 (3ª rodada, tree 4a8626d9)"
+    "7ec5806 chore(release): artefatos de aceitação da 0.9.0 (3ª rodada, tree 4a8626d9)",
+    "da2c531 fix(installer): health check do start_services com retry (15x2s)"
   ],
   "tree_sha256_final": "4a8626d940ccb861b57feb899812f3ba66e4d3b844e3b7c0da5fb7d887cf2ffa",
   "tree_sha256_baseline": "e748dfd0e97f97ccc62b31ba36e28f13c60c81e94b08c90c5025e5c9b10267c8",
@@ -146,5 +147,14 @@
     "whitelist do build: evidência performance-corrections incluída (pego pelo verify-tarball na 1ª rodada)",
     "dataclass(slots=True) revertido em dakota_terminal (Python 3.9 do AIX — incidente do 1º deploy 0.9.0) + guarda de regressão"
   ],
-  "deploy_aix": "primeiro deploy falhou no boot (slots=True vs Python 3.9); corrigido — redeploy pendente"
+  "deploy_aix": {
+    "target": "MIG24 AIX 7 (10.5.8.25), prefixo /opt/dakota/replay2",
+    "sequencia": [
+      "1º deploy: FALHOU no boot — dataclass(slots=True) incompatível com Python 3.9 do AIX",
+      "hotfix (model.py/attributes.py) + start manual: health 0.9.0 OK, socket do daemon OK",
+      "redeploy oficial: pacote íntegro instalado; health check falhou por falso negativo (boot lento — migrações SQLite); servidor confirmado saudável em seguida",
+      "fix do installer com retry (da2c531) vale para os próximos deploys"
+    ],
+    "estado_final": "control plane 0.9.0 respondendo /health OK; capture-daemon com socket ativo"
+  }
 }

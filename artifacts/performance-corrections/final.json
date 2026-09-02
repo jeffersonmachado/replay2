@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0",
+  "mission": "correção, endurecimento metodológico e otimização de performance (12 fases)",
+  "version": "0.9.0",
+  "date": "2026-09-02",
+  "commits": [
+    "0b48ead perf: correções de throughput, terminal, SQLite, auditoria, replay e build (0.9.0)",
+    "e649840 chore(acceptance): regera baseline dos arquivos protegidos (0.9.0)",
+    "5af0dd6 fix(build): empacota evidência performance-corrections (verify-tarball abortava 0.9.0)",
+    "9958a19 chore(release): artefatos de aceitação da 0.9.0 (release-20260902T162216Z, tree 2b41b397)"
+  ],
+  "tree_sha256_final": "2b41b3976bc69632c6718682e5e02c2f88af6c2742989445fa42998f545412a5",
+  "tree_sha256_baseline": "e748dfd0e97f97ccc62b31ba36e28f13c60c81e94b08c90c5025e5c9b10267c8",
+  "environment": {
+    "os": "Ubuntu (kernel 6.8), x86_64, 12 CPUs, 32 GB",
+    "python": "3.12.3",
+    "node": "22.12.0",
+    "tcl": "8.6.14 (expect presente)",
+    "filesystem_benchmarks": "ext4 (NVMe)"
+  },
+  "suites": [
+    {
+      "command": "python3 -m pytest tests/ gateway/tests/ -q -m \"not slow and not selenium and not external\"",
+      "result": "1592 passed, 197 deselected, 122 subtests passed",
+      "duration_s": 421,
+      "rc": 0
+    },
+    {
+      "command": "node --test $(grep -v '^#' scripts/js-tests.manifest)",
+      "result": "244 passed, 0 failed",
+      "duration_s": 0.5,
+      "rc": 0
+    },
+    {
+      "command": "tclsh tests/all.tcl",
+      "result": "68 passed, 0 failed",
+      "duration_s": 0.9,
+      "rc": 0
+    },
+    {
+      "command": "bash scripts/final-acceptance.sh",
+      "result": "GATE PASSED + EXTRACTED TREE GATE PASSED + RELEASE VALIDATION PASSED",
+      "release_run_id": "release-20260902T162216Z-463ab230",
+      "rc": 0
+    }
+  ],
+  "tarball": {
+    "path": "dist/dakota-replay2-0.9.0-20260902-133556.tar.gz",
+    "sha256": "db3e976f08689d03f541088e34889b654a0526a83d4d28db6bc83e384d8b1727",
+    "size_bytes": 3739514,
+    "entries": 1100,
+    "size_bytes_previous_release": 10343112,
+    "reduction_pct": 64,
+    "benchmark_packaged": "cap13-aix-linux-oficial-v7 (único experimento oficial)",
+    "verify_tarball": "PASSED (extração + sanity + hash da árvore extraída == aceite)"
+  },
+  "performance_before_after": {
+    "terminal_capture_path_scroll_6400B_ms": {
+      "before": 67.0,
+      "after": 22.55,
+      "gain": "3.0x",
+      "median_runs": 7,
+      "note": "variante com slots=True media 17.98ms (3.7x) mas foi revertida — Python 3.9 do AIX não suporta dataclass(slots=)"
+    },
+    "terminal_real_journey_capture8_ms": {
+      "before": 16.27,
+      "after": 12.23,
+      "gain": "1.3x"
+    },
+    "sqlite_5000_inserts_seconds": {
+      "before": 49.27,
+      "after": 0.121,
+      "gain": "~410x",
+      "rows_per_second": {
+        "before": 101,
+        "after": 41469
+      },
+      "median_runs": 5,
+      "journal": "delete",
+      "synchronous": "FULL",
+      "fs": "ext4"
+    },
+    "audit_events_per_second_c1": {
+      "before": 888,
+      "after": 3536,
+      "batch16": 7755,
+      "median_runs": 5
+    },
+    "audit_p99_ms_c32": {
+      "before": 363,
+      "after": 176,
+      "batch16": "<10"
+    },
+    "replay_1000_sessions_conc10": {
+      "before": "1000 threads + capture inteiro em RAM",
+      "after": "10 workers, índice 1.3MB, pico <15MB"
+    },
+    "verify_log_1GB_s": {
+      "before": 63.6,
+      "after": 58.2
+    },
+    "monitor_40_events_1GB_s": {
+      "before": 0.598,
+      "after": 0.002
+    },
+    "session_detail_warm_1GB_s": {
+      "before": 21.2,
+      "after": 14.8
+    }
+  },
+  "benchmark_v7_recalc": {
+    "aix": {
+      "conc1": 0.567935,
+      "conc5": 2.791971,
+      "conc10": 5.131077
+    },
+    "linux": {
+      "conc1": 0.626127,
+      "conc5": 3.079239,
+      "conc10": 6.112991
+    },
+    "reference_tolerance_pct": 5,
+    "observed_deviation_pct": "<0.01",
+    "verdict_recalculated": "INCONCLUSIVE (hashes placeholder, skew 171s, rede ausente) — antes: equivalência OK contraditória"
+  },
+  "phases": {
+    "1_throughput": "concluída (15 testes novos)",
+    "2_acceptance_binding": "concluída (hash antes==depois==aceite==pacote; results com version)",
+    "3_collectors_bottleneck": "concluída (host_series real, clock skew gate 1s, cobertura por coletor, 7 categorias de parada, sonda de recuperação)",
+    "4_functional_equivalence": "concluída (per_env nunca comprovada, functional_coverage, proveniência de hashes, evidência única não aprova)",
+    "5_sqlite_pool": "concluída (transaction/batch_insert, pool _created corrigido, WAL opt-in)",
+    "6_terminal_snapshots": "concluída (DEFAULT_CELL, passagem única, assinaturas idênticas)",
+    "7_audit_batch": "concluída (append_many, single-writer queue, formato intacto)",
+    "8_replay_concurrency": "concluída (ThreadPoolExecutor real, índice de offsets, _RunControlState)",
+    "9_index_verification": "concluída (verifier single-pass, tail reverso, índice global por captura, índices SQLite)",
+    "10_control_plane_websocket": "concluída (auth 1x, semáforo 128+503, broadcaster fora do lock, assets cache/ETag/gzip, finally)",
+    "11_packaging": "concluída (só benchmark oficial, tar reproduzível, verify-tarball)",
+    "12_official_benchmark": "BLOQUEADA — requer ambientes AIX/Linux formalmente autorizados e clock sincronizado; não executada nesta sessão (sem fabricação de aprovação)"
+  },
+  "extra_fixes": [
+    "replay.py:423 FakeSession.cfg (falha pré-existente no HEAD)",
+    "engineering_route_support.py: 4 handlers prendiam conexão do pool em exceção (finally)",
+    "generate-final-report.py (escritor órfão de results com schema incompatível) removido",
+    "_tails_by_vu limpo entre iterações de benchmark",
+    "whitelist do build: evidência performance-corrections incluída (pego pelo verify-tarball na 1ª rodada)",
+    "dataclass(slots=True) revertido em dakota_terminal (Python 3.9 do AIX — incidente do 1º deploy 0.9.0) + guarda de regressão"
+  ],
+  "deploy_aix": "primeiro deploy falhou no boot (slots=True vs Python 3.9); corrigido — redeploy pendente"
+}

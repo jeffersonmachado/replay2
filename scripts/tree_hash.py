@@ -72,6 +72,10 @@ EXCLUDE_FILES = {
     "artifacts/source-tree-manifest.sha256",
     "artifacts/source-tree-hash.json",
     "artifacts/evidence-manifest.sha256",
+    # final.json registra o hash da árvore/tarball — excluído para quebrar a
+    # circularidade (mesmo padrão do final-acceptance-results.json); o
+    # baseline.json da missão CONTINUA hasheado e empacotado.
+    "artifacts/performance-corrections/final.json",
     # Root-level dotfiles and docs not in distributable artifact
     ".gitignore", ".hintrc", ".codex",
     "AGENTS.md",

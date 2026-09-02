@@ -14,8 +14,10 @@ produção e sem fabricar métricas. Destaques medidos:
 - Throughput do benchmark deixou de ser subestimado em ~12,6× (erro de
   metodologia confirmado e corrigido; recálculo do v7 com desvio < 0,01% das
   referências).
-- Caminho de captura do terminal 3,7–3,9× mais rápido (67 ms → 18 ms no
-  payload de scroll de 6,4 KB), assinaturas byte a byte idênticas.
+- Caminho de captura do terminal 3,0× mais rápido (67,00 ms → 22,55 ms no
+  payload de scroll de 6,4 KB; a variante com slots=True chegou a 3,7× mas
+  foi revertida por incompatibilidade com o Python 3.9 do AIX), assinaturas
+  byte a byte idênticas.
 - Inserções SQLite em lote: ~410× (101 → 41.469 linhas/s, mesmos defaults de
   durabilidade).
 - Auditoria em lotes: 888 → 3.536 ev/s (1 sessão) e até 7.755 ev/s em lotes
@@ -116,8 +118,8 @@ regen-baseline.sh}`. Removido: `scripts/acceptance/generate-final-report.py`
 
 | Medição | Antes | Depois | Fonte |
 |---|---|---|---|
-| Terminal: scroll 6,4 KB (capture path) | 67,00 ms | 17,98 ms (3,7×) | `dev/bench_terminal_{antes,depois}.json` |
-| Terminal: jornada real captura 8 | 16,27 ms | 8,47 ms (1,9×) | idem |
+| Terminal: scroll 6,4 KB (capture path) | 67,00 ms | 22,55 ms (3,0×) | `dev/bench_terminal.py` (mediana de 7, medido após a reversão do slots=True) |
+| Terminal: jornada real captura 8 | 16,27 ms | 12,23 ms (1,3×) | idem |
 | SQLite: 5.000 inserts (ext4, delete/FULL) | 49,27 s (101 l/s) | 0,121 s (41.469 l/s, ~410×) | `dev/bench_sqlite_batch.py` |
 | Auditoria C=1 (ev/s) | 888 | 3.536 (7.755 em lotes de 16) | `dev/bench_audit_writer.*.json` |
 | Auditoria C=32 p99 | 363 ms | 176 ms (lotes: < 10 ms) | idem |
@@ -130,6 +132,12 @@ Mediana de ≥5 execuções onde exigido (terminal: 7; SQLite: 5; auditoria: 5;
 verifier/índice: 5).
 
 ## 7. Compatibilidade AIX/Linux
+
+- **Incidente real e correção**: o primeiro deploy da 0.9.0 no MIG24 falhou
+  no boot do control plane — `dataclass(slots=True)` (3.10+) em
+  `dakota_terminal/model.py` e `attributes.py` é incompatível com o Python
+  3.9 do AIX. Revertido para `frozen=True` puro e guardado pelo teste de
+  regressão `CompatibilidadePython39Tests` (varre todo `gateway/`).
 
 - Sem bash-isms novos; tar reproduzível feature-tested (AIX cai no caminho
   clássico, documentado em CHECKLIST_EMPACOTAMENTO.md).

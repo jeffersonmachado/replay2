@@ -416,6 +416,14 @@ def test_performance_corrections_evidence_packaged(tmp_path):
     pc = root / "artifacts" / "performance-corrections"
     pc.mkdir(parents=True)
     (pc / "baseline.json").write_text("{}\n", encoding="utf-8")
+    # final.json registra o hash da árvore/tarball — NÃO pode entrar no hash
+    # (circularidade), mas vai ao pacote como evidência.
+    h_sem = _tree_hash(root)
+    (pc / "final.json").write_text('{"tree_sha256_final": "x"}\n',
+                                   encoding="utf-8")
+    assert _tree_hash(root) == h_sem, (
+        "artifacts/performance-corrections/final.json entrou no hash da árvore"
+    )
     _make_release_artifacts(root)
 
     r = _run_build(root)
@@ -423,6 +431,8 @@ def test_performance_corrections_evidence_packaged(tmp_path):
     names = _tarball_names(_only_tarball(root))
     assert any(n.endswith("PERFORMANCE_CORRECTIONS_REPORT.md") for n in names)
     assert any("artifacts/performance-corrections/baseline.json" in n
+               for n in names)
+    assert any("artifacts/performance-corrections/final.json" in n
                for n in names)
 
 

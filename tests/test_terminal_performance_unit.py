@@ -274,5 +274,31 @@ class CellContractTests(unittest.TestCase):
         self.assertEqual(blank_cell().to_dict(), esperado)
 
 
+class CompatibilidadePython39Tests(unittest.TestCase):
+    """Guarda de compatibilidade AIX (Python 3.9).
+
+    Incidente real no deploy da 0.9.0: dataclass(slots=True) (3.10+) impediu
+    o control plane de subir no MIG24. Este teste falha se o padrao voltar
+    a qualquer modulo do gateway/terminal (todos rodam no AIX).
+    """
+
+    def test_sem_dataclass_slots_no_gateway(self):
+        import pathlib
+        import re
+
+        raiz = pathlib.Path(__file__).resolve().parents[1]
+        alvos = list((raiz / "gateway").rglob("*.py"))
+        assert alvos
+        padrao = re.compile(r"@dataclass\([^)]*slots\s*=")
+        for caminho in alvos:
+            if "node_modules" in caminho.parts or ".venv" in caminho.parts:
+                continue
+            texto = caminho.read_text(encoding="utf-8")
+            assert padrao.search(texto) is None, (
+                f"{caminho.relative_to(raiz)} usa dataclass(slots=...) "
+                "(incompativel com Python 3.9 do AIX)"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

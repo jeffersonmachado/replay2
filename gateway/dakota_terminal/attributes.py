@@ -6,7 +6,10 @@ from dataclasses import dataclass
 DEFAULT_COLOR = "default"
 
 
-@dataclass(frozen=True, slots=True)
+# Nota de compatibilidade: NÃO usar slots=True — o AIX roda Python 3.9 e
+# dataclass(slots=...) só existe a partir do 3.10 (incidente deploy 0.9.0:
+# control plane não subiu no MIG24). Guardado por teste de regressão.
+@dataclass(frozen=True)
 class Attributes:
     fg: str | int = DEFAULT_COLOR
     bg: str | int = DEFAULT_COLOR

@@ -131,8 +131,20 @@ start_services() {
   sleep 1
   su "$SERVICE_USER" -c "cd '$PREFIX/gateway' && PYTHONPATH='$PREFIX/gateway':\$PYTHONPATH nohup python3 '$PREFIX/gateway/dakota-gateway' capture-daemon --db '$PREFIX/gateway/state/replay.db' --hmac-key-file '$PREFIX/.local-secrets/hmac-key' > /tmp/replay2-capture-daemon.log 2>&1 &" </dev/null >/dev/null 2>&1
   sleep 3
-  python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:$CONTROL_PORT/health',timeout=5).read().decode())" \
-    || die "control plane não respondeu no /health (ver /tmp/replay2-control.log)"
+  # Health com retry: em hosts lentos (AIX) o boot pode demorar mais que a
+  # janela fixa — ex.: migrações do SQLite (CREATE INDEX em replay_failures)
+  # rodam no init. Falso negativo observado no deploy da 0.9.0: o health
+  # falhou com "connection refused" e o servidor estava saudável segundos
+  # depois. 15 tentativas × 2s ≈ 30s de tolerância.
+  ATTEMPT=1
+  while [ "$ATTEMPT" -le 15 ]; do
+    HEALTH=$(python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:$CONTROL_PORT/health',timeout=5).read().decode())" 2>/dev/null) \
+      && break
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 2
+  done
+  [ -n "$HEALTH" ] || die "control plane não respondeu no /health (ver /tmp/replay2-control.log)"
+  echo "$HEALTH"
   if [ -S "$PREFIX/gateway/state/daemon/capture.sock" ]; then
     info "capture-daemon socket OK"
   else

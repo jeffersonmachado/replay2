@@ -7,9 +7,11 @@
     "0b48ead perf: correções de throughput, terminal, SQLite, auditoria, replay e build (0.9.0)",
     "e649840 chore(acceptance): regera baseline dos arquivos protegidos (0.9.0)",
     "5af0dd6 fix(build): empacota evidência performance-corrections (verify-tarball abortava 0.9.0)",
-    "9958a19 chore(release): artefatos de aceitação da 0.9.0 (release-20260902T162216Z, tree 2b41b397)"
+    "9958a19 chore(release): artefatos de aceitação da 0.9.0 (release-20260902T162216Z, tree 2b41b397)",
+    "0ee4669 fix(compat): reverte dataclass(slots=True) — AIX roda Python 3.9",
+    "7ec5806 chore(release): artefatos de aceitação da 0.9.0 (3ª rodada, tree 4a8626d9)"
   ],
-  "tree_sha256_final": "2b41b3976bc69632c6718682e5e02c2f88af6c2742989445fa42998f545412a5",
+  "tree_sha256_final": "4a8626d940ccb861b57feb899812f3ba66e4d3b844e3b7c0da5fb7d887cf2ffa",
   "tree_sha256_baseline": "e748dfd0e97f97ccc62b31ba36e28f13c60c81e94b08c90c5025e5c9b10267c8",
   "environment": {
     "os": "Ubuntu (kernel 6.8), x86_64, 12 CPUs, 32 GB",
@@ -39,20 +41,19 @@
     },
     {
       "command": "bash scripts/final-acceptance.sh",
-      "result": "GATE PASSED + EXTRACTED TREE GATE PASSED + RELEASE VALIDATION PASSED",
+      "result": "GATE PASSED + verify-tarball OK (3ª rodada, pós-fix AIX)",
       "release_run_id": "release-20260902T162216Z-463ab230",
       "rc": 0
     }
   ],
   "tarball": {
-    "path": "dist/dakota-replay2-0.9.0-20260902-133556.tar.gz",
-    "sha256": "db3e976f08689d03f541088e34889b654a0526a83d4d28db6bc83e384d8b1727",
-    "size_bytes": 3739514,
-    "entries": 1100,
+    "path": "dist/dakota-replay2-0.9.0-20260902-141322.tar.gz",
+    "sha256": "8a35f02935b16114cf8c31fe8863ae9a0899067d23e0d6c4951706f589dc9297",
+    "size_bytes": 3742426,
     "size_bytes_previous_release": 10343112,
     "reduction_pct": 64,
     "benchmark_packaged": "cap13-aix-linux-oficial-v7 (único experimento oficial)",
-    "verify_tarball": "PASSED (extração + sanity + hash da árvore extraída == aceite)"
+    "verify_tarball": "PASSED (verify-tarball OK: pacote íntegro e vinculado ao aceite, 3ª rodada)"
   },
   "performance_before_after": {
     "terminal_capture_path_scroll_6400B_ms": {

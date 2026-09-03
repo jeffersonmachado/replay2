@@ -276,6 +276,43 @@ class DatasetLookupValuesTests(unittest.TestCase):
         for rec in ds.records:
             self.assertIn(rec.data["CONDPAG"], [2, 15, 28])
 
+    def test_lookup_respeita_max_length_do_campo(self):
+        """Valor amostrado da tabela FK precisa caber no GET da tela: código
+        mais longo que a PICTURE transborda para o campo seguinte e desalinha
+        a navegação do replay."""
+        from dakota_gateway.synthetic.dataset_builder import DatasetBuilder
+        from dakota_gateway.synthetic.schema import (
+            FieldSchema, ScreenSchema, SyntheticSchema)
+
+        schema = SyntheticSchema(
+            screen=ScreenSchema(
+                screen_signature="PED", title="PED", program_name="PED",
+                fields=[FieldSchema(name="CONDPAG", datatype="text",
+                                    lookup="condpagto", max_length=3)]),
+            entity_name="PED", quantity=10, seed=42)
+        ds = DatasetBuilder().build(
+            schema, lookup_values={"condpagto": ["001", "002", "30001832"]})
+        for rec in ds.records:
+            self.assertIn(rec.data["CONDPAG"], ["001", "002"])
+
+    def test_lookup_sem_valor_que_caiba_usa_lista_integral(self):
+        """Nenhum valor cabe (largura estreita demais): melhor um código real
+        longo do que quebrar a geração — fallback para a lista integral."""
+        from dakota_gateway.synthetic.dataset_builder import DatasetBuilder
+        from dakota_gateway.synthetic.schema import (
+            FieldSchema, ScreenSchema, SyntheticSchema)
+
+        schema = SyntheticSchema(
+            screen=ScreenSchema(
+                screen_signature="PED", title="PED", program_name="PED",
+                fields=[FieldSchema(name="CONDPAG", datatype="text",
+                                    lookup="condpagto", max_length=1)]),
+            entity_name="PED", quantity=4, seed=42)
+        ds = DatasetBuilder().build(
+            schema, lookup_values={"condpagto": ["001", "002"]})
+        for rec in ds.records:
+            self.assertIn(rec.data["CONDPAG"], ["001", "002"])
+
 
 if __name__ == "__main__":
     unittest.main()

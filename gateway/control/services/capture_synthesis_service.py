@@ -75,9 +75,11 @@ def synthesize_capture(
 
     ``lookup_values``: valores reais por entidade/tabela referenciada (FK),
     digitados pelo usuário (manual). São fundidos com os valores observados
-    nas capturas anteriores deste servidor (harvest dos report.json) — campos
-    de lookup cobertos por valores reais deixam de ser âncora e passam a
-    variar dentro do cadastro (ex.: condição de pagamento).
+    nas capturas anteriores deste servidor (harvest dos report.json) e com os
+    valores amostrados das tabelas do legado (``table_file_reader`` — coluna-
+    chave lida dos arquivos de dados descobertos) — campos de lookup cobertos
+    por valores reais deixam de ser âncora e passam a variar dentro do
+    cadastro (ex.: condição de pagamento).
 
     ``skip_fields``: quando NÃO-None (o body da requisição contém a chave,
     mesmo vazia), é a seleção explícita do usuário e substitui a lista
@@ -132,9 +134,21 @@ def synthesize_capture(
         capture_jsonl, source_path, name=name or run_name, **kb)
 
     # Valores reais para campos de lookup (FK): harvest das capturas
-    # anteriores do servidor + lista manual do usuário (manual estende).
+    # anteriores do servidor + amostragem das tabelas referenciadas (coluna-
+    # chave lida dos arquivos de dados do legado) + lista manual do usuário.
     merged_lookup: dict[str, list] = _harvest_lookup_values(
         Path(log_dir).parent, exclude_log_dir=log_dir)
+    if data_dirs:
+        from dakota_gateway.source_analyzer.table_file_reader import (
+            sample_lookup_tables,
+        )
+        sampled = sample_lookup_tables(
+            data_dirs, _lookup_tables_of_template(template, data_dirs))
+        for key, vals in sampled.items():
+            bucket = merged_lookup.setdefault(key, [])
+            for value in vals:
+                if value not in bucket:
+                    bucket.append(value)
     for key, vals in (lookup_values or {}).items():
         k = str(key or "").strip().lower()
         if not k:
@@ -348,6 +362,58 @@ def _harvest_lookup_values(
                     if len(bucket) < max_per_key:
                         bucket.setdefault(original, None)
     return {key: list(bucket) for key, bucket in values.items()}
+
+
+def _lookup_tables_of_mappings(
+    screen_mappings: list[dict] | None,
+    data_dirs: list | None = None,
+) -> dict[str, str]:
+    """Tabelas FK referenciadas pelos inputs mapeados (``lookup_table`` da KB
+    ou do VALID do fonte) → hint de módulo da captura.
+
+    O hint (basename do diretório de dados do módulo, ex.: "cmp") desempata
+    tabelas ``arq<NNN>`` replicadas por módulo com conteúdos diferentes —
+    deriva das entidades das telas (``est361`` → módulo ``est``).
+    """
+    tables: set[str] = set()
+    modules: set[str] = set()
+    dir_names = {
+        Path(str(d or "").strip()).name.lower()
+        for d in (data_dirs or []) if str(d or "").strip()
+    }
+    for screen in screen_mappings or []:
+        for inp in screen.get("inputs") or []:
+            table = str(inp.get("lookup_table") or "").strip().lower()
+            if table:
+                tables.add(table)
+        for name in {str(screen.get("entity_name") or "").strip().lower()} | {
+            str(i.get("entity_name") or "").strip().lower()
+            for i in screen.get("inputs") or []
+        }:
+            m = re.match(r"^([a-z]+)\d", name)
+            if m and m.group(1) in dir_names:
+                modules.add(m.group(1))
+    hint = sorted(modules)[0] if modules else ""
+    return {table: hint for table in sorted(tables)}
+
+
+def _lookup_tables_of_template(template: Any, data_dirs: list | None = None) -> dict[str, str]:
+    """Versão para o JourneyTemplate (steps[].inputs[]) de
+    ``_lookup_tables_of_mappings`` — o template não tem screen_mappings."""
+    screens = [
+        {
+            "entity_name": getattr(step, "entity_name", None) or "",
+            "inputs": [
+                {
+                    "lookup_table": getattr(inp, "lookup_table", "") or "",
+                    "entity_name": getattr(inp, "entity_name", "") or "",
+                }
+                for inp in getattr(step, "inputs", None) or []
+            ],
+        }
+        for step in getattr(template, "steps", None) or []
+    ]
+    return _lookup_tables_of_mappings(screens, data_dirs)
 
 
 def suggest_key_fields(
@@ -975,19 +1041,38 @@ def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[s
 
     # Campos indexados (chaves i<TABELA>.00N) também ancoram células de
     # grade sem metadados na KB — melhor esforço: sem source_dir válido,
-    # segue só com as âncoras da KB.
+    # segue só com as âncoras da KB. A cobertura de lookup (harvest de
+    # capturas anteriores + valores amostrados das tabelas FK) libera o
+    # campo da âncora no seletor, coerente com a síntese.
     indexed_fields: set[str] = set()
+    lookup_covered: set[str] = set()
     try:
         from dakota_gateway.source_analyzer.index_file_reader import (
             discover_data_dirs as _discover_data_dirs,
         )
+        lookup_covered = {
+            k for k, v in _harvest_lookup_values(
+                Path(log_dir).parent, exclude_log_dir=log_dir).items() if v
+        }
         _sp = Path(str(source_dir or "").strip())
         if _sp.is_dir():
-            indexed_fields = _indexed_field_names(_discover_data_dirs(_sp))
+            _dirs = _discover_data_dirs(_sp)
+            indexed_fields = _indexed_field_names(_dirs)
+            if _dirs:
+                from dakota_gateway.source_analyzer.table_file_reader import (
+                    sample_lookup_tables,
+                )
+                lookup_covered |= {
+                    k for k, v in sample_lookup_tables(
+                        _dirs, _lookup_tables_of_mappings(screen_mappings, _dirs)
+                    ).items() if v
+                }
     except Exception:
         indexed_fields = set()
 
-    key_fields = suggest_key_fields(screen_mappings, entities, indexed_fields=indexed_fields)
+    key_fields = suggest_key_fields(
+        screen_mappings, entities, indexed_fields=indexed_fields,
+        lookup_covered=lookup_covered)
     key_set = {f.lower() for f in key_fields}
     screens: list[dict] = []
     all_fields: list[str] = []

@@ -52,6 +52,14 @@ class ScanIndexFilesTests(unittest.TestCase):
             _write_index(base / "iest999.001", "rede + loja")
             self.assertEqual(scan_index_files(base), {})
 
+    def test_par_com_extensao_de_modulo(self):
+        """No legado a extensão do dado é a do módulo (.cmp, .cad, .fin...)."""
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "arq210.cmp").write_bytes(b"\x00" * 64)
+            _write_index(base / "iarq210.001", "codigo")
+            self.assertEqual(scan_index_files(base), {"ARQ210": [["codigo"]]})
+
     def test_diretorio_inexistente(self):
         self.assertEqual(scan_index_files("/nao/existe"), {})
 

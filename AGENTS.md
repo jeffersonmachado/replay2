@@ -322,12 +322,19 @@ replay2/
   valores reais (`lookup_values`) vêm de duas fontes fundidas em
   `capture_synthesis_service.synthesize_capture`: harvest dos `report.json`
   das capturas anteriores do servidor (`_harvest_lookup_values` — códigos
-  já digitados em outras trilhas, por `lookup_table`/`entity_name`) e a
+  já digitados em outras trilhas, por `lookup_table`/`entity_name`), a
+  amostragem das próprias tabelas do legado (`table_file_reader.py` —
+  `sample_lookup_tables` lê a coluna-chave (1º campo do 1º índice) dos
+  arquivos de dados `<TABELA>.<modulo>`, formato Recital big-endian:
+  descritores de 24 B no header de 3104 B, registros a partir de 6656 com
+  flag ' '/'*'; tabela inválida é ignorada e o campo segue âncora) e a
   lista manual da UI do detalhe da captura ("Valores válidos de cadastro",
   uma linha `tabela: v1, v2` — paridade na API via `lookup_values` no body
   de `/synthesize` e `/synthetic-replay`). O sorteio usa o mecanismo já
   existente `dataset_builder.build(lookup_values=...)` (FieldSchema.lookup
-  em minúsculas). O `lookup_table` vem da KB ou, como fallback, do VALID do
+  em minúsculas), filtrando os valores pelo `max_length` da PICTURE do GET
+  (código longo demais transborda para o campo seguinte e desalinha o
+  replay). O `lookup_table` vem da KB ou, como fallback, do VALID do
   GET no fonte: `fValida(chave, chave, [tabela], ...)` é o idioma Recital de
   "valor deve existir cadastrado" — `validation_rules.valid_lookup_table`
   extrai a tabela (ex.: frete→arqfrete, situacao→est281); sem valores reais

@@ -311,6 +311,66 @@ class SuggestKeyFieldsTests(unittest.TestCase):
         self.assertIsNone(_lookup_key_for_input("", "", lv))
         self.assertIsNone(_lookup_key_for_input("  ", "  ", lv))
 
+    def test_lookup_tables_of_mappings_extrai_tabelas_fk(self):
+        """A amostragem de valores reais mira as tabelas FK referenciadas
+        pelos inputs mapeados (lookup_table da KB ou do VALID do fonte)."""
+        from control.services.capture_synthesis_service import (
+            _lookup_tables_of_mappings)
+
+        mappings = [
+            {"entity_name": "cmp310",
+             "inputs": [
+                {"field_name": "cfop", "lookup_table": "UNI500"},
+                {"field_name": "condpag", "lookup_table": "arq210"},
+                {"field_name": "valor", "lookup_table": ""},
+                {"field_name": "obs"},
+            ]},
+            {"inputs": [{"field_name": "cfop2", "lookup_table": "uni500"}]},
+        ]
+        self.assertEqual(
+            _lookup_tables_of_mappings(mappings),
+            {"uni500": "", "arq210": ""})
+        self.assertEqual(_lookup_tables_of_mappings(None), {})
+
+    def test_lookup_tables_of_mappings_deriva_hint_de_modulo(self):
+        """O módulo da captura (prefixo da entidade que é diretório de dados)
+        vira hint para desempatar arq<NNN> replicadas por módulo."""
+        from control.services.capture_synthesis_service import (
+            _lookup_tables_of_mappings)
+
+        mappings = [
+            {"entity_name": "cmp310",
+             "inputs": [{"field_name": "condpag", "lookup_table": "arq210"}]},
+        ]
+        self.assertEqual(
+            _lookup_tables_of_mappings(mappings, ["/dakota11/cmp"]),
+            {"arq210": "cmp"})
+        # prefixo que não é diretório de dados não vira hint
+        self.assertEqual(
+            _lookup_tables_of_mappings(mappings, ["/dakota11/est"]),
+            {"arq210": ""})
+
+    def test_lookup_tables_of_template_le_steps(self):
+        """O JourneyTemplate não tem screen_mappings — as tabelas FK saem de
+        steps[].inputs[] (bug pego em revisão: template.screen_mappings não
+        existe)."""
+        from types import SimpleNamespace
+        from control.services.capture_synthesis_service import (
+            _lookup_tables_of_template)
+
+        template = SimpleNamespace(steps=[
+            SimpleNamespace(
+                entity_name="cmp310",
+                inputs=[
+                    SimpleNamespace(lookup_table="arq210", entity_name=""),
+                    SimpleNamespace(lookup_table="", entity_name=""),
+                ]),
+        ])
+        self.assertEqual(
+            _lookup_tables_of_template(template, ["/dakota11/cmp"]),
+            {"arq210": "cmp"})
+        self.assertEqual(_lookup_tables_of_template(SimpleNamespace()), {})
+
     def test_depara_nota_valor_real_observado_por_campo(self):
         """De→para registra a origem do valor quando ele veio da lista
         field:<campo> (valores reais observados em capturas anteriores)."""

@@ -7,8 +7,9 @@ chave" — não depende de heurística sobre o fonte .prg nem de a KB ter
 sido populada com ``INDEX ON``.
 
 Convencão observada no legado Dakota: para a tabela ``est100`` (dados em
-``est100.est``/``.dbo``), os índices são ``iest100.001``, ``iest100.002``...
-(prefixo ``i`` + nome da tabela + extensão numérica).
+``est100.est`` — a extensão é a do módulo: ``.cmp``, ``.cad``, ``.fin``...),
+os índices são ``iest100.001``, ``iest100.002``...  (prefixo ``i`` + nome da
+tabela + extensão numérica).
 """
 from __future__ import annotations
 
@@ -17,11 +18,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-# Extensões de dados reconhecidas como tabela (par do arquivo de índice).
-_DATA_EXTS = (".est", ".dbo", ".db", ".dbf")
-
 # Extensão numérica de índice: .001, .002, ... .999
 _RE_INDEX_FILE = re.compile(r"^i(.+)\.\d{3}$", re.IGNORECASE)
+_RE_INDEX_SUFFIX = re.compile(r"^\.\d{3}$")
+
+
+def _is_data_file(path: Path) -> bool:
+    """Arquivo de dados da tabela: qualquer extensão de módulo (``.est``,
+    ``.cmp``, ``.cad``, ``.fin``... — no legado cada módulo usa a sua), desde
+    que não seja índice (``.00N``) nem temporário."""
+    suffix = path.suffix.lower()
+    return bool(suffix) and not _RE_INDEX_SUFFIX.match(suffix) and suffix != ".tmp"
 
 # Chamada de função simples na expressão: dtos(data), upper(nome), str(cod)
 _RE_FUNC_CALL = re.compile(r"^\w+\((.+)\)$")
@@ -67,14 +74,14 @@ def scan_index_files(data_dir: str | Path) -> dict[str, list[list[str]]]:
 
     Retorna ``{TABELA: [[campo, ...], ...]}`` — uma lista de chaves por
     tabela (cada arquivo de índice é uma chave, possivelmente composta).
-    Só considera índice cujo par de dados (``<TABELA>.est|.dbo|.db|.dbf``)
-    existe no mesmo diretório.
+    Só considera índice cujo par de dados (``<TABELA>.<ext de módulo>`` —
+    ``.est``, ``.cmp``, ``.cad``...) existe no mesmo diretório.
     """
     base = Path(str(data_dir or "").strip())
     if not base.is_dir():
         return {}
     data_stems = {
-        p.stem.upper() for p in base.iterdir() if p.is_file() and p.suffix.lower() in _DATA_EXTS
+        p.stem.upper() for p in base.iterdir() if p.is_file() and _is_data_file(p)
     }
     keys: dict[str, list[list[str]]] = {}
     for path in sorted(base.iterdir()):

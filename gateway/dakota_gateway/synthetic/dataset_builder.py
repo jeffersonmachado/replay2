@@ -107,6 +107,14 @@ class DatasetBuilder:
         # valida a existência ("Codigo nao cadastrado"), não o formato.
         if field.lookup and field.lookup in lookup_values:
             lookup_list = lookup_values[field.lookup]
+            # O valor precisa caber no campo da tela (max_length da PICTURE):
+            # código mais longo que o GET transborda para o campo seguinte e
+            # desalinha a navegação do replay. Se nenhum couber, usa a lista
+            # integral (largura desconhecida/ausente não pode bloquear).
+            if field.max_length:
+                fitting = [v for v in lookup_list if len(str(v).strip()) <= field.max_length]
+                if fitting:
+                    lookup_list = fitting
             if index < len(lookup_list):
                 return lookup_list[index]
             return random.Random(seed + index).choice(lookup_list)

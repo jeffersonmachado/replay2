@@ -357,7 +357,12 @@ bash scripts/acceptance/gen-evidence-manifest.sh
 # ── 11. Build tarball ──
 echo "=== BUILDING TARBALL ==="
 bash scripts/build-tarball.sh
-TB=$(ls -t dist/dakota-replay2-*.tar.gz 2>/dev/null | head -1)
+# mapfile drena toda a saída do ls (sem fechar o pipe cedo): o padrão
+# `ls | head -1` abortava o pipeline com SIGPIPE sob `set -o pipefail`
+# quando o head saía antes do ls terminar (corrida com centenas de
+# tarballs em dist/ — pipeline 0.9.3, exit 141 após o build).
+mapfile -t _tarballs < <(ls -t dist/dakota-replay2-*.tar.gz 2>/dev/null)
+TB="${_tarballs[0]:-}"
 [ -n "$TB" ] && [ -f "$TB" ] || { echo "ERROR: tarball not created"; exit 1; }
 TB_HASH=$(sha256sum "$TB" | cut -d' ' -f1)
 TB_SIZE=$(stat -c%s "$TB")

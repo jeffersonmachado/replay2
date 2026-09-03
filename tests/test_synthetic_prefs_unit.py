@@ -631,6 +631,9 @@ class SyntheticReplayPrefsRouteTests(unittest.TestCase):
 
     def _post_replay(self, body: dict) -> dict:
         from control.routes.capture_routes import handle_capture_post_route
+        # wait=1: estes testes exercitam o fluxo síncrono de criação da run
+        # (o default da rota passou a ser o job assíncrono — v0.9.3).
+        body = {**body, "wait": 1}
         handler = _FakeHandler(self.db_path, body=body)
         runner = _FakeRunner()
         handler.server = _FakeServer(self.db_path, runner)

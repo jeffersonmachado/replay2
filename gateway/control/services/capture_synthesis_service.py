@@ -5,6 +5,8 @@ import base64
 import json
 import os
 import re
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -1055,6 +1057,7 @@ def start_synthetic_replay(
     lookup_values: dict[str, list] | None = None,
     runner,
     hmac_key: bytes,
+    progress=None,
 ) -> dict[str, Any]:
     """Sintetiza dados a partir da captura e dispara um run real (1 clique).
 
@@ -1071,6 +1074,11 @@ def start_synthetic_replay(
     """
     from control.services.run_service import create_run_request_payload
 
+    def _report(phase: str) -> None:
+        if callable(progress):
+            progress(phase)
+
+    _report("sintetizando dados a partir da captura")
     synth = synthesize_capture(
         con,
         capture_id,
@@ -1126,6 +1134,7 @@ def start_synthetic_replay(
     }
     if entry_cached:
         trail_kwargs["entry"] = cached_entry  # dict ou None ("sem preâmbulo")
+    _report("construindo trilha sintética")
     trail = build_synthetic_trail(
         synth["capture_jsonl"],
         substitutions,
@@ -1211,6 +1220,7 @@ def start_synthetic_replay(
             synth_warnings.append(
                 f"entrada alternativa disponível se o caminho gravado falhar: {entry['fallback']['send'].strip()}"
             )
+    _report("criando run de replay")
     created = create_run_request_payload(con, created_by=created_by, body=run_body)
     run_id = int(created["id"])
     runner.start_run_async(run_id)
@@ -1243,3 +1253,107 @@ def start_synthetic_replay(
         "kb": synth.get("kb"),
         "warnings": trail["warnings"] + synth_warnings,
     }
+
+
+# ---------------------------------------------------------------------------
+# Job assíncrono do replay sintético em 1 clique.
+#
+# Motivo (medido na captura 81, AIX, v0.9.2): a rota síncrona morria por
+# timeout HTTP — a síntese (análise dos fontes Recital) leva minutos e o
+# cliente desistia sem run criada. A rota passa a disparar o job em thread
+# daemon e a UI acompanha por GET .../synthetic-replay-jobs/{job_id}.
+# Registro em memória: o job morre com o processo do control plane, como a
+# thread que o executa — persistência em banco não mudaria esse destino.
+# ---------------------------------------------------------------------------
+
+_SYNTH_REPLAY_JOBS: dict[str, dict] = {}
+_SYNTH_REPLAY_JOBS_LOCK = threading.Lock()
+
+
+def start_synthetic_replay_job(
+    db_pool,
+    *,
+    capture_id: int,
+    created_by: int,
+    source_dir: str,
+    seed: int | None = None,
+    target_host: str = "",
+    target_user: str = "",
+    term: str = "",
+    skip_fields: list[str] | None = None,
+    auto_entry: bool = True,
+    lookup_values: dict[str, list] | None = None,
+    runner,
+    hmac_key: bytes,
+) -> dict[str, Any]:
+    """Dispara start_synthetic_replay em thread daemon e retorna o job_id.
+
+    A conexão do banco é adquirida do pool DENTRO da thread (a conexão do
+    request é liberada quando a resposta sai) e sempre devolvida, mesmo em
+    erro. O andamento é exposto por get_synthetic_replay_job: status
+    queued/running/done/error + phases na ordem reportada.
+    """
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "capture_id": capture_id,
+        "status": "queued",
+        "phase": "na fila",
+        "phases": [],
+        "created_ms": now_ms(),
+        "started_ms": None,
+        "finished_ms": None,
+        "result": None,
+        "error": None,
+    }
+    with _SYNTH_REPLAY_JOBS_LOCK:
+        _SYNTH_REPLAY_JOBS[job_id] = job
+
+    def _update(**fields) -> None:
+        with _SYNTH_REPLAY_JOBS_LOCK:
+            job.update(fields)
+
+    def _run() -> None:
+        _update(status="running", started_ms=now_ms())
+
+        def _progress(phase: str) -> None:
+            with _SYNTH_REPLAY_JOBS_LOCK:
+                job["phases"].append(str(phase))
+                job["phase"] = str(phase)
+
+        con = db_pool.acquire()
+        try:
+            result = start_synthetic_replay(
+                con,
+                capture_id,
+                created_by=created_by,
+                source_dir=source_dir,
+                seed=seed,
+                target_host=target_host,
+                target_user=target_user,
+                term=term,
+                skip_fields=skip_fields,
+                auto_entry=auto_entry,
+                lookup_values=lookup_values,
+                runner=runner,
+                hmac_key=hmac_key,
+                progress=_progress,
+            )
+        except Exception as exc:  # noqa: BLE001 — o erro vai para o job, a UI exibe
+            _update(status="error", error=str(exc), finished_ms=now_ms())
+            return
+        finally:
+            db_pool.release(con)
+        _update(status="done", result=result, finished_ms=now_ms())
+
+    threading.Thread(target=_run, daemon=True, name=f"synth-replay-{job_id}").start()
+    return {"ok": True, "job_id": job_id, "status": "queued", "capture_id": capture_id}
+
+
+def get_synthetic_replay_job(job_id: str) -> dict | None:
+    """Cópia do estado atual do job (None se o id não existir)."""
+    with _SYNTH_REPLAY_JOBS_LOCK:
+        job = _SYNTH_REPLAY_JOBS.get(str(job_id or ""))
+        if job is None:
+            return None
+        return dict(job)

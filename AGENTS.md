@@ -379,7 +379,15 @@ replay2/
   rota
   `POST /api/captures/{id}/synthetic-replay` (botão "Replay sintético" no
   detalhe da captura, `capture_synthesis_service.start_synthetic_replay`)
-  encadeia síntese → trilha → run real determinística `send-anyway`. Runs
+  encadeia síntese → trilha → run real determinística `send-anyway`.
+  Desde a v0.9.3 a rota é **assíncrona por default**: responde `202` com
+  `job_id` na hora (`start_synthetic_replay_job` — thread daemon + registro
+  em memória; a conexão do banco é do pool, adquirida dentro da thread) e a
+  UI acompanha as fases por
+  `GET /api/captures/{id}/synthetic-replay-jobs/{job_id}` (status
+  queued/running/done/error + `phases`) — a rota síncrona morria por timeout
+  HTTP porque a síntese leva minutos no AIX (medido na captura 81);
+  `body.wait=1` mantém o comportamento síncrono antigo (CLI/testes). Runs
   sintéticas carregam `params.synthetic=true` + `source_capture_id` — a UI
   exibe o badge "sintético • captura #N" (lista e detalhe da run,
   `run_views.runSyntheticBadgeHtml`), a lista de Execuções tem filtro de

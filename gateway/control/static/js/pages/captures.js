@@ -421,6 +421,36 @@ function setupSynthesisPanel(captureId, capture) {  const panel = document.getEl
   }
 }
 
+async function pollSyntheticReplayJob(captureId, jobId, feedback) {
+  // Consulta o job assíncrono até done/error; atualiza o feedback com a fase.
+  const started = Date.now();
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const resp = await apiJson(`/api/captures/${captureId}/synthetic-replay-jobs/${jobId}`);
+    const job = resp?.data?.job;
+    if (!resp?.ok || !job) {
+      if (feedback) {
+        feedback.className = "mt-3 text-sm text-rose-300";
+        feedback.textContent = resp?.data?.error || "Falha ao consultar o andamento do replay sintético.";
+      }
+      return null;
+    }
+    if (job.status === "done") return job.result || {};
+    if (job.status === "error") {
+      if (feedback) {
+        feedback.className = "mt-3 text-sm text-rose-300";
+        feedback.textContent = job.error || "Falha ao gerar replay sintético.";
+      }
+      return null;
+    }
+    if (feedback) {
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      feedback.className = "mt-3 text-sm text-stone-300";
+      feedback.textContent = `${job.phase || "processando"}… (${elapsed}s)`;
+    }
+  }
+}
+
 async function syntheticReplay(captureId) {
   const btn = document.getElementById("cap_synth_replay_btn");
   const sourceInput = document.getElementById("cap_synth_source_dir");
@@ -461,9 +491,8 @@ async function syntheticReplay(captureId) {
     lookup_values: currentLookupValues(),
   }));
 
-  if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
-
   if (!response?.ok) {
+    if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
     if (feedback) {
       feedback.className = "mt-3 text-sm text-rose-300";
       feedback.textContent = response?.data?.error || "Falha ao gerar replay sintético.";
@@ -471,7 +500,15 @@ async function syntheticReplay(captureId) {
     return;
   }
 
-  const data = response.data || {};
+  // Rota assíncrona (202 + job_id): a síntese leva minutos no AIX — a
+  // resposta imediata traz o job e o andamento é consultado por polling.
+  let data = response.data || {};
+  if (data.job_id) {
+    data = await pollSyntheticReplayJob(captureId, data.job_id, feedback);
+    if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
+    if (!data) return; // erro já exibido no feedback
+  } else if (btn) { btn.disabled = false; btn.textContent = "Replay sintético"; }
+
   const kept = Array.isArray(data.skip_fields) ? data.skip_fields : [];
   updateKbWarning(data.kb);
   const sessionUuid = String(window._currentCaptureSessionUuid || "").trim();

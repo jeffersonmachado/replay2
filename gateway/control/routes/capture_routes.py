@@ -28,7 +28,9 @@ from control.services.capture_service import (
     stop_capture as _stop_capture,
 )
 from control.services.capture_synthesis_service import (
+    get_synthetic_replay_job as _get_synthetic_replay_job,
     start_synthetic_replay as _start_synthetic_replay,
+    start_synthetic_replay_job as _start_synthetic_replay_job,
     synthesize_capture as _synthesize_capture,
 )
 from control.services.gateway_observability_service import (
@@ -370,6 +372,26 @@ def handle_capture_get_route(
         write_json(handler, 200, {"ok": True, "capture_id": capture_id, "prefs": prefs})
         return True
 
+    # GET /api/captures/{id}/synthetic-replay-jobs/{job_id} — andamento do
+    # replay sintético assíncrono (a síntese leva minutos no AIX; a rota
+    # POST responde de imediato e a UI consulta o progresso aqui)
+    if "/synthetic-replay-jobs/" in path:
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        try:
+            capture_id = int(parts[3])
+            job_id = str(parts[5] or "")
+        except (ValueError, IndexError):
+            return False
+        job = _get_synthetic_replay_job(job_id)
+        if not job or int(job.get("capture_id") or 0) != capture_id:
+            write_json(handler, 404, {"ok": False, "error": "job não encontrado"})
+            return True
+        write_json(handler, 200, {"ok": True, "job": job})
+        return True
+
     # GET /api/captures/{id}/runs — runs sintéticas geradas desta captura
     if path.startswith("/api/captures/") and path.endswith("/runs"):
         user = handler._require()
@@ -609,6 +631,30 @@ def handle_capture_post_route(
         # Entrada automática no sistema (corte do preâmbulo login/shell +
         # preamble de entrada) — default ligada; body.auto_entry=0 desliga.
         auto_entry = str(body.get("auto_entry", "1")).strip().lower() not in ("0", "false", "no")
+
+        # Default assíncrono: a síntese (análise dos fontes) leva minutos no
+        # AIX e o request síncrono morria por timeout sem criar a run (medido
+        # na captura 81). body.wait=1 mantém o comportamento antigo (CLI/testes).
+        wait_sync = str(body.get("wait", "0")).strip().lower() in ("1", "true", "yes")
+        if not wait_sync:
+            payload = _start_synthetic_replay_job(
+                handler.server.db_pool,
+                capture_id=capture_id,
+                created_by=int(user["id"]),
+                source_dir=source_dir,
+                seed=body.get("seed"),
+                target_host=str(body.get("target_host") or "").strip(),
+                target_user=str(body.get("target_user") or "").strip(),
+                term=str(body.get("term") or "").strip(),
+                skip_fields=body.get("skip_fields") if isinstance(body.get("skip_fields"), list) else None,
+                auto_entry=auto_entry,
+                lookup_values=body.get("lookup_values")
+                if isinstance(body.get("lookup_values"), dict) else None,
+                runner=handler.server.runner,
+                hmac_key=handler.server.runner.hmac_key,
+            )
+            write_json(handler, 202, payload)
+            return True
 
         con = handler._db()
         try:

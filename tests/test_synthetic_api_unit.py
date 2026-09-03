@@ -612,6 +612,9 @@ ENDDO
         handler = _FakeHandler(self.db_path, method="POST", body={
             "source_dir": str(self.source_dir),
             "seed": 42,
+            # wait=1: fluxo síncrono de criação da run (o default da rota
+            # passou a ser o job assíncrono — v0.9.3).
+            "wait": 1,
         })
         runner = _FakeRunner()
         handler.server = _FakeServer(self.db_path, runner)

@@ -132,3 +132,127 @@ def test_wait_deterministico_flag_apenas_em_send_anyway_ou_skip():
                 assert captured[0].get("early_exit_on_stable_mismatch") is expected, params
     finally:
         selector.close()
+
+
+
+# ---------------------------------------------------------------------------
+# Regressão: o caminho strict-global (executor) também precisa da flag.
+# Medido nas runs 62/64 da captura 81 (AIX, v0.9.1): a run ficou idêntica
+# (~63 min) porque o wait_checkpoint do strict-global chamava
+# wait_for_signature_match sem early_exit_on_stable_mismatch — a flag só
+# estava ligada no _wait_for_expected_observed (parallel/concurrent).
+# ---------------------------------------------------------------------------
+
+import base64
+import json
+from unittest import mock
+
+from dakota_gateway.replay import ReplayConfig
+from dakota_gateway.replay_control import executors as executors_mod
+
+
+class _ExecFakeSelector:
+    def register(self, *args, **kwargs):
+        return None
+
+    def select(self, timeout=None):
+        return []
+
+    def close(self):
+        return None
+
+
+class _ExecFakeSession:
+    """Sessão mínima para o executor strict-global com a espera stubada."""
+
+    def __init__(self, cfg, sid, target_user_override=None):
+        self.session_id = sid
+        self.master_fd = 0
+        self.last_out_ms = 0
+        self.screen_state = object()
+
+    def read_out(self):
+        return b""
+
+    def write_in(self, data: bytes):
+        return None
+
+    def close(self):
+        return None
+
+
+def _write_deterministic_capture(log_dir) -> None:
+    key_b64 = base64.b64encode(b"0").decode("ascii")
+    events = [
+        {"type": "session_start", "session_id": "s1", "seq_global": 1,
+         "seq_session": 1, "rows": 25, "cols": 80},
+        {"type": "deterministic_input", "session_id": "s1", "seq_global": 2,
+         "seq_session": 2, "ts_ms": 1000, "screen_sig": "sig-esperada",
+         "key_b64": key_b64},
+        {"type": "checkpoint", "session_id": "s1", "seq_global": 3,
+         "seq_session": 3, "ts_ms": 1010, "screen_sig": "sig-esperada"},
+    ]
+    lines = [json.dumps(ev) for ev in events]
+    (log_dir / "audit-early.part001.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_strict_global(tmp_path, params, captured: list) -> None:
+    def fake_wait(*args, **kwargs):
+        captured.append(kwargs)
+        return True, {"matched": True}, {}
+
+    _write_deterministic_capture(tmp_path)
+    cfg = ReplayConfig(log_dir=str(tmp_path), target_host="local", checkpoint_quiet_ms=0)
+    with mock.patch.object(executors_mod, "_TargetSession", _ExecFakeSession), \
+         mock.patch.object(executors_mod.selectors, "DefaultSelector", _ExecFakeSelector), \
+         mock.patch.object(executors_mod, "wait_for_signature_match", fake_wait):
+        executors_mod.replay_strict_global_controlled(
+            cfg,
+            params=params,
+            should_pause_or_cancel=lambda: None,
+            on_progress=lambda *a: None,
+            on_failure=lambda f: None,
+        )
+
+
+def test_strict_global_send_anyway_liga_saida_antecipada(tmp_path):
+    """Strict-global send-anyway: o wait_checkpoint sai cedo em mismatch estável."""
+    captured: list[dict] = []
+    _run_strict_global(
+        tmp_path,
+        {"input_mode": "deterministic", "on_deterministic_mismatch": "send-anyway"},
+        captured,
+    )
+    # Um wait por deterministic_input + um por checkpoint avulso.
+    assert len(captured) == 2, f"esperava 2 esperas, veio {len(captured)}"
+    for kwargs in captured:
+        assert kwargs.get("early_exit_on_stable_mismatch") is True, (
+            "strict-global send-anyway sem early exit — timeout cheio por divergência"
+        )
+
+
+def test_strict_global_skip_liga_saida_antecipada(tmp_path):
+    captured: list[dict] = []
+    _run_strict_global(
+        tmp_path,
+        {"input_mode": "deterministic", "on_deterministic_mismatch": "skip"},
+        captured,
+    )
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("early_exit_on_stable_mismatch") is True
+
+
+def test_strict_global_fail_fast_mantem_timeout_cheio(tmp_path):
+    """fail-fast (default): comportamento inalterado, sem saída antecipada."""
+    captured: list[dict] = []
+    _run_strict_global(
+        tmp_path,
+        {"input_mode": "deterministic"},
+        captured,
+    )
+    assert captured
+    for kwargs in captured:
+        assert not kwargs.get("early_exit_on_stable_mismatch"), (
+            "fail-fast não pode encurtar a espera do checkpoint"
+        )

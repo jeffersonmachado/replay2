@@ -266,6 +266,11 @@ def replay_strict_global_controlled(
             checkpoint_timeout_ms=checkpoint_timeout_ms,
             should_pause_or_cancel=should_pause_or_cancel,
             drain_event=lambda key: sessions[key.data].read_out(),
+            # send-anyway/skip seguem após a divergência — uma tela estável
+            # que não casou nunca vai casar (dado sintético/eco), então não
+            # há por que esperar o timeout cheio do checkpoint. Sem isto o
+            # strict-global pagava 5s por divergência (run 64, captura 81).
+            early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
         )
         if matched:
             return

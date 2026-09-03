@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
-  "release_run_id": "release-20260903T015800Z-49d5b526",
-  "run_id": "release-20260903T015800Z-49d5b526-original",
-  "generated_at": "2026-09-02T23:11:17-03:00",
-  "version": "0.9.2",
+  "release_run_id": "release-20260903T111216Z-5c68ba0a",
+  "run_id": "release-20260903T111216Z-5c68ba0a-original",
+  "generated_at": "2026-09-03T08:25:03-03:00",
+  "version": "0.9.3",
   "tree_validation_passed": true,
   "no_pending_issues": true,
-  "source_tree_sha256_before": "bcb5121789a435869ebf110717ffb320a38d9d05f1964b0d41a84bd4e665e106",
-  "source_tree_sha256_after": "bcb5121789a435869ebf110717ffb320a38d9d05f1964b0d41a84bd4e665e106",
+  "source_tree_sha256_before": "59ac9739e1ba6f052d735a0fb099b05353fe2d93daf4462d22f002ee9d7027e2",
+  "source_tree_sha256_after": "59ac9739e1ba6f052d735a0fb099b05353fe2d93daf4462d22f002ee9d7027e2",
   "source_tree_unchanged": true,
   "baseline_verified": true,
   "visual_test_verified": true,
@@ -27,7 +27,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 13.79,
+      "duration_seconds": 14.66,
       "log_path": "artifacts/acceptance-logs/current/phase-01-comparison.log"
     },
     "phase-02-diffs": {
@@ -35,7 +35,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 2.88,
+      "duration_seconds": 2.61,
       "log_path": "artifacts/acceptance-logs/current/phase-02-diffs.log"
     },
     "phase-03-sessions": {
@@ -43,7 +43,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 5.46,
+      "duration_seconds": 4.79,
       "log_path": "artifacts/acceptance-logs/current/phase-03-sessions.log"
     },
     "phase-04-snapshots-gateway": {
@@ -51,7 +51,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 2.53,
+      "duration_seconds": 2.43,
       "log_path": "artifacts/acceptance-logs/current/phase-04-snapshots-gateway.log"
     },
     "phase-05-payload-frontend": {
@@ -59,7 +59,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 3.6,
+      "duration_seconds": 3.43,
       "log_path": "artifacts/acceptance-logs/current/phase-05-payload-frontend.log"
     },
     "phase-06-decoder-fixture": {
@@ -67,7 +67,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 2.49,
+      "duration_seconds": 3.52,
       "log_path": "artifacts/acceptance-logs/current/phase-06-decoder-fixture.log"
     },
     "phase-07-visual-runner": {
@@ -75,7 +75,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 105.8,
+      "duration_seconds": 110.06,
       "log_path": "artifacts/acceptance-logs/current/phase-07-visual-runner.log"
     },
     "acceptance-baseline": {
@@ -83,7 +83,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 1.16,
+      "duration_seconds": 1.11,
       "log_path": "artifacts/acceptance-logs/current/acceptance-baseline.log"
     },
     "python-acceptance": {
@@ -91,7 +91,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 84.33,
+      "duration_seconds": 85.91,
       "log_path": "artifacts/acceptance-logs/current/python-acceptance.log",
       "passed": 159,
       "failed": 0,
@@ -104,9 +104,9 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 449.69,
-      "log_sha256": "9033d9a62e880a4576b164d4c709d0f590e0b5f8b08deb15c8108c57d88aab41",
-      "passed": 1617,
+      "duration_seconds": 418.59,
+      "log_sha256": "834a9c599a97f8a54c1aae6cea0fa78a83b54edfab8cd0b67b2ed5fb233f50be",
+      "passed": 1623,
       "failed": 0,
       "skipped": 2,
       "subtests": 0
@@ -117,8 +117,8 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 91.29,
-      "log_sha256": "e012ed34e403bc40df7f9678a9efb5d5d8cead7f9db26ece21f3d94232dbf474",
+      "duration_seconds": 85.66,
+      "log_sha256": "f1a8d789e162e29e5e3efd4182942907e3febb37e6efe5453a47471c9bd81ce2",
       "passed": 181,
       "failed": 0,
       "skipped": 0,
@@ -130,15 +130,15 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 2.16,
-      "log_sha256": "6fcc0a4135e751ae451c5bf87f083a8b3470b90d670b42a37a8ea2a498936243"
+      "duration_seconds": 2.01,
+      "log_sha256": "b552743c3903c0cd894586a2a06f128ef4eb78c76fa82d214272be748b24a17e"
     },
     "javascript-tests": {
       "name": "javascript-tests",
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 20.17,
+      "duration_seconds": 20.35,
       "log_path": "artifacts/acceptance-logs/results",
       "suites": [
         "js-capture-replay-timeline",
@@ -165,7 +165,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 569.24,
+      "duration_seconds": 531.8,
       "log_path": "artifacts/acceptance-logs/current/test-all.log"
     },
     "process-cleanup": {
@@ -173,7 +173,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 0.99,
+      "duration_seconds": 1.13,
       "log_path": "artifacts/acceptance-logs/current/process-cleanup.log"
     },
     "visual-evidence": {
@@ -181,7 +181,7 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 1.09,
+      "duration_seconds": 1.08,
       "log_path": "artifacts/acceptance-logs/current/visual-evidence-exists.log"
     },
     "contamination-regression": {
@@ -189,12 +189,12 @@
       "success": true,
       "exit_code": 0,
       "timed_out": false,
-      "duration_seconds": 39.94,
+      "duration_seconds": 42.23,
       "log_path": "artifacts/acceptance-logs/current/phase07-contamination.log",
       "schema_version": "1.0",
       "release_run_id": "",
       "run_id": "",
-      "process_run_id": "proc-33a0a7b5136a",
+      "process_run_id": "proc-eb18655bda76",
       "command": [
         "env",
         "-u",
@@ -205,11 +205,11 @@
         "-q",
         "tests/acceptance/test_contamination_regression.py"
       ],
-      "pid": 2599857,
-      "pgid": 2599857,
-      "sid": 2599857,
-      "started_at": "2026-09-02T22:58:43-0300",
-      "finished_at": "2026-09-02T22:59:23-0300",
+      "pid": 3311837,
+      "pgid": 3311837,
+      "sid": 3311837,
+      "started_at": "2026-09-03T08:13:01-0300",
+      "finished_at": "2026-09-03T08:13:43-0300",
       "processes_seen": [],
       "process_groups_seen": [],
       "sessions_seen": [],
@@ -223,8 +223,8 @@
       "remaining_processes": 0,
       "remaining_zombies": 0,
       "stdout_path": "/home/jmachado/projetos/dakota/replay2/artifacts/acceptance-logs/current/phase07-contamination.log",
-      "stderr_path": "/tmp/pt-proc-33a0a7b5136a.stderr",
-      "stdout_sha256": "5a50d9eecbb1a5af60e2ded238b9e160c3a1e1f2f001933d84a1c8cc2f273c67",
+      "stderr_path": "/tmp/pt-proc-eb18655bda76.stderr",
+      "stdout_sha256": "866ff3e311cf6b345e26538f2efe0e557da5993a6831dbd57768b8cadf1905cc",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "failure_reasons": []
     }

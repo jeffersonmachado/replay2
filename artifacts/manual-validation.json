@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "release_run_id": "release-20260904T014628Z-d26d42b8",
-  "run_id": "release-20260904T014628Z-d26d42b8-original",
-  "generated_at": "2026-09-03T23:00:01-03:00",
+  "release_run_id": "release-20260904T173326Z-ea38c485",
+  "run_id": "release-20260904T173326Z-ea38c485-original",
+  "generated_at": "2026-09-04T14:47:13-03:00",
   "manual_checks_pending": false,
   "all_gates_passed": true
 }

@@ -372,6 +372,12 @@ class RunEventsFailuresLimitApiTests(unittest.TestCase):
                 (self.run_id, base_ts + i, "failure", f"ev {i}",
                  json.dumps({"session_id": "s-bulk", "seq_global": 1000 + i})),
             )
+        # A fixture não executa nada: status terminal via UPDATE puro (sem
+        # evento) para o boot não interrompê-la (interrupt_stale_runs), o que
+        # adicionaria um evento a mais na contagem do teste de limite.
+        con.execute(
+            "UPDATE replay_runs SET status='success' WHERE id=?", (self.run_id,)
+        )
         con.commit()
         con.close()
 

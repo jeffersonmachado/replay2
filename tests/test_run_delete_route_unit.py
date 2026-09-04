@@ -58,7 +58,6 @@ class RunDeleteRouteTests(unittest.TestCase):
             ("admin", ph, "admin", now_ms()),
         )
         self.run_success = _insert_run(con, "success")
-        self.run_running = _insert_run(con, "running")
         con.close()
 
         try:
@@ -75,6 +74,13 @@ class RunDeleteRouteTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         time.sleep(0.2)
+
+        # A run "em execução" precisa ser criada DEPOIS do boot: o servidor
+        # marca runs ativas de processos anteriores como failed no startup
+        # (interrupt_stale_runs) — criada depois, ela segue 'running' de fato.
+        con = connect(self.db_path)
+        self.run_running = _insert_run(con, "running")
+        con.close()
 
         self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self._request("POST", "/api/login", {"username": "admin", "password": "admin123"})

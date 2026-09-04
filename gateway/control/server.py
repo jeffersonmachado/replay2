@@ -33,6 +33,7 @@ from dakota_gateway.replay_control import (
 )
 from dakota_gateway.state_db import connect, init_db, now_ms
 from dakota_gateway.state_db import ConnectionPool
+from dakota_gateway.replay_run_state import interrupt_stale_runs
 from control.routes import (
     handle_admin_get_route,
     handle_admin_post_route,
@@ -277,6 +278,9 @@ class ControlServer(ThreadingHTTPServer):
             stale = int(startup_state.get("stale_captures_interrupted") or 0)
             if stale:
                 log.info("[startup] %s captura(s) ativa(s) marcada(s) como interrupted (processo anterior encerrado)", stale)
+            stale_runs = interrupt_stale_runs(con, now_ms_fn=now_ms)
+            if stale_runs:
+                log.info("[startup] %s run(s) ativa(s) marcada(s) como failed (processo anterior encerrado)", stale_runs)
             resumed = startup_state.get("resumed_capture")
             if resumed:
                 log.info(

@@ -56,10 +56,20 @@ class DatasetBuilder:
         self,
         schema: SyntheticSchema,
         lookup_values: Optional[dict[str, list[Any]]] = None,
+        lookup_groups: Optional[dict[str, Any]] = None,
     ) -> Dataset:
-        """Gera um dataset completo a partir de um SyntheticSchema."""
+        """Gera um dataset completo a partir de um SyntheticSchema.
+
+        ``lookup_groups``: variação em par — ``{"fields_map": {campo:
+        (group_key, pos)}, "groups": {group_key: {"fields": [...],
+        "tuples": [(v1, v2), ...]}}}``. Os campos do grupo saem da MESMA
+        tupla (registro real do cadastro) em cada registro gerado.
+        """
         self._generated = {}
         lookup_values = lookup_values or {}
+        lookup_groups = lookup_groups or {}
+        group_fields_map: dict[str, tuple] = lookup_groups.get("fields_map") or {}
+        groups: dict[str, dict] = lookup_groups.get("groups") or {}
 
         # Re-seed providers com o seed do schema
         seed = schema.seed
@@ -78,7 +88,28 @@ class DatasetBuilder:
 
         for i in range(schema.quantity):
             record_data: dict[str, Any] = {}
+            # Variação em par: escolhe UMA tupla por grupo neste registro —
+            # os campos do grupo recebem valores do mesmo registro real.
+            chosen: dict[str, tuple] = {}
+            schema_field_names = {f.name.lower() for f in schema.screen.fields}
+            for group_key, group in groups.items():
+                present = [
+                    f for f in (group.get("fields") or [])
+                    if str(f).lower() in schema_field_names
+                ]
+                tuples = group.get("tuples") or []
+                if len(present) < 2 or not tuples:
+                    continue
+                if i < len(tuples):
+                    chosen[group_key] = tuples[i]
+                else:
+                    chosen[group_key] = random.Random(
+                        f"{seed}:{i}:{group_key}").choice(tuples)
             for field_schema in schema.screen.fields:
+                member = group_fields_map.get(field_schema.name.lower())
+                if member and member[0] in chosen:
+                    record_data[field_schema.name] = chosen[member[0]][member[1]]
+                    continue
                 record_data[field_schema.name] = self._generate_field(
                     field_schema, i, seed, lookup_values
                 )

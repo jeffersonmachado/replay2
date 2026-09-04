@@ -122,6 +122,68 @@ def read_table(path: str | Path) -> RecitalTable | None:
     )
 
 
+def _iter_sample_records(
+    table: RecitalTable,
+    fields: list[TableField],
+    *,
+    limit: int,
+) -> "list[tuple[str, ...]]":
+    """Tuplas de valores das colunas ``fields`` lidas do MESMO registro.
+
+    Varre o arquivo com passo ``record_count // limit`` (início, meio e fim
+    sem ler tudo), só registros ativos. Tuplas com alguma coluna vazia são
+    descartadas; dedup preservando a ordem de coleta.
+    """
+    stride = max(1, table.record_count // limit)
+    values: dict[tuple[str, ...], None] = {}
+    try:
+        with open(table.path, "rb") as fh:
+            for i in range(0, table.record_count, stride):
+                fh.seek(table.data_start + i * table.record_length)
+                rec = fh.read(table.record_length)
+                if len(rec) < table.record_length or rec[0:1] != b" ":
+                    continue
+                row = tuple(
+                    rec[f.offset:f.offset + f.length].decode("latin-1").strip()
+                    for f in fields
+                )
+                if not all(row):
+                    continue
+                values.setdefault(row)
+                if len(values) >= limit:
+                    break
+    except OSError:
+        return []
+    return list(values)
+
+
+def sample_key_tuples(
+    table: RecitalTable,
+    columns: list[str],
+    *,
+    limit: int = 300,
+) -> "list[tuple[str, ...]]":
+    """Amostra tuplas de colunas do mesmo registro (chave composta real).
+
+    Matéria-prima da variação em par da síntese: campos que juntos consultam
+    um cadastro (ex.: modelo+combinação do produto) só podem variar como
+    tupla — valor de coluna isolado quebraria a combinação. Campos de data
+    (``D``) e colunas inexistentes esvaziam o resultado.
+    """
+    wanted = [str(c or "").strip().lower() for c in (columns or [])]
+    if not wanted or any(not c for c in wanted) or limit <= 0:
+        return []
+    fields: list[TableField] = []
+    for name in wanted:
+        field = next(
+            (f for f in table.fields if f.name.lower() == name), None
+        )
+        if field is None or field.type.upper() == "D":
+            return []
+        fields.append(field)
+    return _iter_sample_records(table, fields, limit=limit)
+
+
 def sample_column_values(
     table: RecitalTable,
     column: str,
@@ -142,24 +204,7 @@ def sample_column_values(
     )
     if field is None or field.type.upper() == "D":
         return []
-    stride = max(1, table.record_count // limit)
-    values: dict[str, None] = {}
-    try:
-        with open(table.path, "rb") as fh:
-            for i in range(0, table.record_count, stride):
-                fh.seek(table.data_start + i * table.record_length)
-                rec = fh.read(table.record_length)
-                if len(rec) < table.record_length or rec[0:1] != b" ":
-                    continue
-                raw = rec[field.offset:field.offset + field.length]
-                value = raw.decode("latin-1").strip()
-                if value:
-                    values.setdefault(value)
-                if len(values) >= limit:
-                    break
-    except OSError:
-        return []
-    return list(values)
+    return [row[0] for row in _iter_sample_records(table, [field], limit=limit)]
 
 
 def _candidate_files(

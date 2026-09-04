@@ -344,6 +344,7 @@ class JourneySynthesizer:
         seed: int | None = None,
         variation: str = "synthetic",
         lookup_values: dict[str, list] | None = None,
+        lookup_groups: dict[str, dict] | None = None,
     ) -> SynthesisResult:
         """Gera N sessoes sinteticas a partir do template.
 
@@ -359,6 +360,7 @@ class JourneySynthesizer:
         """
         variation = "equal" if str(variation or "").strip().lower() == "equal" else "synthetic"
         lookup_values = lookup_values or {}
+        lookup_groups = lookup_groups or {}
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         sessions_dir = out_dir / "sessions"
@@ -517,7 +519,8 @@ class JourneySynthesizer:
 
             try:
                 dataset = self.dataset_builder.build(
-                    synth_schema, lookup_values=lookup_values)
+                    synth_schema, lookup_values=lookup_values,
+                    lookup_groups=lookup_groups.get(str(entity_name).upper()))
                 for rec in dataset.records:
                     rec_data = dict(rec.data)
                     rec_data["_entity"] = entity_name

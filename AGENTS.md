@@ -347,6 +347,16 @@ replay2/
   tam↔tamanho): códigos sintéticos de modelo/comb/codigo não existem no
   cadastro de produtos (seek no cad2d1 do est361.prg) e o ERP rejeita o
   item ("Codigo nao cadastrado"), impedindo a persistência do pedido.
+  Exceção da passada de índice (v0.9.6 — variação em par): quando ≥2 campos
+  mapeados da mesma entidade casam com as colunas de UMA chave composta de
+  índice e a tabela é parseável, `find_tuple_groups` amostra as tuplas
+  REAIS da chave (`table_file_reader.sample_key_tuples` — colunas do mesmo
+  registro) e o grupo deixa de ser âncora (`tuple_covered` em
+  `suggest_key_fields`); o `DatasetBuilder.build(lookup_groups=...)`
+  atribui a tupla inteira por registro (modelo e comb do MESMO registro do
+  cadastro — variar coluna isolada geraria combinação inexistente). Skip
+  manual que toca um campo do grupo expande para o grupo inteiro
+  (`_expand_skip_with_groups`).
   Âncora por evidência no próprio input (v0.8.81 — não depende de metadados
   da KB, cobre entidade espúria/incompleta como a "arq" da captura 73):
   (a) `lookup_table` do input (KB ou VALID do fonte via `_lookup_of`) sem

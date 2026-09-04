@@ -138,6 +138,7 @@ def synthesize_capture(
     # chave lida dos arquivos de dados do legado) + lista manual do usuário.
     merged_lookup: dict[str, list] = _harvest_lookup_values(
         Path(log_dir).parent, exclude_log_dir=log_dir)
+    tuple_groups: dict[str, dict] = {}
     if data_dirs:
         from dakota_gateway.source_analyzer.table_file_reader import (
             sample_lookup_tables,
@@ -149,6 +150,10 @@ def synthesize_capture(
             for value in vals:
                 if value not in bucket:
                     bucket.append(value)
+        # Variação em par: grupos de campos que juntos compõem chave de
+        # consulta (modelo+comb da grade) recebem tuplas REAIS do cadastro —
+        # cada sessão usa valores do mesmo registro.
+        tuple_groups = find_tuple_groups(template, data_dirs)
     for key, vals in (lookup_values or {}).items():
         k = str(key or "").strip().lower()
         if not k:
@@ -162,7 +167,8 @@ def synthesize_capture(
     result = synthesizer.synthesize(
         template, samples=samples, out_dir=output_dir, seed=seed,
         variation=variation,
-        lookup_values={k: v for k, v in merged_lookup.items() if v})
+        lookup_values={k: v for k, v in merged_lookup.items() if v},
+        lookup_groups=tuple_groups)
 
     validation = None
     if include_validation:
@@ -183,7 +189,10 @@ def synthesize_capture(
     key_fields = suggest_key_fields(
         result.screen_mappings, entities,
         indexed_fields=_indexed_field_names(data_dirs),
-        lookup_covered={k for k, v in merged_lookup.items() if v})
+        lookup_covered={k for k, v in merged_lookup.items() if v},
+        tuple_covered={
+            f for ent in tuple_groups.values() for f in ent["fields_map"]
+        })
 
     # skip_fields por captura, persistidos no servidor (prefs): body com a
     # chave (mesmo vazia) = seleção explícita → replace; body sem a chave
@@ -192,7 +201,9 @@ def synthesize_capture(
     skip_res = resolve_skip_fields(load_prefs(con, capture_id), skip_fields, key_fields)
     if skip_res["persist"]:
         save_prefs(con, capture_id, {"skip_fields": skip_res["stored"]})
-    effective_keep = skip_res["effective"]
+    # Skip que toca um campo de grupo de tupla expande para o grupo inteiro:
+    # variar só metade do par quebraria a combinação no cadastro.
+    effective_keep = _expand_skip_with_groups(skip_res["effective"], tuple_groups)
 
     # Aviso (nunca bloqueia) quando a knowledge base do fonte está
     # desatualizada ou foi gerada de outro diretório.
@@ -312,6 +323,153 @@ def _matches_indexed(field: str, indexed: set[str]) -> bool:
     return False
 
 
+def _match_key_to_fields(key_fields: list[str], screen_fields: list[str]) -> dict[int, str]:
+    """Casa as colunas de uma chave de índice com os campos da tela.
+
+    Regra de ``_matches_indexed`` (exato ou prefixo ≥3), 1:1 — cada coluna
+    casa com um campo distinto. Retorna ``{posição_da_coluna: campo}``.
+    """
+    mapping: dict[int, str] = {}
+    used: set[str] = set()
+    for pos, column in enumerate(key_fields):
+        col = str(column or "").strip().lower()
+        if not col:
+            continue
+        for field in screen_fields:
+            if field in used:
+                continue
+            if _matches_indexed(field, {col}):
+                mapping[pos] = field
+                used.add(field)
+                break
+    return mapping
+
+
+def find_tuple_groups(
+    template: Any,
+    data_dirs: list | None,
+    *,
+    limit: int = 300,
+) -> dict[str, dict]:
+    """Grupos de campos que consultam um cadastro EM CONJUNTO (chave
+    composta) — base da variação em par da síntese.
+
+    Para cada entidade com ≥2 campos mapeados, procura nos diretórios de
+    dados a chave de índice (``i<TABELA>.00N``) com mais colunas casando os
+    campos da tela (prefixo, 1:1). Achada a chave e a tabela parseável,
+    amostra as tuplas REAIS das colunas casadas (``sample_key_tuples``):
+    o grupo inteiro pode variar desde que cada sessão use valores do MESMO
+    registro do cadastro (ex.: modelo+combinação de uma variante de produto
+    que existe de verdade).
+
+    Retorna ``{ENTIDADE: {"fields_map": {campo: (group_key, pos)},
+    "groups": {group_key: {"table", "columns", "fields", "tuples"}}}}``.
+    Entidade sem chave candidata ou sem tuplas não entra no resultado — os
+    campos seguem âncora, como antes.
+    """
+    from dakota_gateway.source_analyzer.index_file_reader import scan_index_files
+    from dakota_gateway.source_analyzer.table_file_reader import (
+        _candidate_files,
+        read_table,
+        sample_key_tuples,
+    )
+
+    per_entity: dict[str, list[str]] = {}
+    for step in getattr(template, "steps", None) or []:
+        step_entity = str(getattr(step, "entity_name", "") or "").strip()
+        for inp in getattr(step, "inputs", None) or []:
+            field = str(getattr(inp, "field_name", "") or "").strip().lower()
+            if not field:
+                continue
+            if str(getattr(inp, "method", "") or "") in ("command", "unmapped"):
+                continue
+            entity = str(
+                getattr(inp, "entity_name", "") or step_entity
+            ).strip().upper()
+            if not entity:
+                continue
+            fields = per_entity.setdefault(entity, [])
+            if field not in fields:
+                fields.append(field)
+    if not per_entity:
+        return {}
+
+    dir_keys: dict[str, dict] = {}
+    for data_dir in data_dirs or []:
+        base = Path(str(data_dir or "").strip())
+        if not base.is_dir():
+            continue
+        scanned = scan_index_files(base)
+        if scanned:
+            dir_keys[str(base)] = scanned
+
+    out: dict[str, dict] = {}
+    for entity, fields in per_entity.items():
+        if len(fields) < 2:
+            continue
+        best = None  # ((matched, -len(key)), dir, table, key, mapping)
+        for dir_name, tables in dir_keys.items():
+            for table, keys in tables.items():
+                for key in keys:
+                    mapping = _match_key_to_fields(key, fields)
+                    if len(mapping) < 2:
+                        continue
+                    score = (len(mapping), -len(key))
+                    if best is None or score > best[0]:
+                        best = (score, dir_name, table, key, mapping)
+        if best is None:
+            continue
+        _, dir_name, table, key, mapping = best
+        rec_table = None
+        for candidate in _candidate_files([Path(dir_name)], table):
+            rec_table = read_table(candidate)
+            if rec_table is not None:
+                break
+        if rec_table is None:
+            continue
+        positions = sorted(mapping)
+        columns = [str(key[pos]).strip().lower() for pos in positions]
+        group_fields = [mapping[pos] for pos in positions]
+        tuples = sample_key_tuples(rec_table, columns, limit=limit)
+        if not tuples:
+            continue
+        group_key = f"{str(table).lower()}:{','.join(columns)}"
+        out[entity] = {
+            "fields_map": {
+                f: (group_key, pos) for pos, f in enumerate(group_fields)
+            },
+            "groups": {
+                group_key: {
+                    "table": str(table).lower(),
+                    "columns": columns,
+                    "fields": group_fields,
+                    "tuples": tuples,
+                }
+            },
+        }
+    return out
+
+
+def _expand_skip_with_groups(
+    skip_fields: list[str],
+    tuple_groups: dict[str, dict],
+) -> list[str]:
+    """Skip que toca UM campo de um grupo de tupla expande para o grupo
+    inteiro — variar só metade do par quebraria a combinação (modelo de um
+    registro com combinação de outro não existe no cadastro)."""
+    skip = [str(f) for f in (skip_fields or [])]
+    lowered = {f.lower() for f in skip}
+    for entity in (tuple_groups or {}).values():
+        for group in (entity.get("groups") or {}).values():
+            group_fields = [str(f).lower() for f in (group.get("fields") or [])]
+            if lowered & set(group_fields):
+                for field in group_fields:
+                    if field not in lowered:
+                        skip.append(field)
+                        lowered.add(field)
+    return skip
+
+
 def _harvest_lookup_values(
     captures_root: Path,
     *,
@@ -421,6 +579,7 @@ def suggest_key_fields(
     entities: list | None,
     indexed_fields: set[str] | None = None,
     lookup_covered: set[str] | None = None,
+    tuple_covered: set[str] | None = None,
 ) -> list[str]:
     """Campos-âncora da navegação a manter com o valor original da captura.
 
@@ -442,6 +601,10 @@ def suggest_key_fields(
     Índice/seek/único continuam ancorando: são consultas diretas.
     """
     covered = {str(t).strip().lower() for t in (lookup_covered or set()) if str(t).strip()}
+    # Campos cobertos por tupla real de chave composta (variação em par):
+    # a passada por índice deixa de ancorá-los — o valor novo vem de um
+    # registro que EXISTE no cadastro, junto com os irmãos do par.
+    tuple_cov = {str(f).strip().lower() for f in (tuple_covered or set()) if str(f).strip()}
     by_entity = {str(getattr(e, "name", "") or "").upper(): e for e in (entities or [])}
     keys: list[str] = []
     seen: set[str] = set()
@@ -484,13 +647,16 @@ def suggest_key_fields(
     if indexed_fields:
         # Passada por índice: campo que compõe chave de algum i<TABELA>.00N
         # é código consultado pelo ERP — mantido mesmo sem entidade na KB
-        # (células de grade est361/est366, captura 62).
+        # (células de grade est361/est366, captura 62). Exceção: coberto por
+        # tupla real (variação em par), o valor novo existe no cadastro.
         for screen in screen_mappings or []:
             for inp in screen.get("inputs") or []:
                 field = str(inp.get("field_name") or "").strip()
                 if not field or field.lower() in seen:
                     continue
                 if str(inp.get("method") or "") == "command":
+                    continue
+                if field.lower() in tuple_cov:
                     continue
                 if _matches_indexed(field, indexed_fields):
                     seen.add(field.lower())
@@ -1046,7 +1212,10 @@ def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[s
     # campo da âncora no seletor, coerente com a síntese.
     indexed_fields: set[str] = set()
     lookup_covered: set[str] = set()
+    tuple_covered: set[str] = set()
     try:
+        from types import SimpleNamespace
+
         from dakota_gateway.source_analyzer.index_file_reader import (
             discover_data_dirs as _discover_data_dirs,
         )
@@ -1067,12 +1236,33 @@ def synthetic_fields_payload(con, capture_id: int, *, source_dir: str) -> dict[s
                         _dirs, _lookup_tables_of_mappings(screen_mappings, _dirs)
                     ).items() if v
                 }
+                # Variação em par: campos cobertos por tupla real de chave
+                # composta não são âncora — coerente com a síntese.
+                _tpl = SimpleNamespace(steps=[
+                    SimpleNamespace(
+                        entity_name=sm.get("entity_name") or "",
+                        inputs=[
+                            SimpleNamespace(
+                                field_name=i.get("field_name"),
+                                method=i.get("method"),
+                                entity_name=i.get("entity_name"),
+                            )
+                            for i in sm.get("inputs") or []
+                        ],
+                    )
+                    for sm in screen_mappings
+                ])
+                tuple_covered = {
+                    f
+                    for ent in find_tuple_groups(_tpl, _dirs).values()
+                    for f in ent["fields_map"]
+                }
     except Exception:
         indexed_fields = set()
 
     key_fields = suggest_key_fields(
         screen_mappings, entities, indexed_fields=indexed_fields,
-        lookup_covered=lookup_covered)
+        lookup_covered=lookup_covered, tuple_covered=tuple_covered)
     key_set = {f.lower() for f in key_fields}
     screens: list[dict] = []
     all_fields: list[str] = []

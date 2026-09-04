@@ -12,6 +12,7 @@ from dakota_gateway.source_analyzer.table_file_reader import (
     find_table_file,
     read_table,
     sample_column_values,
+    sample_key_tuples,
     sample_lookup_tables,
 )
 
@@ -168,6 +169,76 @@ class SampleColumnValuesTests(unittest.TestCase):
             )
             table = read_table(path)
             self.assertEqual(sample_column_values(table, "EMISSAO"), [])
+
+
+class SampleKeyTuplesTests(unittest.TestCase):
+    """Tuplas de colunas do MESMO registro — variação em par (modelo+comb)."""
+
+    def test_tuplas_vem_do_mesmo_registro(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [("MODELO", "C", 4), ("COMBINACAO", "C", 3), ("DESC", "C", 10)],
+                [
+                    {"MODELO": "g251", "COMBINACAO": "001"},
+                    {"MODELO": "g252", "COMBINACAO": "002"},
+                    {"MODELO": "h100", "COMBINACAO": "001"},
+                ],
+            )
+            table = read_table(path)
+            tuples = sample_key_tuples(table, ["modelo", "combinacao"])
+            self.assertEqual(
+                tuples, [("g251", "001"), ("g252", "002"), ("h100", "001")]
+            )
+
+    def test_tupla_ignora_deletados_e_dedup(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [("MODELO", "C", 4), ("COMBINACAO", "C", 3)],
+                [
+                    {"MODELO": "g251", "COMBINACAO": "001"},
+                    None,
+                    {"MODELO": "g251", "COMBINACAO": "001"},  # duplicada
+                    {"MODELO": "g252", "COMBINACAO": "002"},
+                ],
+            )
+            table = read_table(path)
+            self.assertEqual(
+                sample_key_tuples(table, ["modelo", "combinacao"]),
+                [("g251", "001"), ("g252", "002")],
+            )
+
+    def test_coluna_inexistente_ou_data_retorna_vazio(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [("MODELO", "C", 4), ("EMISSAO", "D", 4)],
+                [{"MODELO": "g251", "EMISSAO": "\x00\x00\x9b\x35"}],
+            )
+            table = read_table(path)
+            self.assertEqual(sample_key_tuples(table, ["modelo", "zzz"]), [])
+            self.assertEqual(sample_key_tuples(table, ["modelo", "emissao"]), [])
+
+    def test_tupla_com_alguma_coluna_vazia_e_descartada(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [("MODELO", "C", 4), ("COMBINACAO", "C", 3)],
+                [
+                    {"MODELO": "", "COMBINACAO": "001"},
+                    {"MODELO": "g251", "COMBINACAO": "001"},
+                ],
+            )
+            table = read_table(path)
+            self.assertEqual(
+                sample_key_tuples(table, ["modelo", "combinacao"]),
+                [("g251", "001")],
+            )
 
 
 class FindTableFileTests(unittest.TestCase):

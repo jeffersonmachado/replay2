@@ -21,6 +21,7 @@ def _write_table(
     path: Path,
     fields: list[tuple[str, str, int]],
     records: list[dict | None],
+    gap_before: dict[str, int] | None = None,
 ) -> None:
     """Grava uma tabela Recital sintética no formato observado no legado.
 
@@ -28,10 +29,13 @@ def _write_table(
     nome 11 + tipo 1 + len u32 BE @+12 + offset u32 BE @+20), área de nomes
     de 3552 bytes, registros a partir de 6656 — flag (' '/'*') + campos.
     ``records``: dict campo→valor, ou None para registro deletado.
+    ``gap_before``: bytes reservados ANTES do campo (arq2i3.cad do legado
+    tem 2 bytes entre PRIENTRADA e ULTENTRADA e 2 antes de REPOSICAO).
     """
     offsets: list[int] = []
     pos = 1
-    for _name, _type, length in fields:
+    for name, _type, length in fields:
+        pos += (gap_before or {}).get(name, 0)
         offsets.append(pos)
         pos += length
     rec_len = pos
@@ -135,6 +139,60 @@ class ReadTableTests(unittest.TestCase):
             _write_table(path, [("CODIGO", "C", 3)], [{"CODIGO": "001"}])
             self._add_trailing_padding(path, 5)  # slack > 4: suspeito
             self.assertIsNone(read_table(path))
+
+    def test_gap_reservado_no_meio_do_registro_aceita(self):
+        """arq2i3.cad do legado: 2 bytes reservados ENTRE PRIENTRADA e
+        ULTENTRADA e 2 antes de REPOSICAO (rec_len=39, campos terminam em
+        32/36/39). O offset absoluto (foff) continua correto — o parse deve
+        saltar o gap (≤4 por salto), não parar nele: parar escondia MODELO/
+        COMBINACAO... não — eles são os 2 primeiros campos; parar escondia
+        ULTENTRADA/REPOSICAO e inflava o slack trailing além de 4, fazendo
+        a tabela inteira ser rejeitada (sem tuplas modelo+combinação)."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [
+                    ("MODELO", "C", 6), ("COMBINACAO", "C", 5),
+                    ("CUSTO", "N", 9), ("AQUISICAO", "N", 9),
+                    ("PRIENTRADA", "D", 2), ("ULTENTRADA", "D", 2),
+                    ("REPOSICAO", "C", 1),
+                ],
+                [
+                    {"MODELO": "G2511", "COMBINACAO": "101", "REPOSICAO": "S"},
+                    {"MODELO": "G2511", "COMBINACAO": "102", "REPOSICAO": "N"},
+                ],
+                gap_before={"ULTENTRADA": 2, "REPOSICAO": 2},
+            )
+            table = read_table(path)
+            self.assertIsNotNone(table)
+            self.assertEqual(table.record_length, 39)
+            self.assertEqual(
+                [(f.name, f.offset) for f in table.fields],
+                [("MODELO", 1), ("COMBINACAO", 7), ("CUSTO", 12),
+                 ("AQUISICAO", 21), ("PRIENTRADA", 30), ("ULTENTRADA", 34),
+                 ("REPOSICAO", 38)],
+            )
+            self.assertEqual(
+                sample_key_tuples(table, ["modelo", "combinacao"], limit=10),
+                [("G2511", "101"), ("G2511", "102")],
+            )
+
+    def test_gap_grande_no_meio_interrompe_descritores(self):
+        """Salto > 4 bytes no meio é suspeito (formato não confirmado): o
+        parse para no campo do salto, como já fazia antes da tolerância."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq2i3.cad"
+            _write_table(
+                path,
+                [("MODELO", "C", 6), ("COMBINACAO", "C", 5), ("EXTRA", "C", 2)],
+                [{"MODELO": "G2511", "COMBINACAO": "101"}],
+                gap_before={"EXTRA": 5},
+            )
+            table = read_table(path)
+            # 2 campos válidos; o gap de 5 interrompe antes de EXTRA e o
+            # slack trailing (5+2=7) estoura o limite → tabela rejeitada.
+            self.assertIsNone(table)
 
     def test_arquivo_truncado_rejeita(self):
         with TemporaryDirectory() as tmp:

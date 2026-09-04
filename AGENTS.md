@@ -327,7 +327,11 @@ replay2/
   `sample_lookup_tables` lê a coluna-chave (1º campo do 1º índice) dos
   arquivos de dados `<TABELA>.<modulo>`, formato Recital big-endian:
   descritores de 24 B no header de 3104 B, registros a partir de 6656 com
-  flag ' '/'*'; tabela inválida é ignorada e o campo segue âncora) e a
+  flag ' '/'*'; o offset absoluto (foff) manda — gaps de ≤4 bytes entre
+  campos ou no fim do registro são tolerados (v0.9.7: arq220.cad tem 2 B
+  trailing, arq2i3.cad tem 2 B entre PRIENTRADA/ULTENTRADA e 2 B antes de
+  REPOSICAO; acima disso o formato é suspeito e a tabela é rejeitada);
+  tabela inválida é ignorada e o campo segue âncora) e a
   lista manual da UI do detalhe da captura ("Valores válidos de cadastro",
   uma linha `tabela: v1, v2` — paridade na API via `lookup_values` no body
   de `/synthesize` e `/synthetic-replay`). O sorteio usa o mecanismo já

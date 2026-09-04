@@ -12,7 +12,9 @@ Formato observado no legado Dakota (AIX, big-endian), validado nas tabelas
 - header fixo de ``_DESC_AREA`` (3104) bytes; descritores de campo de 24
   bytes a partir de 32: nome 11 (NUL-padded), tipo 1 (``C``/``N``/``D``...),
   comprimento u32 BE @+12, offset no registro u32 BE @+20;
-- ``rec_len`` (u32 BE @20) = 1 (flag de deleção) + soma dos comprimentos;
+- ``rec_len`` (u32 BE @20) = 1 (flag de deleção) + soma dos comprimentos +
+  bytes reservados esparsos (o legado deixa gaps de ≤4 bytes entre campos
+  ou no fim do registro — ex.: arq2i3.cad, arq220.cad);
 - área de nomes de ``_NAME_AREA`` (3552) bytes (não usada aqui);
 - registros a partir de ``DATA_START`` (6656) até o fim do arquivo —
   ``rec[0]`` é a flag (``' '`` ativo, ``'*'`` deletado) e o campo ocupa
@@ -42,10 +44,11 @@ _HDR_REC_LEN = 20
 _RE_FIELD_NAME = re.compile(r"^[A-Za-z_]\w*$")
 _RE_INDEX_SUFFIX = re.compile(r"^\.\d{3}$")
 
-# Padding trailing tolerado no registro (arq220.cad do legado tem 2 bytes
-# reservados no fim). Os offsets sequenciais (foff == total) continuam
-# garantindo que nenhum campo foi perdido no meio — o slack só pode ser
-# cauda. Acima de 4 bytes o formato é suspeito e a tabela é rejeitada.
+# Padding tolerado no registro (arq220.cad tem 2 bytes reservados no fim;
+# arq2i3.cad tem 2 bytes ENTRE PRIENTRADA/ULTENTRADA e 2 antes de
+# REPOSICAO). Os offsets absolutos (foff) continuam garantindo a posição
+# de cada campo — gap ou slack trailing acima de 4 bytes torna o formato
+# suspeito e a tabela é rejeitada.
 _MAX_TRAILING_SLACK = 4
 
 
@@ -104,10 +107,15 @@ def read_table(path: str | Path) -> RecitalTable | None:
         ftype = chr(head[off + 11])
         length = _be(head, off + 12)
         foff = _be(head, off + 20)
-        if length <= 0 or length > 4096 or foff != total:
+        if (
+            length <= 0
+            or length > 4096
+            or foff < total  # sobreposição: formato corrompido
+            or foff - total > _MAX_TRAILING_SLACK  # salto grande: suspeito
+        ):
             break
         fields.append(TableField(name=name, type=ftype, length=length, offset=foff))
-        total += length
+        total = foff + length
         off += _DESC_STRIDE
     if not fields or total > rec_len or rec_len - total > _MAX_TRAILING_SLACK:
         return None

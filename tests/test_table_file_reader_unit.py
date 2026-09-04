@@ -95,6 +95,47 @@ class ReadTableTests(unittest.TestCase):
             path.write_bytes(bytes(raw))
             self.assertIsNone(read_table(path))
 
+    def _add_trailing_padding(self, path: Path, padding: int) -> None:
+        """Aumenta rec_len em ``padding`` e adiciona os bytes no fim de cada
+        registro (padding trailing, como o arq220.cad do legado)."""
+        raw = bytearray(path.read_bytes())
+        rec_len = struct.unpack(">I", raw[20:24])[0]
+        body = bytes(raw[DATA_START:])
+        nrecs = len(body) // rec_len
+        new_rec_len = rec_len + padding
+        new_body = bytearray()
+        for i in range(nrecs):
+            rec = body[i * rec_len:(i + 1) * rec_len]
+            new_body += rec + bytes(padding)
+        struct.pack_into(">I", raw, 20, new_rec_len)
+        path.write_bytes(raw[:DATA_START] + bytes(new_body))
+
+    def test_rec_len_com_padding_trailing_pequeno_aceita(self):
+        """arq220.cad do legado: campos somam rec_len-2 (2 bytes reservados
+        no fim do registro). Padding trailing pequeno (≤4) é tolerado; os
+        offsets sequenciais dos campos continuam garantindo o parse."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq220.cad"
+            _write_table(
+                path,
+                [("REDE", "C", 3), ("CODIGO", "C", 3), ("DESCRICAO", "C", 20)],
+                [{"REDE": "001", "CODIGO": "010", "DESCRICAO": "LOJA CENTRO"}],
+            )
+            self._add_trailing_padding(path, 2)
+            table = read_table(path)
+            self.assertIsNotNone(table)
+            self.assertEqual(table.record_length, 29)
+            self.assertEqual(
+                sample_column_values(table, "codigo"), ["010"]
+            )
+
+    def test_padding_trailing_grande_rejeita(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arq210.cmp"
+            _write_table(path, [("CODIGO", "C", 3)], [{"CODIGO": "001"}])
+            self._add_trailing_padding(path, 5)  # slack > 4: suspeito
+            self.assertIsNone(read_table(path))
+
     def test_arquivo_truncado_rejeita(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "arq210.cmp"

@@ -42,6 +42,12 @@ _HDR_REC_LEN = 20
 _RE_FIELD_NAME = re.compile(r"^[A-Za-z_]\w*$")
 _RE_INDEX_SUFFIX = re.compile(r"^\.\d{3}$")
 
+# Padding trailing tolerado no registro (arq220.cad do legado tem 2 bytes
+# reservados no fim). Os offsets sequenciais (foff == total) continuam
+# garantindo que nenhum campo foi perdido no meio — o slack só pode ser
+# cauda. Acima de 4 bytes o formato é suspeito e a tabela é rejeitada.
+_MAX_TRAILING_SLACK = 4
+
 
 @dataclass
 class TableField:
@@ -103,7 +109,7 @@ def read_table(path: str | Path) -> RecitalTable | None:
         fields.append(TableField(name=name, type=ftype, length=length, offset=foff))
         total += length
         off += _DESC_STRIDE
-    if not fields or total != rec_len:
+    if not fields or total > rec_len or rec_len - total > _MAX_TRAILING_SLACK:
         return None
     # Saneamento: a flag do primeiro registro precisa ser ' ' ou '*'.
     try:

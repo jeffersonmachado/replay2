@@ -450,6 +450,8 @@ def test_adaptive_replay_evidence_packaged(tmp_path):
         "adaptive-replay-benchmark.json",
         "adaptive-replay-readiness.json",
         "adaptive-shadow-evaluation.json",
+        "adaptive-replay-server-evidence.json",
+        "adaptive-qualquer-coisa-futura.json",
     ):
         (root / "artifacts" / name).write_text("{}\n", encoding="utf-8")
     _make_release_artifacts(root)
@@ -462,6 +464,8 @@ def test_adaptive_replay_evidence_packaged(tmp_path):
         "adaptive-replay-benchmark.json",
         "adaptive-replay-readiness.json",
         "adaptive-shadow-evaluation.json",
+        "adaptive-replay-server-evidence.json",
+        "adaptive-qualquer-coisa-futura.json",
     ):
         assert any(f"artifacts/{name}" in n for n in names), (
             f"{name} ausente do pacote"

@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
-  "run_id": "release-20260910T191616Z-bd56286b-original-visual",
-  "started_at": "2026-09-10T19:29:45.688299+00:00",
-  "finished_at": "2026-09-10T19:29:52.159459+00:00",
+  "run_id": "release-20260910T230904Z-3bdb906b-original-visual",
+  "started_at": "2026-09-10T23:21:03.375705+00:00",
+  "finished_at": "2026-09-10T23:21:09.040836+00:00",
   "passed": true,
-  "source_tree_sha256": "4273cd5dee76e2b4225bccaa53eb1aca5d75c3569b3b82a1dda8fdcf4a566cf9",
+  "source_tree_sha256": "fb4d0e2d3f815dd74fee85f228623696bf5d73acb7d6b8950f121f1f4ee19e90",
   "chromium_started": true,
   "chromium_exit_code": 0,
   "puppeteer_used": true,
@@ -25,5 +25,5 @@
   "pixel_validation_passed": true,
   "remaining_processes": 0,
   "remaining_zombies": 0,
-  "release_run_id": "release-20260910T191616Z-bd56286b"
+  "release_run_id": "release-20260910T230904Z-3bdb906b"
 }

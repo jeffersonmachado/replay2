@@ -312,9 +312,53 @@ ações em ~38 ms ≈ 5.700 ações/s (ERP ideal), contra ~20 ações/s antes.
 - A espera é por estado (`WAIT_FOR_STATE`/checkpoint): quem responde antes
   termina antes — AIX espera ~420 ms, Linux ~130 ms no exemplo da missão;
   nenhum `sleep(420)` compartilhado.
-- Benchmarks reais AIX×Linux: fora do alcance desta estação (requer o MIG24);
-  o mecanismo de comparabilidade está preservado (mesma jornada/massa/seed/
-  checkpoints — o executor de benchmark não foi alterado).
+- Benchmarks reais AIX×Linux (v0.9.8 deployada nos dois servidores em
+  2026-09-10): ver §14.1 — a política de decisão foi idêntica (mesmos 102
+  fallbacks conservadores nas duas pontas) e as esperas por estado
+  terminaram antes no Linux (ERP ~101 s vs ~142-147 s no AIX), exatamente o
+  comportamento exigido: mesma política semântica, espera proporcional à
+  resposta real de cada ambiente.
+
+### 14.1 Evidência em servidor (MIG24 AIX × Linux x86, captura 13, seed 42)
+
+Shadow mode em volume sobre as capturas reais dos servidores
+(`scripts/shadow_eval_adaptive_replay.py`, offline, sem executor):
+
+| ambiente | capturas | ações | candidatos | seguros | false_safe | violações checkpoint | economia potencial |
+|---|---|---|---|---|---|---|---|
+| AIX (MIG24) | 64 | 100.157 | 6.555 | 3.563 | **0** | **0** | 121.455 ms |
+| Linux (24) | 4 | 254 | 20 | 9 | **0** | **0** | 0 ms |
+
+Runs reais contra o ERP de homologação (mesma captura/trilha/seed nas duas
+pontas; a captura 13 foi importada para o Linux; `fails` = divergências de
+dados sintéticos esperadas, idênticas entre políticas → paridade funcional):
+
+| modo | política | AIX duração (ratio) | Linux duração (ratio) |
+|---|---|---|---|
+| strict-global | conservative | 457,2 s (0,448) | 333,4 s (0,471) |
+| strict-global | adaptive_shadow | 336,5 s (0,438) | 326,4 s (0,434) |
+| strict-global | adaptive | 329,8 s (0,444) | 195,9 s (0,186) |
+| parallel (conc=2) | conservative | 277,5 s (0,470) | 204,0 s (0,504) |
+| parallel (conc=2) | adaptive | 273,4 s (0,481) | 204,2 s (0,504) |
+
+Leituras:
+
+- **Nenhuma regressão funcional**: mesmo conjunto de falhas por política em
+  cada ambiente (98 no AIX, 103 no Linux; todas `screen_divergence` de dados
+  sintéticos, classificação esperada).
+- **Safety guard em produção**: na captura 13 todo input tem checkpoint →
+  checkpoint é fronteira inviolável → o scheduler registrou
+  `conservative_fallback_count=102` e **nenhum batch** nos dois ambientes.
+  É o comportamento correto: sem espaço seguro, não acelera.
+- **Pacing residual (~99,7 s)** é a cadência humana real gravada na trilha
+  (deltas de ts entre ações), não mais a constante de 50 ms/byte — redutível
+  somente via `speed` explícito (política do experimento).
+- **Comparabilidade AIX×Linux preservada**: decisões idênticas, esperas por
+  estado proporcionais à resposta de cada ERP.
+- Bug operacional encontrado durante a medição e corrigido com TDD:
+  `shadow_eval_adaptive_replay.py` crashava no print final no AIX (locale
+  POSIX → stdout latin-1 → `UnicodeEncodeError` no '→'); fix
+  `reconfigure(errors="replace")` + teste de regressão (PR #2).
 
 ## 15. Riscos
 

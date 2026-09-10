@@ -62,6 +62,82 @@ export function exportLinks(runId) {
   `;
 }
 
+const EXECUTION_POLICY_LABELS = {
+  conservative: "conservadora (padrão)",
+  adaptive: "adaptativa (batching seguro)",
+  adaptive_shadow: "shadow (mede, não acelera)",
+};
+
+export function runAdaptiveMetrics(run) {
+  if (!run) return null;
+  let metrics = run.metrics;
+  if (metrics == null && run.metrics_json) {
+    try {
+      metrics = JSON.parse(run.metrics_json);
+    } catch (_) {
+      return null;
+    }
+  }
+  const adaptive = metrics && typeof metrics === "object" ? metrics.adaptive : null;
+  if (!adaptive || typeof adaptive !== "object" || !adaptive.execution_policy) return null;
+  return adaptive;
+}
+
+function _fmtMs(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${formatCount(Math.round(n))} ms` : "-";
+}
+
+function _fmtPct(ratio) {
+  const n = Number(ratio);
+  return Number.isFinite(n) ? `${(n * 100).toFixed(1).replace(".", ",")}%` : "-";
+}
+
+export function adaptiveMetricsCard(run) {
+  const adaptive = runAdaptiveMetrics(run);
+  if (!adaptive) return "";
+  const policy = String(adaptive.execution_policy || "");
+  const policyLabel = EXECUTION_POLICY_LABELS[policy] || policy;
+  const rows = [
+    ["jornada total", _fmtMs(adaptive.journey_total_ms)],
+    ["resposta ERP", _fmtMs(adaptive.erp_response_ms)],
+    ["overhead Replay2", `${_fmtMs(adaptive.replay_overhead_ms)} (${_fmtPct(adaptive.replay_overhead_ratio)})`],
+    ["pacing", _fmtMs(adaptive.pacing_ms)],
+    ["espera explícita", _fmtMs(adaptive.explicit_wait_ms)],
+    ["espera de sincronização", _fmtMs(adaptive.sync_wait_ms)],
+    ["checkpoints", _fmtMs(adaptive.checkpoint_wait_ms)],
+    ["batches", `${formatCount(adaptive.batch_count || 0)} (${formatCount(adaptive.batched_action_count || 0)} ações)`],
+    ["barreiras", formatCount(adaptive.barrier_count || 0)],
+    ["fallbacks conservadores", formatCount(adaptive.conservative_fallback_count || 0)],
+    ["economia por batching", _fmtMs(adaptive.batching_saved_ms)],
+  ];
+  const shadow = adaptive.shadow && typeof adaptive.shadow === "object" ? adaptive.shadow : null;
+  const shadowHtml = shadow
+    ? `
+      <div class="mt-3 rounded-xl border border-amber-700/50 bg-amber-950/20 px-3 py-2">
+        <div class="text-[11px] uppercase tracking-[0.14em] text-amber-300">Shadow — o que o modo adaptativo faria</div>
+        <div class="mt-2 grid gap-1 text-xs text-stone-300 sm:grid-cols-2">
+          <span>candidatos a batch: <span class="font-mono text-stone-100">${formatCount(shadow.batch_candidates || 0)}</span> (${formatCount(shadow.safe_candidates || 0)} seguros)</span>
+          <span>economia potencial: <span class="font-mono text-stone-100">${_fmtMs(shadow.potential_saved_ms)}</span></span>
+          <span>decisões false-safe: <span class="font-mono ${Number(shadow.false_safe_decisions) ? "text-rose-300" : "text-emerald-300"}">${formatCount(shadow.false_safe_decisions || 0)}</span></span>
+          <span>fallbacks: <span class="font-mono text-stone-100">${formatCount(shadow.fallbacks || 0)}</span></span>
+        </div>
+      </div>`
+    : "";
+  return `
+    <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Motor de execução</div>
+        <span class="text-xs text-stone-300">política: <span class="font-mono text-stone-100">${escapeHtml(policyLabel)}</span></span>
+      </div>
+      <div class="mt-3 grid gap-1 text-xs text-stone-300 sm:grid-cols-2 lg:grid-cols-3">
+        ${rows.map(([label, value]) => `<span>${escapeHtml(label)}: <span class="font-mono text-stone-100">${escapeHtml(value)}</span></span>`).join("")}
+      </div>
+      ${shadowHtml}
+    </div>
+  `;
+}
+
 export function reprocessFailureCard(item) {
   return `
     <div class="rounded-xl border border-stone-800 bg-stone-950/40 p-3">

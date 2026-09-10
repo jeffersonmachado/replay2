@@ -1580,6 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
     ap_runs_create.add_argument("--match-threshold", type=float, default=0.92)
     ap_runs_create.add_argument("--match-ignore-case", action="store_true")
     ap_runs_create.add_argument("--term", default="", help="TERM da sessão de replay (default: o da captura; use xterm para replay headless — terminais com porta auxiliar, ex.: dk100, travam a sessão)")
+    ap_runs_create.add_argument("--execution-policy", choices=["conservative", "adaptive", "adaptive_shadow"], default="", help="Política do motor adaptativo (default: conservative — cadência histórica; adaptive_shadow mede sem acelerar; adaptive liga o batching conservador)")
 
     register_targets_parser(sub)
     register_profiles_parser(sub)
@@ -1990,6 +1991,8 @@ def main(argv: list[str] | None = None) -> int:
                     params["match_ignore_case"] = True
                 if getattr(ns, "term", ""):
                     params["term"] = ns.term
+                if getattr(ns, "execution_policy", ""):
+                    params["execution_policy"] = ns.execution_policy
                 if partial:
                     params.update(partial)
                 con.execute("UPDATE replay_runs SET params_json=? WHERE id=?", (json.dumps(params, ensure_ascii=False), rid))

@@ -1330,6 +1330,7 @@ def start_synthetic_replay(
     skip_fields: list[str] | None = None,
     auto_entry: bool = True,
     lookup_values: dict[str, list] | None = None,
+    execution_policy: str = "",
     runner,
     hmac_key: bytes,
     progress=None,
@@ -1482,6 +1483,15 @@ def start_synthetic_replay(
             "synthetic_applied": trail.get("applied_detail") or [],
         },
     }
+    if str(execution_policy or "").strip():
+        # Política do motor adaptativo (§18): conservative (default) /
+        # adaptive / adaptive_shadow — valores inválidos caem em conservative.
+        from dakota_gateway.replay_control.adaptive_scheduler import (
+            normalize_execution_policy,
+        )
+        run_body["params"]["execution_policy"] = normalize_execution_policy(
+            execution_policy
+        )
     if entry:
         # Passos de entrada (menu wrapper → shell → ERP) executados pelo
         # replay antes do primeiro checkpoint, e o seq de corte do preâmbulo.
@@ -1558,6 +1568,7 @@ def start_synthetic_replay_job(
     skip_fields: list[str] | None = None,
     auto_entry: bool = True,
     lookup_values: dict[str, list] | None = None,
+    execution_policy: str = "",
     runner,
     hmac_key: bytes,
 ) -> dict[str, Any]:
@@ -1610,6 +1621,7 @@ def start_synthetic_replay_job(
                 skip_fields=skip_fields,
                 auto_entry=auto_entry,
                 lookup_values=lookup_values,
+                execution_policy=execution_policy,
                 runner=runner,
                 hmac_key=hmac_key,
                 progress=_progress,

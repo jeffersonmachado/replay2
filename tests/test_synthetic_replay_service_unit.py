@@ -75,7 +75,13 @@ def _create_user(con, username: str = "admin", role: str = "admin") -> int:
 
 
 def _expected_session_bytes(journey, session_count, seed, session_index, workdir) -> bytes:
-    """Reconstrói os bytes esperados da sessão (inputs do gerador + ENTER)."""
+    """Reconstrói os bytes esperados da sessão (concatenação exata das ações).
+
+    Desde o motor adaptativo (v0.9.8) cada elemento retornado por
+    ``generate_synthetic_inputs`` é o payload completo de uma ação — ENTER
+    só aparece quando a jornada o declara (``{KEY:ENTER}``); o adapter não
+    anexa mais ``\\r`` artificial a cada input.
+    """
     db = str(Path(workdir) / f"expected-{session_index}.db")
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
@@ -86,7 +92,7 @@ def _expected_session_bytes(journey, session_count, seed, session_index, workdir
     finally:
         con.close()
     inputs = ReplayAdapter().generate_synthetic_inputs(journey, jds, session_index)
-    return "".join(f"{inp}\r" for inp in inputs).encode("utf-8")
+    return "".join(inputs).encode("utf-8")
 
 
 class SyntheticJsonlFormatTests(unittest.TestCase):
@@ -234,6 +240,37 @@ class SyntheticReplayServiceTests(unittest.TestCase):
         })
         self.assertEqual(result["status_code"], 400)
         self.assertEqual(fake.started, [])
+
+    def test_execution_policy_propagada_aos_params(self):
+        """execution_policy (motor adaptativo) chega aos params da run."""
+        result, _fake = self._start({
+            "journey_id": "x5_journey",
+            "target_host": "legacy.example",
+            "execution_policy": "adaptive_shadow",
+        })
+        self.assertEqual(result["status_code"], 202)
+        row = query_one(
+            self.con, "SELECT params_json FROM replay_runs WHERE id=?",
+            (result["payload"]["run_id"],),
+        )
+        params = json.loads(row["params_json"])
+        self.assertEqual(params["execution_policy"], "adaptive_shadow")
+        self.assertTrue(params["synthetic"])
+
+    def test_execution_policy_invalida_cai_para_conservative(self):
+        """Política desconhecida nunca é gravada: normalize → conservative."""
+        result, _fake = self._start({
+            "journey_id": "x5_journey",
+            "target_host": "legacy.example",
+            "execution_policy": "turbo-maximo",
+        })
+        self.assertEqual(result["status_code"], 202)
+        row = query_one(
+            self.con, "SELECT params_json FROM replay_runs WHERE id=?",
+            (result["payload"]["run_id"],),
+        )
+        params = json.loads(row["params_json"])
+        self.assertEqual(params["execution_policy"], "conservative")
 
 
 class RunnerEphemeralLogDirTests(unittest.TestCase):

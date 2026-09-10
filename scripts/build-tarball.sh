@@ -116,6 +116,10 @@ if [ -f "$ROOT_DIR/README.md" ]; then cp -f "$ROOT_DIR/README.md" "$STAGE_DIR/";
 # Evidência da missão de correções de performance da release (quando presente) — entra no hash
 # da árvore do aceite, então precisa estar no pacote (verify-tarball exige pacote == árvore do aceite)
 if [ -f "$ROOT_DIR/PERFORMANCE_CORRECTIONS_REPORT.md" ]; then cp -f "$ROOT_DIR/PERFORMANCE_CORRECTIONS_REPORT.md" "$STAGE_DIR/"; fi
+# Evidência do motor adaptativo de replay (0.9.8, quando presente) — mesma
+# regra: entra no hash do aceite, precisa estar no pacote (incidente do
+# pipeline 0.9.8: verify-tarball abortou com os 4 arquivos só na árvore).
+if [ -f "$ROOT_DIR/ADAPTIVE_REPLAY_ENGINE_REPORT.md" ]; then cp -f "$ROOT_DIR/ADAPTIVE_REPLAY_ENGINE_REPORT.md" "$STAGE_DIR/"; fi
 # package.json + package-lock.json: puppeteer pinned (§29) — a árvore
 # extraída resolve a dependência visual sem instalação global silenciosa
 if [ -f "$ROOT_DIR/package.json" ]; then cp -f "$ROOT_DIR/package.json" "$STAGE_DIR/"; fi
@@ -166,6 +170,19 @@ Não execute build-tarball.sh manualmente sem antes rodar o release completo."
   if [ -d "$ROOT_DIR/artifacts/performance-corrections" ]; then
     cp -R "$ROOT_DIR/artifacts/performance-corrections" "$STAGE_DIR/artifacts/"
   fi
+  # Evidência do motor adaptativo (0.9.8, quando presente): benchmark do
+  # executor, readiness GO/NO_GO e avaliação shadow offline. Entram no hash
+  # do aceite, então precisam acompanhar o pacote (copy-if-present — não são
+  # obrigatórios como os artefatos do aceite).
+  for artifact in \
+    adaptive-replay-benchmark.json \
+    adaptive-replay-readiness.json \
+    adaptive-shadow-evaluation.json
+  do
+    if [ -f "$ROOT_DIR/artifacts/$artifact" ]; then
+      cp -f "$ROOT_DIR/artifacts/$artifact" "$STAGE_DIR/artifacts/"
+    fi
+  done
   # Evidência do benchmark real AIX×Linux (§33): SOMENTE o experimento oficial
   # selecionado (FASE 11) — históricos (cap13-*-v1..vN antigos) NUNCA entram
   # automaticamente no pacote de runtime. Seleção: --with-benchmarks <id> ou,

@@ -12,7 +12,15 @@ Submódulos:
 - ``executors.py`` — executores de replay (strict-global, parallel-sessions,
   parallel-sessions-concurrent) e ``LoadTestParams``;
 - ``runner.py`` — ciclo de vida de runs (create/pause/resume/cancel/retry) e
-  a classe ``Runner``.
+  a classe ``Runner``;
+- ``action_classifier.py`` — classificação determinística de ações (§5);
+- ``safety_guard.py`` — bloqueio conservador de otimizações inseguras (§9);
+- ``adaptive_scheduler.py`` — decisões auditáveis CONTINUE/BATCH/WAIT_*/
+  BARRIER/FALLBACK_CONSERVATIVE, ``ShadowTracker`` e ``AdaptiveRuntime``;
+- ``execution_telemetry.py`` — telemetria de execução sem dupla contagem;
+- ``synchronization.py`` — quiet points × convergência e evidência de
+  type-ahead humano (``extract_typeahead_evidence``);
+- ``latency_profile.py`` — perfil estatístico local por ambiente (offline).
 """
 from __future__ import annotations
 
@@ -27,6 +35,26 @@ from pathlib import Path
 from threading import Lock, Semaphore, Thread
 
 from . import deterministic, executors, runner, window
+from .action_classifier import ActionClass, classify_bytes
+from .adaptive_scheduler import (
+    POLICY_ADAPTIVE,
+    POLICY_ADAPTIVE_SHADOW,
+    POLICY_CONSERVATIVE,
+    AdaptiveRuntime,
+    AdaptiveScheduler,
+    SchedulerOp,
+    ShadowTracker,
+    normalize_execution_policy,
+)
+from .execution_telemetry import RunTelemetry, SessionTelemetry, TelemetryBucket
+from .latency_profile import LatencyProfile
+from .safety_guard import GuardBlockReason, SafetyGuard
+from .synchronization import (
+    TypeaheadEvidence,
+    extract_capture_typeahead_evidence,
+    extract_typeahead_evidence,
+    quiet_points,
+)
 from .deterministic import (
     _comparison_mode_from_params,
     _deterministic_failure,

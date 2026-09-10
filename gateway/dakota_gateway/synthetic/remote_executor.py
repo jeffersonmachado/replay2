@@ -1,10 +1,28 @@
-"""Executor remoto: conecta via SSH e executa jornadas contra sistema real."""
+"""Executor remoto: conecta via SSH e executa jornadas contra sistema real.
+
+.. deprecated:: 0.9.8
+   **LEGADO — não faz parte de nenhum fluxo suportado.** Nenhuma rota HTTP,
+   subcomando CLI ou service do control plane usa esta classe; o fluxo real
+   que a substituiu é Synthetic → Replay (X5):
+   ``control/services/synthetic_replay_service.py`` →
+   ``synthetic/replay_adapter.py`` → ``replay_control`` (runner + executors),
+   que executa via trilha auditável com hash-chain/HMAC, checkpoints e
+   política de execução configurável (``execution_policy``).
+
+   Este executor mantém políticas fixas incompatíveis com o motor adaptativo
+   (``select(timeout=0.5)``, ``time.sleep(0.3)`` antes de cada input, ENTER
+   implícito por linha, ``time.sleep(0.05)`` de micro ramp-up, join com
+   timeout de 300 s) e não grava trilha auditável. Permanece no repositório
+   apenas para compatibilidade de testes históricos em ``mode="dry_run"``;
+   será removido em versão futura. Não usar em código novo.
+"""
 from __future__ import annotations
 
 import json
 import os
 import time
 import threading
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -56,6 +74,14 @@ class RemoteExecutor:
     """
 
     def __init__(self, mode: str = "dry_run", db_path: str = ""):
+        if mode == "real":
+            warnings.warn(
+                "RemoteExecutor(mode='real') é legado e não grava trilha "
+                "auditável; use o fluxo Synthetic → Replay (X5) via "
+                "synthetic_replay_service + replay_control.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.mode = mode
         self.db_path = db_path
         self.detector = ErrorDetector()

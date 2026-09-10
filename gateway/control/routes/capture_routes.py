@@ -650,6 +650,7 @@ def handle_capture_post_route(
                 auto_entry=auto_entry,
                 lookup_values=body.get("lookup_values")
                 if isinstance(body.get("lookup_values"), dict) else None,
+                execution_policy=str(body.get("execution_policy") or "").strip(),
                 runner=handler.server.runner,
                 hmac_key=handler.server.runner.hmac_key,
             )
@@ -671,6 +672,7 @@ def handle_capture_post_route(
                 auto_entry=auto_entry,
                 lookup_values=body.get("lookup_values")
                 if isinstance(body.get("lookup_values"), dict) else None,
+                execution_policy=str(body.get("execution_policy") or "").strip(),
                 runner=handler.server.runner,
                 hmac_key=handler.server.runner.hmac_key,
             )

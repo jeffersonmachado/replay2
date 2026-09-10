@@ -37,6 +37,14 @@ from .deterministic import (
     content_present_override,
     synthetic_swap_override,
 )
+from .action_classifier import ActionClass, BARRIER_CLASSES, classify_bytes
+from .adaptive_scheduler import (
+    POLICY_ADAPTIVE,
+    POLICY_ADAPTIVE_SHADOW,
+    ShadowTracker,
+)
+from .execution_telemetry import TelemetryBucket
+from .safety_guard import SafetyGuard
 from .window import (
     _is_replay_input_event,
     _on_deterministic_mismatch,
@@ -199,6 +207,7 @@ def replay_strict_global_controlled(
     on_progress,
     on_failure,
     checkpoint_timeout_ms: int = 5000,
+    adaptive=None,
 ):
     sessions: dict[str, _TargetSession] = {}
     states: dict[str, SessionReplayState] = {}
@@ -206,6 +215,19 @@ def replay_strict_global_controlled(
     recent_keys: dict[str, list] = {}
     sel = selectors.DefaultSelector()
     input_mode = _replay_input_mode(params)
+    # Telemetria por sessão (motor adaptativo): strict-global não faz
+    # batching — a cadência aqui já é dirigida por checkpoint (espera por
+    # estado, não por constante). Medir continua valendo (§15).
+    _telemetry: dict[str, object] = {}
+
+    def sess_telemetry(sid: str):
+        if adaptive is None or getattr(adaptive, "telemetry", None) is None:
+            return None
+        if sid not in _telemetry:
+            tel = adaptive.telemetry.session(sid)
+            tel.begin_session(time.monotonic() * 1000.0)
+            _telemetry[sid] = tel
+        return _telemetry[sid]
     # Entrada automática no sistema (trilha com preâmbulo de shell cortado —
     # ver synthetic_trail.detect_session_entry): executada uma vez por sessão,
     # logo após a conexão, antes do primeiro checkpoint.
@@ -258,6 +280,7 @@ def replay_strict_global_controlled(
         def compare(observed: dict) -> dict:
             return compare_expected_observed(expected_snapshot, observed, params, event=expected_event, session_config=session_configs.get(sid), replay_config=cfg, recent_keys=recent_keys.get(sid))
 
+        t0 = time.monotonic()
         matched, match, observed = wait_for_signature_match(
             s,
             sel,
@@ -272,6 +295,27 @@ def replay_strict_global_controlled(
             # strict-global pagava 5s por divergência (run 64, captura 81).
             early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
         )
+        tel = sess_telemetry(sid)
+        if tel is not None:
+            elapsed = (time.monotonic() - t0) * 1000.0
+            erp_ms = (
+                max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
+                if matched else elapsed
+            )
+            tel.record(TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms)
+            if matched:
+                tel.record_adaptive_wait()
+            profile = getattr(adaptive, "latency_profile", None)
+            if matched and profile is not None:
+                try:
+                    profile.record(
+                        getattr(adaptive, "environment_id", "") or cfg.target_host,
+                        "checkpoint",
+                        "",
+                        erp_ms,
+                    )
+                except Exception:
+                    pass  # telemetria nunca derruba a run
         if matched:
             return
         expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
@@ -387,7 +431,14 @@ def replay_strict_global_controlled(
                 data = _decode_replay_input(ev)
                 if data:
                     s = get_sess(sid, ev)
+                    t0 = time.monotonic()
                     s.write_in(data)
+                    tel = sess_telemetry(sid)
+                    if tel is not None:
+                        tel.record(
+                            TelemetryBucket.SEND,
+                            (time.monotonic() - t0) * 1000.0,
+                        )
                     _remember_key(recent_keys.setdefault(sid, []), data)
                 on_progress(seq_global, expected_sig or None)
                 drain_output(0.0)
@@ -412,6 +463,8 @@ def replay_strict_global_controlled(
             should_pause_or_cancel()
             drain_output(0.05)
     finally:
+        for tel in _telemetry.values():
+            tel.end_session(time.monotonic() * 1000.0)
         try:
             sel.close()
         except Exception:
@@ -668,6 +721,7 @@ def replay_parallel_sessions_concurrent_controlled(
     on_session_result,
     on_failure,
     checkpoint_timeout_ms: int = 5000,
+    adaptive=None,
 ):
     """
     Replay por sessão com concorrência limitada e ramp-up.
@@ -679,6 +733,14 @@ def replay_parallel_sessions_concurrent_controlled(
     - Checkpoint mismatch pode falhar só a sessão (continue) ou o run inteiro (fail-fast).
     - speed/jitter controlam pacing entre eventos de input (bytes dir=in) baseado em ts_ms.
     - target_user_pool distribui sessões entre usuários no destino.
+    - ``adaptive`` (AdaptiveRuntime, opcional): telemetria de execução e a
+      política ``execution_policy`` — ``conservative`` (default, comportamento
+      histórico), ``adaptive`` (batching conservador de inputs imprimíveis
+      contíguos; barreiras/checkpoints jamais atravessados) e
+      ``adaptive_shadow`` (executa conservador e registra o que o adaptativo
+      FARIA, com economia prevista — §19). Batching nunca mistura sessões:
+      o buffer é local ao worker. Pause/cancel são checados por evento e
+      antes de cada write, inclusive dentro de batches.
     """
 
     input_mode = _replay_input_mode(load_params.__dict__)
@@ -715,11 +777,113 @@ def replay_parallel_sessions_concurrent_controlled(
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
             last_in_ts = None
             recent_keys: list = []
+
+            # ---- motor adaptativo (opcional; None = comportamento histórico)
+            policy = str(getattr(adaptive, "policy", "") or "conservative")
+            sess_tel = None
+            if adaptive is not None and getattr(adaptive, "telemetry", None) is not None:
+                sess_tel = adaptive.telemetry.session(sid)
+                sess_tel.begin_session(time.monotonic() * 1000.0)
+            guard = SafetyGuard()
+            evidence_seqs = adaptive.evidence_for(sid) if adaptive is not None else set()
+            synthetic_trail = bool(getattr(adaptive, "synthetic_trail", False))
+            shadow = (
+                ShadowTracker(synthetic_trail=synthetic_trail, evidence_seqs=evidence_seqs)
+                if policy == POLICY_ADAPTIVE_SHADOW else None
+            )
+            pending: list = []            # [(ev, data)] — buffer de batch (adaptive)
+            pending_saved_ms = [0]        # pacing economizado pelo batch aberto
+
+            def flush_pending():
+                """Fecha o batch aberto: UM write, um on_progress por evento."""
+                if not pending:
+                    return
+                should_pause_or_cancel()
+                data = b"".join(item[1] for item in pending)
+                if data:
+                    t0 = time.monotonic()
+                    s.write_in(data)
+                    if sess_tel is not None:
+                        sess_tel.record(
+                            TelemetryBucket.SEND,
+                            (time.monotonic() - t0) * 1000.0,
+                        )
+                    for _ev2, _d2 in pending:
+                        _remember_key(recent_keys, _d2)
+                if sess_tel is not None and len(pending) > 1:
+                    sess_tel.record_batch(
+                        action_count=len(pending),
+                        saved_ms=float(pending_saved_ms[0]),
+                    )
+                for _ev2, _d2 in pending:
+                    on_progress(int(_ev2.get("seq_global") or 0), None)
+                pending.clear()
+                pending_saved_ms[0] = 0
+
+            def paced_sleep(scaled_ms: int, *, bucket) -> None:
+                """Sleep cooperativo (chunks de 50ms, pause/cancel dentro do
+                batch de espera) com atribuição de telemetria."""
+                if scaled_ms <= 0:
+                    return
+                end = time.time() + (scaled_ms / 1000.0)
+                t0 = time.monotonic()
+                while time.time() < end:
+                    should_pause_or_cancel()
+                    time.sleep(min(0.05, end - time.time()))
+                if sess_tel is not None:
+                    sess_tel.record(bucket, (time.monotonic() - t0) * 1000.0)
+
+            def timed_checkpoint_wait(ev, **kw):
+                """Wait de checkpoint instrumentado: separa ERP de carência."""
+                t0 = time.monotonic()
+                matched, match, observed = _wait_for_expected_observed(
+                    session=s,
+                    selector=sel,
+                    expected_event=ev,
+                    params=load_params.__dict__,
+                    should_pause_or_cancel=should_pause_or_cancel,
+                    checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                    checkpoint_timeout_ms=checkpoint_timeout_ms,
+                    session_config=state.config,
+                    replay_config=cfg,
+                    recent_keys=recent_keys,
+                )
+                elapsed = (time.monotonic() - t0) * 1000.0
+                erp_ms = (
+                    max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
+                    if matched else elapsed
+                )
+                if sess_tel is not None:
+                    sess_tel.record(
+                        TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms,
+                    )
+                    if matched:
+                        sess_tel.record_adaptive_wait()
+                        sess_tel.record_response_timing(
+                            time_to_first_byte_ms=0.0,
+                            time_to_last_byte_ms=erp_ms,
+                            time_to_expected_state_ms=erp_ms,
+                        )
+                profile = getattr(adaptive, "latency_profile", None)
+                if matched and profile is not None:
+                    try:
+                        profile.record(
+                            getattr(adaptive, "environment_id", "") or cfg.target_host,
+                            "checkpoint",
+                            "",
+                            erp_ms,
+                        )
+                    except Exception:
+                        pass  # telemetria nunca derruba a run
+                if matched and guard.diverged:
+                    guard.record_resync()
+                return matched, match, observed
             try:
                 for ev in iter_indexed_events(index[sid]):
                     should_pause_or_cancel()
                     with stop_lock:
                         if stop_all["flag"]:
+                            flush_pending()
                             on_session_result(sid, "stopped", stop_all["err"])
                             return
 
@@ -727,34 +891,95 @@ def replay_parallel_sessions_concurrent_controlled(
                     typ = ev.get("type") or ""
                     if _is_replay_input_event(ev, input_mode=input_mode):
                         ts = int(ev.get("ts_ms") or 0)
+                        scaled = 0
                         if last_in_ts is not None and load_params.speed > 0:
                             delta = max(0, ts - last_in_ts)
                             scaled = int(delta / float(load_params.speed))
                             if load_params.jitter_ms > 0:
                                 scaled += random.randint(0, load_params.jitter_ms)
-                            # sleep is cooperative with pause/cancel (chunked)
-                            end = time.time() + (scaled / 1000.0)
-                            while time.time() < end:
-                                should_pause_or_cancel()
-                                time.sleep(min(0.05, end - time.time()))
+                        data = _decode_replay_input(ev)
+                        is_wait_marker = str(ev.get("key_kind") or "") == "wait"
+                        requires_cmp = (
+                            input_mode == "deterministic"
+                            and _event_requires_deterministic_comparison(
+                                ev, load_params.__dict__,
+                                session_config=state.config, replay_config=cfg,
+                            )
+                        )
+                        if shadow is not None:
+                            shadow.observe(ev, paced_sleep_ms=scaled)
+
+                        # WAIT explícito (§2.3): barreira; o delta é contado
+                        # como explicit_wait_ms, nunca pacing artificial.
+                        if is_wait_marker:
+                            flush_pending()
+                            paced_sleep(scaled, bucket=TelemetryBucket.EXPLICIT_WAIT)
+                            last_in_ts = ts
+                            on_progress(seq_global, None)
+                            continue
+
+                        # Batching conservador (policy=adaptive): apenas
+                        # imprimíveis contíguos, sem comparação determinística
+                        # pendente, sem divergência; boundary com pacing>0 só
+                        # colapsa com evidência (trilha sintética ou
+                        # type-ahead seguro da captura).
+                        if (
+                            policy == POLICY_ADAPTIVE
+                            and data
+                            and not requires_cmp
+                            and not guard.diverged
+                            and classify_bytes(
+                                data, key_kind=ev.get("key_kind"),
+                            ).batchable
+                        ):
+                            if not pending:
+                                paced_sleep(scaled, bucket=TelemetryBucket.PACING)
+                                pending.append((ev, data))
+                            else:
+                                boundary_ok = (
+                                    scaled <= 0
+                                    or synthetic_trail
+                                    or seq_global in evidence_seqs
+                                )
+                                if boundary_ok:
+                                    pending_saved_ms[0] += scaled
+                                    pending.append((ev, data))
+                                else:
+                                    flush_pending()
+                                    if sess_tel is not None:
+                                        sess_tel.record_conservative_fallback()
+                                    paced_sleep(scaled, bucket=TelemetryBucket.PACING)
+                                    pending.append((ev, data))
+                            last_in_ts = ts
+                            continue
+
+                        # caminho conservador (default) e barreiras
+                        flush_pending()
+                        if policy == POLICY_ADAPTIVE and sess_tel is not None:
+                            if guard.diverged:
+                                sess_tel.record_conservative_fallback()
+                            elif data and not requires_cmp:
+                                cls = classify_bytes(
+                                    data, key_kind=ev.get("key_kind"),
+                                ).action_class
+                                if cls is ActionClass.UNKNOWN:
+                                    sess_tel.record_conservative_fallback()
+                                elif cls in BARRIER_CLASSES:
+                                    sess_tel.record_barrier()
+                        paced_sleep(scaled, bucket=TelemetryBucket.PACING)
                         last_in_ts = ts
 
                         expected_sig = str(ev.get("screen_sig") or "") if input_mode == "deterministic" else ""
                         expected_snapshot = _expected_snapshot_from_event(ev)
-                        if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, load_params.__dict__, session_config=state.config, replay_config=cfg):
-                            matched, match, observed = _wait_for_expected_observed(
-                                session=s,
-                                selector=sel,
-                                expected_event=ev,
-                                params=load_params.__dict__,
-                                should_pause_or_cancel=should_pause_or_cancel,
-                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
-                                checkpoint_timeout_ms=checkpoint_timeout_ms,
-                                session_config=state.config,
-                                replay_config=cfg,
-                                recent_keys=recent_keys,
-                            )
+                        if requires_cmp:
+                            matched, match, observed = timed_checkpoint_wait(ev)
                             if not matched:
+                                flush_pending()
+                                guard.record_divergence(
+                                    f"checkpoint mismatch seq={seq_global}",
+                                )
+                                if shadow is not None:
+                                    shadow.note_divergence(seq_global)
                                 expected_failure_sig, got = _match_failure_values(match, expected_snapshot, observed)
                                 if _soft_checkpoint_match(expected_failure_sig, got, load_params.__dict__) is not None:
                                     matched = True
@@ -791,26 +1016,26 @@ def replay_parallel_sessions_concurrent_controlled(
                                     on_progress(seq_global, None)
                                     continue
 
-                        data = _decode_replay_input(ev)
                         if data:
+                            t0 = time.monotonic()
                             s.write_in(data)
+                            if sess_tel is not None:
+                                sess_tel.record(
+                                    TelemetryBucket.SEND,
+                                    (time.monotonic() - t0) * 1000.0,
+                                )
                             _remember_key(recent_keys, data)
                         on_progress(seq_global, expected_sig or None)
                     elif typ == "checkpoint":
+                        flush_pending()
                         if _event_requires_deterministic_comparison(ev, load_params.__dict__, session_config=state.config, replay_config=cfg):
-                            matched, match, observed = _wait_for_expected_observed(
-                                session=s,
-                                selector=sel,
-                                expected_event=ev,
-                                params=load_params.__dict__,
-                                should_pause_or_cancel=should_pause_or_cancel,
-                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
-                                checkpoint_timeout_ms=checkpoint_timeout_ms,
-                                session_config=state.config,
-                                replay_config=cfg,
-                                recent_keys=recent_keys,
-                            )
+                            matched, match, observed = timed_checkpoint_wait(ev)
                             if not matched:
+                                guard.record_divergence(
+                                    f"checkpoint mismatch seq={seq_global}",
+                                )
+                                if shadow is not None:
+                                    shadow.note_divergence(seq_global)
                                 expected_snapshot = _expected_snapshot_from_event(ev)
                                 expected_sig = match.get("expected_sig") or expected_snapshot.get("screen_sig") or ""
                                 got = match.get("observed_sig") or observed.get("screen_sig") or ""
@@ -890,8 +1115,13 @@ def replay_parallel_sessions_concurrent_controlled(
                                         stop_all["err"] = msg
                                 return
 
+                flush_pending()
                 on_session_result(sid, "success", "")
             finally:
+                if sess_tel is not None:
+                    sess_tel.end_session(time.monotonic() * 1000.0)
+                    if shadow is not None:
+                        sess_tel.attach_shadow(shadow.report())
                 try:
                     sel.close()
                 except Exception:

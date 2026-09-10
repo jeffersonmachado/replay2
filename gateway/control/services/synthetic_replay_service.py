@@ -82,6 +82,16 @@ def start_synthetic_replay_run(
         "ephemeral_log_dir": True,
         "concurrency": concurrency,
     })
+    # Política de execução do motor adaptativo (conservative/adaptive/
+    # adaptive_shadow; default conservative). Também aceita via params.
+    # Valores inválidos caem para conservative (normalize_execution_policy).
+    if body.get("execution_policy"):
+        from dakota_gateway.replay_control.adaptive_scheduler import (
+            normalize_execution_policy,
+        )
+        params["execution_policy"] = normalize_execution_policy(
+            str(body["execution_policy"])
+        )
     run_body = {
         "log_dir": str(log_dir),
         "mode": mode,

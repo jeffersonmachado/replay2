@@ -379,6 +379,8 @@ function setupSynthesisPanel(captureId, capture) {  const panel = document.getEl
   if (sourceInput && !sourceInput.value) sourceInput.value = localStorage.getItem("replay2.captureSynth.sourceDir") || defaultSourceDir;
   if (samplesInput && !samplesInput.value) samplesInput.value = localStorage.getItem("replay2.captureSynth.samples") || "10";
   if (variationInput) variationInput.value = localStorage.getItem("replay2.captureSynth.variation") || "synthetic";
+  const policyInput = document.getElementById("cap_synth_execution_policy");
+  if (policyInput) policyInput.value = localStorage.getItem("replay2.captureSynth.executionPolicy") || "conservative";
   const lookupInput = document.getElementById("cap_synth_lookup_values");
   if (lookupInput && !lookupInput.value) lookupInput.value = localStorage.getItem("replay2.captureSynth.lookupValues") || "";
 
@@ -474,6 +476,8 @@ async function syntheticReplay(captureId) {
   }
 
   localStorage.setItem("replay2.captureSynth.sourceDir", sourceDir);
+  const executionPolicy = String(document.getElementById("cap_synth_execution_policy")?.value || "conservative");
+  localStorage.setItem("replay2.captureSynth.executionPolicy", executionPolicy);
 
   if (btn) { btn.disabled = true; btn.textContent = "Gerando replay..."; }
   if (feedback) {
@@ -489,6 +493,7 @@ async function syntheticReplay(captureId) {
     source_dir: sourceDir,
     skip_fields: skipFields,
     lookup_values: currentLookupValues(),
+    execution_policy: executionPolicy,
   }));
 
   if (!response?.ok) {
@@ -526,6 +531,7 @@ async function syntheticReplay(captureId) {
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>run: <a class="font-mono text-emerald-50 underline" href="/runs/${escapeHtml(String(data.run_id))}">#${escapeHtml(String(data.run_id))}</a></span>
         <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
+        <span>execução: <span class="font-mono text-emerald-50">${escapeHtml(executionPolicy)}</span></span>
         ${kept.length ? `<span class="md:col-span-2">mantidos (chave de consulta): <span class="font-mono text-emerald-50">${escapeHtml(kept.join(", "))}</span></span>` : ""}
         ${entryPoint ? `<span class="md:col-span-2 text-amber-200/90">entrada automática: ${escapeHtml(entryPoint.summary || "")}</span>` : ""}
         <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>

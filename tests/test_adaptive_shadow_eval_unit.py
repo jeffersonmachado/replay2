@@ -166,3 +166,49 @@ class EvaluateCapturesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShadowEvalCliLocaleTest(unittest.TestCase):
+    """Regressão AIX: o resumo do CLI crashava com UnicodeEncodeError quando o
+    stdout tinha encoding latin-1 (locale POSIX do AIX), por causa do '→' na
+    linha de writes — o relatório JSON era gravado, mas o script saía com
+    traceback e exit code != 0."""
+
+    def test_resumo_nao_crasha_com_stdout_latin1(self):
+        import importlib.util
+        import io
+        import sys
+        from unittest import mock
+
+        script = (
+            Path(__file__).resolve().parent.parent
+            / "scripts" / "shadow_eval_adaptive_replay.py"
+        )
+        spec = importlib.util.spec_from_file_location("shadow_eval_cli", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "captures"
+            cap = root / "cap-1"
+            cap.mkdir(parents=True)
+            _write_capture(cap)
+            out = Path(tmp) / "rel.json"
+            buf = io.BytesIO()
+            latin1_stdout = io.TextIOWrapper(buf, encoding="latin-1")
+            argv = [
+                "shadow_eval_adaptive_replay.py",
+                "--captures-dir", str(root),
+                "--out", str(out),
+            ]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(sys, "stdout", latin1_stdout):
+                rc = mod.main()
+            latin1_stdout.flush()
+            texto = buf.getvalue().decode("latin-1")
+            totals = json.loads(out.read_text(encoding="utf-8"))["totals"]
+
+        self.assertEqual(rc, 0)
+        self.assertIn("false_safe_decisions=0", texto)
+        self.assertIn("promotion_criteria_met=True", texto)
+        self.assertTrue(totals)

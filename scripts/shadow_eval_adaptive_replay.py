@@ -24,6 +24,10 @@ from dakota_gateway.replay_control.shadow_eval import evaluate_captures  # noqa:
 
 
 def main() -> int:
+    # AIX roda com locale POSIX (stdout latin-1): sem o replace, o '→' do
+    # resumo derruba o script com UnicodeEncodeError DEPOIS de gravar o JSON.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--captures-dir", default="gateway/state/captures")
     parser.add_argument("--stable-ms", type=int, default=150)

@@ -130,7 +130,7 @@
           <button id="cap_synth_replay_btn" class="r2ctl-btn-primary text-xs" title="Gera os dados e dispara o replay da captura com eles, em um clique">Replay sintético</button>
         </div>
       </div>
-      <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_120px_120px]">
+      <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_120px_120px_190px]">
         <label class="block">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Pasta dos fontes Recital</span>
           <input id="cap_synth_source_dir" class="r2ctl-input w-full font-mono text-xs" placeholder="Padrão do servidor (pré-preenchido)" />
@@ -149,7 +149,16 @@
           </select>
           <span class="mt-1 block text-[11px] text-stone-500">Sintetizados: cada sessão com dados diferentes. Iguais: todas com os mesmos dados.</span>
         </label>
-        <div class="block lg:col-span-3">
+        <label class="block">
+          <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Execução</span>
+          <select id="cap_synth_execution_policy" class="r2ctl-input w-full">
+            <option value="conservative" selected>Conservadora (padrão)</option>
+            <option value="adaptive_shadow">Shadow (só mede)</option>
+            <option value="adaptive">Adaptativa</option>
+          </select>
+          <span class="mt-1 block text-[11px] text-stone-500">Conservadora: cadência histórica. Shadow: executa igual e mede o que o modo adaptativo economizaria. Adaptativa: batching conservador de digitação contígua — checkpoints e barreiras jamais são atravessados.</span>
+        </label>
+        <div class="block lg:col-span-4">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Manter originais (replay)</span>
           <div id="cap_synth_skip_fields" class="relative">
             <button type="button" data-skip-toggle class="r2ctl-input flex w-full items-center justify-between gap-2 text-left text-xs">
@@ -162,7 +171,7 @@
           </div>
           <span class="mt-1 block text-[11px] text-stone-500">Campos que o replay sintético NÃO substitui, agrupados por tela da trilha. Chaves de consulta (índice/seek/único na base de conhecimento) já vêm marcadas e não podem ser desmarcadas — marque aqui só as exceções.</span>
         </div>
-        <label class="block lg:col-span-3">
+        <label class="block lg:col-span-4">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Valores válidos de cadastro (opcional)</span>
           <textarea id="cap_synth_lookup_values" rows="2" class="r2ctl-input w-full font-mono text-xs" placeholder="tabela: valor1, valor2 — ex.: est366: 02, 15, 28"></textarea>
           <span class="mt-1 block text-[11px] text-stone-500">Para campos de consulta (FK) que podem variar: uma linha por tabela, valores separados por vírgula. O gerador sorteia desses valores reais em vez de manter o original. Códigos já digitados em capturas anteriores entram automaticamente.</span>

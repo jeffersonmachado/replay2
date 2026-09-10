@@ -16,6 +16,14 @@ from ..compliance import compliance_blocks_execution
 from ..replay_failures import add_run_failure, build_failure_record
 from ..replay_run_state import add_run_event, get_run, set_run_status, update_progress
 
+from .adaptive_scheduler import (
+    POLICY_CONSERVATIVE,
+    AdaptiveRuntime,
+    normalize_execution_policy,
+)
+from .execution_telemetry import RunTelemetry
+from .latency_profile import LatencyProfile
+from .synchronization import extract_capture_typeahead_evidence
 from .executors import (
     LoadTestParams,
     replay_parallel_sessions_concurrent_controlled,
@@ -391,6 +399,51 @@ class Runner:
                 "severity_counts": {},
             }
 
+            # Motor adaptativo (v0.9.8): política de execução + telemetria +
+            # perfil de latência local. Default conservative = comportamento
+            # histórico byte a byte; adaptive/adaptive_shadow são opt-in via
+            # params.execution_policy (rollback: basta voltar para
+            # "conservative" — §18).
+            execution_policy = normalize_execution_policy(
+                str(params.get("execution_policy") or "")
+            )
+            run_telemetry = RunTelemetry()
+            profile_path = Path(self.db_path).resolve().parent / "latency_profile.json"
+            try:
+                latency_profile = LatencyProfile(path=str(profile_path))
+            except Exception:
+                latency_profile = LatencyProfile()
+            adaptive_rt = AdaptiveRuntime(
+                policy=execution_policy,
+                telemetry=run_telemetry,
+                latency_profile=latency_profile,
+                environment_id=str(
+                    params.get("environment_id") or run["target_host"] or ""
+                ),
+                synthetic_trail=bool(params.get("synthetic")),
+                typeahead_evidence=params.get("typeahead_evidence") or {},
+            )
+            # Evidência de type-ahead automática (§7): em trilhas REAIS (não
+            # sintéticas) sob política não-conservadora, extrai da própria
+            # captura os seqs com type-ahead humano comprovadamente seguro.
+            # Params explícitos vencem; falha na extração nunca bloqueia a
+            # run (sem evidência o executor segue conservador).
+            if (
+                execution_policy != POLICY_CONSERVATIVE
+                and not adaptive_rt.synthetic_trail
+                and not adaptive_rt.typeahead_evidence
+            ):
+                try:
+                    adaptive_rt.typeahead_evidence = extract_capture_typeahead_evidence(
+                        run["log_dir"], params,
+                        stable_ms=int(params.get("typeahead_stable_ms") or 150),
+                    )
+                except Exception:
+                    adaptive_rt.typeahead_evidence = {}
+            metrics["adaptive"] = {
+                "execution_policy": execution_policy,
+            }
+
             def write_metrics(throttle_ms: int = 500):
                 # minimal throttling by timestamp in metrics dict (store last write)
                 now = now_ms()
@@ -399,6 +452,10 @@ class Runner:
                     return
                 setattr(write_metrics, "_last", now)
                 with m_lock:
+                    metrics["adaptive"] = {
+                        "execution_policy": execution_policy,
+                        **run_telemetry.snapshot(),
+                    }
                     payload = json.dumps(metrics, ensure_ascii=False)
                 with db_lock:
                     exec1(
@@ -471,6 +528,7 @@ class Runner:
                     should_pause_or_cancel=should_pause_or_cancel,
                     on_progress=on_progress,
                     on_failure=on_failure,
+                    adaptive=adaptive_rt,
                 )
             else:
                 # Decide between sequential and concurrent based on params.concurrency
@@ -501,6 +559,7 @@ class Runner:
                         on_progress=on_progress,
                         on_session_result=on_session_result,
                         on_failure=on_failure,
+                        adaptive=adaptive_rt,
                     )
                 else:
                     replay_parallel_sessions_controlled(
@@ -514,6 +573,10 @@ class Runner:
             # set success (seq_end da passagem única de metadados; fallback no manifest)
             update_progress(con, run_id, last_seq_global=int(capture_meta.get("seq_end") or 0) or compute_seq_end(run["log_dir"], params))
             write_metrics(throttle_ms=0)
+            try:
+                latency_profile.save()
+            except Exception:
+                pass  # perfil de latência é observabilidade — nunca falha a run
             exec1(con, "UPDATE replay_runs SET finished_at_ms=? WHERE id=?", (now_ms(), run_id))
             # If any session failed in loadtest mode, mark failed (but run completed)
             try:

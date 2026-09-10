@@ -177,7 +177,48 @@ replay2/
   grandes), a ordem é preservada apenas DENTRO de cada sessão, e o
   pause/cancel do runner usa `_RunControlState` (status cacheado em memória,
   SQLite relido no máximo a cada `poll_interval_s`=1s, polling contínuo só
-  enquanto pausado) em vez de consulta ao banco por evento;
+  enquanto pausado) em vez de consulta ao banco por evento. Desde a v0.9.8 o
+  pacote inclui o **motor adaptativo determinístico** (offline, sem IA):
+  `action_classifier.py` (classe semântica determinística de cada ação —
+  printable/enter/tab/esc/function_key/navigation/field_edit/explicit_wait/
+  checkpoint/unknown), `safety_guard.py` (bloqueio conservador: ação
+  desconhecida, checkpoint pendente, divergência, ausência de evidência →
+  FALLBACK_CONSERVATIVE — que não é erro, é segurança registrada),
+  `adaptive_scheduler.py` (decisões auditáveis CONTINUE/BATCH/WAIT_FOR_STATE/
+  BARRIER/FALLBACK_CONSERVATIVE com `reason_code`; `ShadowTracker` do shadow
+  mode; `AdaptiveRuntime` — bundle runner↔executors), `execution_telemetry.py`
+  (métricas sem dupla contagem: `journey_total_ms = erp_response_ms +
+  replay_overhead_ms`; pacing/explicit_wait/sync_wait/checkpoint_wait/send/
+  compare; contadores de batch/barreira/fallback; `replay_overhead_ratio`),
+  `synchronization.py` (quiet point ≠ convergência; `extract_typeahead_evidence`
+  — evidência auditável de type-ahead humano em eventos já indexados — e
+  `extract_capture_typeahead_evidence(log_dir, params, stable_ms=150)`, extração
+  direta dos audit-*.jsonl da captura via `window.index_session_events`, que o
+  Runner aciona automaticamente em runs não-sintéticas com policy != conservative
+  e sem `typeahead_evidence` explícito; `params.typeahead_stable_ms` ajusta o
+  quiet point) e
+  `latency_profile.py` (estatísticas locais por ambiente — amostras de AIX e
+  Linux nunca se misturam; timeout sugerido usa cauda p99×fator com piso,
+  nunca p50; JSON local em `gateway/state/latency_profile.json`). A política
+  vem de `params.execution_policy`: `conservative` (default — comportamento
+  histórico byte a byte), `adaptive` (batching conservador de inputs
+  imprimíveis contíguos no executor concurrent — nunca atravessa checkpoint/
+  barreira, nunca mistura sessões, pause/cancel checados por evento e por
+  batch; boundary com pacing>0 só colapsa com evidência de type-ahead seguro
+  ou trilha sintética) e `adaptive_shadow` (executa conservador e registra o
+  que o adaptativo FARIA + economia prevista; critério de promoção:
+  `false_safe_decisions = 0`). `shadow_eval.py` +
+  `scripts/shadow_eval_adaptive_replay.py` rodam essa avaliação OFFLINE
+  sobre os audit-*.jsonl das capturas (sem executor, sem rede), verificando
+  equivalência de bytes e inviolabilidade do checkpoint em dados reais →
+  `artifacts/adaptive-shadow-evaluation.json`. As métricas saem em
+  `metrics_json["adaptive"]` da run e aparecem no detalhe da run (cartão
+  "Motor de execução", `detail_views.adaptiveMetricsCard`). A política é
+  escolhível na UI (select "Execução" do painel de replay sintético do
+  detalhe da captura), pela API (`execution_policy` no body de
+  `/api/captures/{id}/synthetic-replay` e do X5) e pela CLI
+  (`runs create --execution-policy`); valores inválidos normalizam para
+  `conservative`;
 - `replay_failures.py` / `replay_run_state.py` — taxonomia de falhas e estado
   de runs;
 - `screen.py` — normalização e assinatura de tela (fonte central do gateway);
@@ -468,7 +509,17 @@ replay2/
   Fluxo Synthetic → Replay real (X5): `POST /api/synthetic/stress/real` →
   `control/services/synthetic_replay_service.py` → `replay_adapter.py`
   materializa a trilha auditável (hash-chain + HMAC) e cria run real via
-  `run_service.create_run_request_payload` + `Runner.start_run_async`;
+  `run_service.create_run_request_payload` + `Runner.start_run_async`.
+  Desde a v0.9.8 a materialização é semântica (`synthetic/action_model.py`):
+  o script da jornada vira ações estruturadas (INPUT/KEY/WAIT/CHECKPOINT com
+  bytes exatos e origem) — o adapter não anexa mais ENTER artificial, WAIT
+  vira evento auditável (`key_kind="wait"`) que avança o relógio da sessão,
+  chars do mesmo campo dividem o mesmo `ts_ms` (fim da cadência artificial
+  de 50 ms/byte), submit honra o trigger (F10 ≠ ENTER) e cada evento carrega
+  `key_kind` para o classificador do executor. `execution_policy` é aceita no
+  body da rota. `synthetic/remote_executor.py` é **legado** (não usado por
+  nenhum fluxo suportado, sem trilha auditável, políticas fixas de
+  sleep/select) — depreciado, mantido só para testes históricos em dry_run;
 - `benchmark/` — pacote de benchmark (AIX vs Linux);
 - `templates/` — templates internos do gateway.
 

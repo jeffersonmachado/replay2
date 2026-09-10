@@ -193,6 +193,55 @@ def test_start_synthetic_replay_sem_progress_segue_compativel(monkeypatch, tmp_p
     assert payload["run_id"] == 8
 
 
+def test_start_synthetic_replay_propaga_execution_policy(monkeypatch, tmp_path):
+    """execution_policy (motor adaptativo) chega aos params da run criada."""
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text('{"rede": "1"}\n', encoding="utf-8")
+    monkeypatch.setattr(mod, "synthesize_capture", lambda *a, **k: {
+        "artifacts": {"dataset": str(dataset)},
+        "output_dir": str(tmp_path),
+        "screen_mappings": [],
+        "capture_jsonl": "audit-000001.jsonl",
+        "journey_id": "",
+        "warnings": [],
+        "key_fields": [],
+        "stored_skip_fields": [],
+        "skip_fields": [],
+        "lookup_counts": {},
+    })
+    monkeypatch.setattr(mod, "build_synthetic_trail", lambda *a, **k: {
+        "events": 1, "applied": [], "applied_detail": [],
+        "dropped_banner": 0, "dropped_entry": 0, "warnings": [], "entry": None,
+    })
+    bodies: list[dict] = []
+    import control.services.run_service as run_service
+    monkeypatch.setattr(
+        run_service, "create_run_request_payload",
+        lambda con, *, created_by, body: bodies.append(body) or {"id": 9},
+    )
+    runner = type("R", (), {"start_run_async": lambda self, rid: None})()
+
+    mod.start_synthetic_replay(
+        object(), 81, created_by=1, source_dir="/x", auto_entry=False,
+        execution_policy="adaptive_shadow", runner=runner, hmac_key=b"k",
+    )
+    assert bodies[-1]["params"]["execution_policy"] == "adaptive_shadow"
+
+    # Política inválida nunca é gravada: normalize → conservative.
+    mod.start_synthetic_replay(
+        object(), 81, created_by=1, source_dir="/x", auto_entry=False,
+        execution_policy="turbo", runner=runner, hmac_key=b"k",
+    )
+    assert bodies[-1]["params"]["execution_policy"] == "conservative"
+
+    # Sem o parâmetro, os params ficam limpos (default do Runner).
+    mod.start_synthetic_replay(
+        object(), 81, created_by=1, source_dir="/x", auto_entry=False,
+        runner=runner, hmac_key=b"k",
+    )
+    assert "execution_policy" not in bodies[-1]["params"]
+
+
 
 # ---------------------------------------------------------------------------
 # Nível de rota: o default do POST passou a ser assíncrono (202 + job_id) e o

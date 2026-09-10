@@ -1,6 +1,6 @@
 import { apiJson, jsonRequest } from "../core/api.js";
 import { escapeHtml, html } from "../core/dom.js";
-import { comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
+import { adaptiveMetricsCard, comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 import { failureHasScreenDiff, renderFailureInlinePlayerHtml } from "../components/failure_diff.js";
 import { runSyntheticOrigin, runSyntheticSubstitutions } from "../components/run_views.js";
 import { renderRunDeparaHtml } from "../components/synthetic_depara.js";
@@ -171,6 +171,7 @@ function renderDetail(run, report, comparison, failures) {
       </div>
       ${deparaCard}
       ${syntheticFeedbackCard(run)}
+      ${adaptiveMetricsCard(run)}
       <div class="grid gap-4 lg:grid-cols-2">
         <div class="rounded-2xl border border-stone-800 bg-stone-950/40 p-4">
           <div class="text-xs uppercase tracking-[0.14em] text-stone-400">Falhas por tipo</div>

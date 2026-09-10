@@ -1,0 +1,68 @@
+{
+  "version": "0.9.8-dev",
+  "base_version": "0.9.7",
+  "date": "2026-09-10",
+  "baseline_green": true,
+  "baseline": {
+    "subset_tests": "85 passed",
+    "python_suite": "1663 passed, 197 deselected",
+    "js_suites": "17/17",
+    "tcl": "68/68"
+  },
+  "tests_green": true,
+  "final_regression": {
+    "python_suite": "1764 passed, 197 deselected, 0 failed",
+    "js_suites": "18/18",
+    "tcl": "68/68",
+    "new_adaptive_tests": "98 passed + 39 subtests (9 arquivos test_adaptive_*)"
+  },
+  "offline_ready": true,
+  "offline_evidence": "tests/test_adaptive_offline_unit.py: estatico (sem imports de rede/IA) + dinamico (socket/DNS sabotados)",
+  "deterministic": true,
+  "checkpoint_regression": false,
+  "hash_chain_valid": true,
+  "synthetic_replay_valid": true,
+  "shadow_mode_available": true,
+  "ui_parity": "select Execucao no painel de replay sintetico + cartao Motor de execucao no detalhe da run + CLI runs create --execution-policy",
+  "shadow_offline_evaluation": {
+    "script": "scripts/shadow_eval_adaptive_replay.py",
+    "artifact": "artifacts/adaptive-shadow-evaluation.json",
+    "captures_ok": 3,
+    "sessions": 4,
+    "total_actions": 162,
+    "batch_candidates": 17,
+    "safe_candidates": 11,
+    "rejected_candidates": 6,
+    "potential_saved_ms": 145,
+    "bytes_equivalent": true,
+    "checkpoint_violations": 0,
+    "promotion_criteria_met": true
+  },
+  "adaptive_mode_available": true,
+  "conservative_default_preserved": true,
+  "false_safe_decisions": 0,
+  "performance": {
+    "before": {
+      "journey_total_ms": 11803.8,
+      "pacing_ms": 11742.1,
+      "replay_overhead_ms": 11803.8,
+      "writes": 237
+    },
+    "after": {
+      "journey_total_ms": 38.1,
+      "pacing_ms": 0.0,
+      "replay_overhead_ms": 38.1,
+      "writes": 33,
+      "batch_count": 12,
+      "batched_action_count": 216
+    },
+    "improvement_pct": 99.7,
+    "benchmark": "scripts/benchmark_adaptive_replay.py (ERP ideal, offline) -> artifacts/adaptive-replay-benchmark.json"
+  },
+  "notes": [
+    "execution_policy default = conservative (rollback trivial); adaptive e adaptive_shadow sao opt-in",
+    "benchmark AIX x Linux real pendente de execucao no MIG24; mecanismo de comparabilidade inalterado",
+    "integracao captura -> params.typeahead_evidence e automatica: Runner extrai evidencia de type-ahead da captura em runs nao-sinteticas com policy != conservative (extract_capture_typeahead_evidence, params.typeahead_stable_ms default 150)"
+  ],
+  "status": "GO"
+}

@@ -2014,6 +2014,12 @@ video {
   opacity: 0.7;
 }
 
+.shadow {
+  --tw-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --tw-shadow-colored: 0 1px 3px 0 var(--tw-shadow-color), 0 1px 2px -1px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
 .shadow-inner {
   --tw-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);
   --tw-shadow-colored: inset 0 2px 4px 0 var(--tw-shadow-color);
@@ -2186,8 +2192,8 @@ video {
 }
 
 @media (min-width: 1024px) {
-  .lg\:col-span-3 {
-    grid-column: span 3 / span 3;
+  .lg\:col-span-4 {
+    grid-column: span 4 / span 4;
   }
 
   .lg\:grid-cols-2 {
@@ -2206,8 +2212,8 @@ video {
     grid-template-columns: 1.2fr 0.8fr;
   }
 
-  .lg\:grid-cols-\[minmax\(0\2c 1fr\)_120px_120px\] {
-    grid-template-columns: minmax(0,1fr) 120px 120px;
+  .lg\:grid-cols-\[minmax\(0\2c 1fr\)_120px_120px_190px\] {
+    grid-template-columns: minmax(0,1fr) 120px 120px 190px;
   }
 
   .lg\:flex-row {

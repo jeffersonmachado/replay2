@@ -190,6 +190,8 @@ class JourneyBuilder:
                 if step.trigger and step.trigger.isdigit():
                     lines.append(f"# Seleciona opção {step.trigger}")
                     lines.append(f"{step.trigger}")
+                    # Confirmação explícita (o parser nunca inventa ENTER)
+                    lines.append("{KEY:ENTER}")
                 elif step.trigger:
                     lines.append(f"# Envia tecla: {step.trigger}")
                     lines.append(f"{{KEY:{step.trigger}}}")
@@ -199,19 +201,29 @@ class JourneyBuilder:
                     rendered = self.template_engine.render(step.input_template, data)
                     for input_line in rendered.split("\n"):
                         lines.append(input_line)
+                        # ENTER explícito: commit do campo (compatível com o
+                        # comportamento histórico do adapter, agora declarado)
+                        lines.append("{KEY:ENTER}")
                 else:
                     # Gerar inputs a partir dos campos
                     for key, value in data.items():
                         if key != "input" and value:
                             lines.append(str(value))
+                            lines.append("{KEY:ENTER}")
 
             elif step.action == "select":
                 if step.trigger:
                     lines.append(f"# Seleciona: {step.screen_title}")
                     lines.append(step.trigger)
+                    lines.append("{KEY:ENTER}")
 
             elif step.action == "submit":
-                lines.append("{ENTER}")
+                # Submit honra o trigger declarado (F10, ENTER, ...); sem
+                # trigger, o submit clássico é ENTER.
+                if step.trigger:
+                    lines.append(f"{{KEY:{step.trigger}}}")
+                else:
+                    lines.append("{KEY:ENTER}")
 
             elif step.action == "wait":
                 lines.append(f"# Aguarda {step.wait_ms}ms")
@@ -219,6 +231,7 @@ class JourneyBuilder:
 
             elif step.action == "verify":
                 lines.append(f"# Verifica: {step.expected_signature}")
+                lines.append(f"{{VERIFY:{step.expected_signature or step.screen_id}}}")
 
             lines.append("")
 

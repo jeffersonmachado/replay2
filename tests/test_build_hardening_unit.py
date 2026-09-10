@@ -436,6 +436,38 @@ def test_performance_corrections_evidence_packaged(tmp_path):
                for n in names)
 
 
+def test_adaptive_replay_evidence_packaged(tmp_path):
+    """Regressão 0.9.8: ADAPTIVE_REPLAY_ENGINE_REPORT.md e
+    artifacts/adaptive-*.json entram no hash do aceite — precisam estar no
+    pacote, senão o verify-tarball aborta o build (observado no pipeline
+    real da 0.9.8: 'árvore extraída diverge do aceite', 4 arquivos só na
+    árvore do aceite)."""
+    root = _make_fake_root(tmp_path / "tree")
+    (root / "ADAPTIVE_REPLAY_ENGINE_REPORT.md").write_text(
+        "# relatório\n", encoding="utf-8")
+    (root / "artifacts").mkdir(parents=True, exist_ok=True)
+    for name in (
+        "adaptive-replay-benchmark.json",
+        "adaptive-replay-readiness.json",
+        "adaptive-shadow-evaluation.json",
+    ):
+        (root / "artifacts" / name).write_text("{}\n", encoding="utf-8")
+    _make_release_artifacts(root)
+
+    r = _run_build(root)
+    assert r.returncode == 0, f"build falhou: {r.stderr[-600:]}"
+    names = _tarball_names(_only_tarball(root))
+    assert any(n.endswith("ADAPTIVE_REPLAY_ENGINE_REPORT.md") for n in names)
+    for name in (
+        "adaptive-replay-benchmark.json",
+        "adaptive-replay-readiness.json",
+        "adaptive-shadow-evaluation.json",
+    ):
+        assert any(f"artifacts/{name}" in n for n in names), (
+            f"{name} ausente do pacote"
+        )
+
+
 def test_secrets_and_state_never_packaged(tmp_path):
     """segredo.key, foo.db, gateway/state/x, .env e id_rsa plantados NUNCA
     entram no tarball."""

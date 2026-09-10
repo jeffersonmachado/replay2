@@ -1,0 +1,165 @@
+{
+ "date": "2026-09-10",
+ "version": "0.9.8",
+ "capture": {
+  "aix_id": 13,
+  "linux_id": 51,
+  "uuid": "67b6c3b1-7876-4a5e-8e87-66d4e8558285",
+  "seed": 42
+ },
+ "hosts": {
+  "aix": "10.5.8.25 (MIG24, AIX 7)",
+  "linux": "10.5.8.24 (recital24, Linux x86)"
+ },
+ "shadow_eval_volume": {
+  "aix": {
+   "sessions": 63,
+   "total_actions": 100157,
+   "batch_candidates": 6555,
+   "safe_candidates": 3563,
+   "rejected_candidates": 2992,
+   "fallbacks": 6776,
+   "checkpoint_run_splits": 417,
+   "checkpoint_violations": 0,
+   "divergences": 2,
+   "false_safe_decisions": 0,
+   "potential_saved_ms": 121455,
+   "writes_before": 100157,
+   "writes_after": 94619,
+   "captures_ok": 64,
+   "captures_error": 0,
+   "bytes_equivalent": true,
+   "checkpoint_crossing_attempts": 0,
+   "promotion_criteria_met": true
+  },
+  "linux": {
+   "sessions": 8,
+   "total_actions": 254,
+   "batch_candidates": 20,
+   "safe_candidates": 9,
+   "rejected_candidates": 11,
+   "fallbacks": 10,
+   "checkpoint_run_splits": 0,
+   "checkpoint_violations": 0,
+   "divergences": 0,
+   "false_safe_decisions": 0,
+   "potential_saved_ms": 0,
+   "writes_before": 254,
+   "writes_after": 245,
+   "captures_ok": 4,
+   "captures_error": 0,
+   "bytes_equivalent": true,
+   "checkpoint_crossing_attempts": 0,
+   "promotion_criteria_met": true
+  }
+ },
+ "strict_global_runs": {
+  "aix": {
+   "conservative": {
+    "run_id": 74,
+    "status": "success",
+    "duration_s": 457.2,
+    "failures": 98,
+    "replay_overhead_ratio": 0.448,
+    "erp_response_s": 232.1
+   },
+   "adaptive_shadow": {
+    "run_id": 75,
+    "status": "success",
+    "duration_s": 336.5,
+    "failures": 98,
+    "replay_overhead_ratio": 0.4379,
+    "erp_response_s": 168.7
+   },
+   "adaptive": {
+    "run_id": 76,
+    "status": "success",
+    "duration_s": 329.8,
+    "failures": 98,
+    "replay_overhead_ratio": 0.4444,
+    "erp_response_s": 163.3
+   }
+  },
+  "linux": {
+   "conservative": {
+    "run_id": 2,
+    "status": "success",
+    "duration_s": 333.4,
+    "failures": 103,
+    "replay_overhead_ratio": 0.4709,
+    "erp_response_s": 138.4
+   },
+   "adaptive_shadow": {
+    "run_id": 3,
+    "status": "success",
+    "duration_s": 326.4,
+    "failures": 103,
+    "replay_overhead_ratio": 0.4342,
+    "erp_response_s": 144.1
+   },
+   "adaptive": {
+    "run_id": 5,
+    "status": "success",
+    "duration_s": 195.9,
+    "failures": 103,
+    "replay_overhead_ratio": 0.1862,
+    "erp_response_s": 101.7
+   }
+  }
+ },
+ "parallel_sessions_conc2_runs": {
+  "aix": {
+   "conservative": {
+    "run_id": 79,
+    "status": "success",
+    "duration_s": 277.5,
+    "failures": 103,
+    "pacing_s": 99.7,
+    "erp_response_s": 146.6,
+    "replay_overhead_ratio": 0.4699,
+    "batch_count": 0.0,
+    "conservative_fallback_count": 0.0
+   },
+   "adaptive": {
+    "run_id": 80,
+    "status": "success",
+    "duration_s": 273.4,
+    "failures": 103,
+    "pacing_s": 99.8,
+    "erp_response_s": 141.3,
+    "replay_overhead_ratio": 0.4812,
+    "batch_count": 0.0,
+    "conservative_fallback_count": 102.0
+   }
+  },
+  "linux": {
+   "conservative": {
+    "run_id": 8,
+    "status": "success",
+    "duration_s": 204.0,
+    "failures": 103,
+    "pacing_s": 99.7,
+    "erp_response_s": 101.2,
+    "replay_overhead_ratio": 0.5033,
+    "batch_count": 0.0,
+    "conservative_fallback_count": 0.0
+   },
+   "adaptive": {
+    "run_id": 9,
+    "status": "success",
+    "duration_s": 204.2,
+    "failures": 103,
+    "pacing_s": 99.7,
+    "erp_response_s": 101.2,
+    "replay_overhead_ratio": 0.5039,
+    "batch_count": 0.0,
+    "conservative_fallback_count": 102.0
+   }
+  }
+ },
+ "notes": [
+  "failures = screen_divergence de dados sinteticos (esperadas); identicas entre politicas no mesmo ambiente = paridade funcional",
+  "parallel: batching vetado por checkpoints em todos os inputs (fallback conservador 102x) — comportamento correto do safety guard",
+  "pacing ~99,7 s = cadencia humana real gravada na trilha, nao constante artificial"
+ ]
+}

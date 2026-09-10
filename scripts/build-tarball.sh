@@ -171,16 +171,13 @@ Não execute build-tarball.sh manualmente sem antes rodar o release completo."
     cp -R "$ROOT_DIR/artifacts/performance-corrections" "$STAGE_DIR/artifacts/"
   fi
   # Evidência do motor adaptativo (0.9.8, quando presente): benchmark do
-  # executor, readiness GO/NO_GO e avaliação shadow offline. Entram no hash
-  # do aceite, então precisam acompanhar o pacote (copy-if-present — não são
+  # executor, readiness GO/NO_GO, avaliação shadow offline e evidência de
+  # servidor — todo artifacts/adaptive-*.json. Entram no hash do aceite,
+  # então precisam acompanhar o pacote (copy-if-present — não são
   # obrigatórios como os artefatos do aceite).
-  for artifact in \
-    adaptive-replay-benchmark.json \
-    adaptive-replay-readiness.json \
-    adaptive-shadow-evaluation.json
-  do
-    if [ -f "$ROOT_DIR/artifacts/$artifact" ]; then
-      cp -f "$ROOT_DIR/artifacts/$artifact" "$STAGE_DIR/artifacts/"
+  for artifact_path in "$ROOT_DIR"/artifacts/adaptive-*.json; do
+    if [ -f "$artifact_path" ]; then
+      cp -f "$artifact_path" "$STAGE_DIR/artifacts/"
     fi
   done
   # Evidência do benchmark real AIX×Linux (§33): SOMENTE o experimento oficial

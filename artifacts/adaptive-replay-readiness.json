@@ -61,8 +61,29 @@
   },
   "notes": [
     "execution_policy default = conservative (rollback trivial); adaptive e adaptive_shadow sao opt-in",
-    "benchmark AIX x Linux real pendente de execucao no MIG24; mecanismo de comparabilidade inalterado",
     "integracao captura -> params.typeahead_evidence e automatica: Runner extrai evidencia de type-ahead da captura em runs nao-sinteticas com policy != conservative (extract_capture_typeahead_evidence, params.typeahead_stable_ms default 150)"
   ],
+  "server_evidence": {
+    "date": "2026-09-10",
+    "version_deployed": "0.9.8",
+    "hosts": {"aix": "10.5.8.25 (MIG24)", "linux": "10.5.8.24 (recital24)"},
+    "shadow_eval_volume": {
+      "aix": {"captures_ok": 64, "total_actions": 100157, "safe_candidates": 3563, "false_safe_decisions": 0, "checkpoint_violations": 0, "bytes_equivalent": true, "promotion_criteria_met": true, "potential_saved_ms": 121455},
+      "linux": {"captures_ok": 4, "total_actions": 254, "safe_candidates": 9, "false_safe_decisions": 0, "checkpoint_violations": 0, "bytes_equivalent": true, "promotion_criteria_met": true}
+    },
+    "real_runs_capture13_seed42": {
+      "strict_global": {
+        "aix": {"conservative_s": 457.2, "adaptive_shadow_s": 336.5, "adaptive_s": 329.8, "failures_identical": 98},
+        "linux": {"conservative_s": 333.4, "adaptive_shadow_s": 326.4, "adaptive_s": 195.9, "failures_identical": 103, "adaptive_overhead_ratio": 0.186}
+      },
+      "parallel_sessions_conc2": {
+        "aix": {"conservative_s": 277.5, "adaptive_s": 273.4, "conservative_fallbacks": 102, "batches": 0},
+        "linux": {"conservative_s": 204.0, "adaptive_s": 204.2, "conservative_fallbacks": 102, "batches": 0},
+        "leitura": "todo input da captura 13 tem checkpoint -> fronteira inviolavel -> batching corretamente vetado (fallback conservador), sem regressao funcional"
+      },
+      "aix_linux_fairness": "decisoes identicas nos dois ambientes; espera por estado proporcional a resposta real (ERP ~142-147 s AIX vs ~101 s Linux)"
+    },
+    "operational_bug_fixed": "shadow_eval_adaptive_replay.py crashava no AIX (stdout latin-1, UnicodeEncodeError no resumo) — fix reconfigure(errors=replace) + teste de regressao (PR #2)"
+  },
   "status": "GO"
 }

@@ -14,7 +14,8 @@ Toda decisão carrega ``reason_code`` e ``evidence`` — auditável por
 construção. A política de decisão NÃO depende do ambiente (§14): AIX e
 Linux recebem o mesmo plano; a espera termina antes em quem responde antes.
 
-Fase 1 (conservadora): só ``PRINTABLE_INPUT`` contíguo é elegível a batch.
+Fase 2 (0.9.8): ``PRINTABLE_INPUT`` e ``FIELD_EDIT`` (backspace/delete —
+correção humana dentro do mesmo campo) contíguos são elegíveis a batch.
 Colapsar deltas de pacing positivos exige evidência (type-ahead humano da
 captura — :mod:`synchronization` — ou trilha sintética, cujos deltas são
 artificiais por construção).
@@ -143,7 +144,10 @@ class AdaptiveScheduler:
                 )
                 for seq in seqs
             ]
-        classes = [ActionClass.PRINTABLE_INPUT] * len(run)
+        classes = [
+            classify_bytes(_decode(ev), key_kind=ev.get("key_kind")).action_class
+            for ev in run
+        ]
         deltas = [
             max(0, int(run[i].get("ts_ms") or 0) - int(run[i - 1].get("ts_ms") or 0))
             for i in range(1, len(run))
@@ -238,7 +242,7 @@ class AdaptiveScheduler:
             data = _decode(ev)
             classified = classify_bytes(data, key_kind=ev.get("key_kind"))
             seq = int(ev.get("seq_global") or 0)
-            if classified.action_class is ActionClass.PRINTABLE_INPUT:
+            if classified.batchable:
                 run.append(ev)
                 continue
             flush_run()
@@ -246,11 +250,6 @@ class AdaptiveScheduler:
                 decisions.append(SchedulerDecision(
                     SchedulerOp.FALLBACK_CONSERVATIVE, "UNKNOWN_ACTION", seq, seq,
                     evidence={**self._evidence_meta(), "classifier": classified.reason},
-                ))
-            elif classified.action_class is ActionClass.FIELD_EDIT:
-                decisions.append(SchedulerDecision(
-                    SchedulerOp.CONTINUE, "FIELD_EDIT", seq, seq,
-                    evidence=self._evidence_meta(),
                 ))
             else:
                 decisions.append(SchedulerDecision(
@@ -398,7 +397,7 @@ class ShadowTracker:
         data = _decode(ev)
         classified = classify_bytes(data, key_kind=ev.get("key_kind"))
         seq = int(ev.get("seq_global") or 0)
-        if classified.action_class is ActionClass.PRINTABLE_INPUT:
+        if classified.batchable:
             self._run.append((seq, int(paced_sleep_ms)))
             return
         self._flush_run()

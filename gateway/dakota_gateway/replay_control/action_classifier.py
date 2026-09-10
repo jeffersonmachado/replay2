@@ -8,7 +8,7 @@ bloqueio de otimização.
 A classe semântica determina a política de sincronização:
 
 - ``PRINTABLE_INPUT`` / ``FIELD_EDIT``: elegíveis a batching (com regras do
-  safety guard);
+  safety guard e o mesmo gate de evidência por boundary);
 - ``ENTER``/``TAB``/``ESC``/``FUNCTION_KEY``/``NAVIGATION``/``SUBMIT``/
   ``QUERY``/``SCREEN_TRANSITION``: barreiras — nunca fundidas em batch;
 - ``EXPLICIT_WAIT``/``CHECKPOINT``: sincronização, jamais batch;
@@ -56,8 +56,14 @@ BARRIER_CLASSES = frozenset({
     ActionClass.UNKNOWN,
 })
 
-#: Única classe elegível a batching na Fase 1 (conservador por desenho).
-BATCHABLE_CLASSES = frozenset({ActionClass.PRINTABLE_INPUT})
+#: Classes elegíveis a batching. Fase 1: só ``PRINTABLE_INPUT``. Fase 2
+#: (0.9.8): ``FIELD_EDIT`` (backspace/delete) entra — mesma classe de risco
+#: do imprimível (a concatenação na mesma ordem preserva os bytes exatos
+#: que o ERP receberia), com o MESMO gate de evidência por boundary.
+BATCHABLE_CLASSES = frozenset({
+    ActionClass.PRINTABLE_INPUT,
+    ActionClass.FIELD_EDIT,
+})
 
 # key_kind gravado na trilha sintética (replay_adapter) → classe.
 _KEY_KIND_HINTS = {

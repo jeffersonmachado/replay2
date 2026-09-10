@@ -190,9 +190,20 @@ jornada → generate_replay_script (marcadores explícitos)
             conservative: comportamento histórico (default, rollback)
 ```
 
-## 8. Política de batching (Fase 1 — conservadora)
+## 8. Política de batching (Fase 1 → Fase 2, conservadora)
 
-- Elegível: **somente** `PRINTABLE_INPUT` contíguo na mesma sessão.
+- Elegível (Fase 1): **somente** `PRINTABLE_INPUT` contíguo na mesma sessão.
+- Elegível (Fase 2, 0.9.8): também `FIELD_EDIT` (backspace/delete) dentro da
+  run — digitação + correção humana no mesmo campo ("12", BS, "3"). Mesma
+  classe de risco do imprimível: a concatenação na mesma ordem produz
+  exatamente os bytes que o ERP receberia; o MESMO gate de evidência por
+  boundary se aplica. Testes RED→GREEN específicos:
+  `test_field_edit_entra_no_batch_fase2`,
+  `test_field_edit_delta_positivo_sem_evidencia_cai_conservador`,
+  `test_field_edit_com_evidencia_de_typeahead_colapsa`,
+  `test_shadow_conta_run_mista_com_field_edit`,
+  `test_batchable_printable_e_field_edit`. Demais classes (navegação,
+  submits, F-keys) seguem barreiras — exigem prova forte própria.
 - Nunca atravessa: checkpoint (fronteira dura), ENTER/ESC/TAB/F-key/setas
   (barreiras), WAIT explícito, ação desconhecida, evento que exige
   comparação determinística.

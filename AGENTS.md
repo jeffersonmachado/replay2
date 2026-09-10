@@ -202,7 +202,8 @@ replay2/
   nunca p50; JSON local em `gateway/state/latency_profile.json`). A política
   vem de `params.execution_policy`: `conservative` (default — comportamento
   histórico byte a byte), `adaptive` (batching conservador de inputs
-  imprimíveis contíguos no executor concurrent — nunca atravessa checkpoint/
+  imprimíveis e FIELD_EDIT (backspace/delete — Fase 2) contíguos no executor
+  concurrent — nunca atravessa checkpoint/
   barreira, nunca mistura sessões, pause/cancel checados por evento e por
   batch; boundary com pacing>0 só colapsa com evidência de type-ahead seguro
   ou trilha sintética) e `adaptive_shadow` (executa conservador e registra o

@@ -37,7 +37,7 @@ from .deterministic import (
     content_present_override,
     synthetic_swap_override,
 )
-from .action_classifier import ActionClass, classify_bytes
+from .action_classifier import ActionClass, BARRIER_CLASSES, classify_bytes
 from .adaptive_scheduler import (
     POLICY_ADAPTIVE,
     POLICY_ADAPTIVE_SHADOW,
@@ -964,7 +964,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                 ).action_class
                                 if cls is ActionClass.UNKNOWN:
                                     sess_tel.record_conservative_fallback()
-                                elif cls is not ActionClass.PRINTABLE_INPUT:
+                                elif cls in BARRIER_CLASSES:
                                     sess_tel.record_barrier()
                         paced_sleep(scaled, bucket=TelemetryBucket.PACING)
                         last_in_ts = ts

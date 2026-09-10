@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .action_classifier import ActionClass, classify_bytes
+from .action_classifier import classify_bytes
 from .adaptive_scheduler import (
     AdaptiveScheduler,
     SchedulerOp,
@@ -68,7 +68,7 @@ def _evaluate_session(events: list[dict], *, speed: float) -> dict:
         prev_in_ts = ts
         tracker.observe(ev, paced_sleep_ms=paced)
         classified = classify_bytes(_decode(ev), key_kind=ev.get("key_kind"))
-        run_open = classified.action_class is ActionClass.PRINTABLE_INPUT
+        run_open = classified.batchable
 
     session_ended = any(ev.get("type") == "session_end" for ev in events)
     if not session_ended and events:

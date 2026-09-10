@@ -83,8 +83,13 @@ class ActionClassifierTests(unittest.TestCase):
             ActionClass.ENTER,
         )
 
-    def test_batchable_apenas_printable(self):
+    def test_batchable_printable_e_field_edit(self):
+        """Fase 2 (0.9.8): FIELD_EDIT (backspace/delete) é batchable — mesma
+        classe de risco do imprimível (bytes concatenados na mesma ordem),
+        com o mesmo gate de evidência por boundary."""
         self.assertTrue(classify_bytes(b"ABC").batchable)
+        self.assertTrue(classify_bytes(b"\x7f").batchable)
+        self.assertTrue(classify_bytes(b"\x08").batchable)
         self.assertFalse(classify_bytes(b"\r").batchable)
         self.assertFalse(classify_bytes(b"\t").batchable)
         self.assertFalse(classify_bytes(b"\x1b[21~").batchable)

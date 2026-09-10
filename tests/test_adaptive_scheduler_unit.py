@@ -74,6 +74,51 @@ class PlanEventsTests(unittest.TestCase):
             if d.op == SchedulerOp.BATCH:
                 self.assertEqual(d.action_count, 2)
 
+    def test_field_edit_entra_no_batch_fase2(self):
+        """Fase 2: backspace (FIELD_EDIT) dentro do mesmo campo é batchable —
+        digitação + correção humana ("12", BS, "3") com delta zero vira um
+        único BATCH e os bytes finais são idênticos (§16.7)."""
+        import base64
+        sch = AdaptiveScheduler()
+        events = [
+            _in(1, 1000, "1"), _in(2, 1000, "2"),
+            _in(3, 1000, "\x7f", key_kind="field_edit"), _in(4, 1000, "3"),
+        ]
+        decisions = sch.plan_events(events)
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].op, SchedulerOp.BATCH)
+        self.assertEqual(decisions[0].action_count, 4)
+        merged = sch.apply_decisions(events, decisions)
+        original = b"".join(base64.b64decode(ev["data_b64"]) for ev in events)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0][0], original)
+
+    def test_field_edit_delta_positivo_sem_evidencia_cai_conservador(self):
+        """Run mista com pacing>0 e sem evidência: fallback (§16.12)."""
+        sch = AdaptiveScheduler()
+        events = [
+            _in(1, 1000, "1"),
+            _in(2, 1100, "\x7f", key_kind="field_edit"),
+            _in(3, 1200, "3"),
+        ]
+        decisions = sch.plan_events(events)
+        self.assertTrue(
+            all(d.op == SchedulerOp.FALLBACK_CONSERVATIVE for d in decisions)
+        )
+
+    def test_field_edit_com_evidencia_de_typeahead_colapsa(self):
+        """Run mista com evidência segura em todos os boundaries: BATCH."""
+        sch = AdaptiveScheduler(evidence_seqs={2, 3})
+        events = [
+            _in(1, 1000, "1"),
+            _in(2, 1050, "\x7f", key_kind="field_edit"),
+            _in(3, 1100, "3"),
+        ]
+        decisions = sch.plan_events(events)
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].op, SchedulerOp.BATCH)
+        self.assertEqual(decisions[0].reason_code, "HUMAN_TYPEAHEAD_EVIDENCE")
+
     def test_function_key_cria_barrier(self):
         """§16.9: teclas críticas são barreiras, nunca entram em batch."""
         sch = AdaptiveScheduler()
@@ -201,6 +246,19 @@ class ShadowTrackerTests(unittest.TestCase):
         self.assertEqual(rep["safe_candidates"], 0)    # mas rejeitado
         self.assertEqual(rep["rejected_candidates"], 1)
         self.assertEqual(rep["potential_saved_ms"], 0)
+
+    def test_shadow_conta_run_mista_com_field_edit(self):
+        """Fase 2: backspace no meio da digitação não quebra a run do shadow."""
+        tr = ShadowTracker(synthetic_trail=True)
+        tr.observe(_in(1, 1000, "1"), paced_sleep_ms=0)
+        tr.observe(_in(2, 1050, "2"), paced_sleep_ms=50)
+        tr.observe(_in(3, 1100, "\x7f", key_kind="field_edit"), paced_sleep_ms=50)
+        tr.observe(_in(4, 1150, "3"), paced_sleep_ms=50)
+        rep = tr.report()
+        self.assertEqual(rep["total_actions"], 4)
+        self.assertEqual(rep["batch_candidates"], 1)
+        self.assertEqual(rep["safe_candidates"], 1)
+        self.assertEqual(rep["potential_saved_ms"], 150)
 
     def test_shadow_checkpoint_nunca_atravessado(self):
         tr = ShadowTracker(synthetic_trail=True)

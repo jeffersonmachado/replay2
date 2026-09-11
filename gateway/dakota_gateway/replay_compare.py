@@ -451,6 +451,7 @@ def wait_for_signature_match(
     return_first_result: bool = False,
     early_exit_on_stable_mismatch: bool = False,
     mismatch_grace_ms: int | None = None,
+    fast_exit_on_synthetic_swap: bool = False,
 ) -> tuple[bool, dict, dict]:
     """Máquina de espera de checkpoint compartilhada.
 
@@ -466,6 +467,11 @@ def wait_for_signature_match(
     (mismatch_grace_ms, default max(quiet, 500ms)) sem saída nova, retorna a
     divergência em vez de esperar o timeout cheio. Saída que chega durante a
     carência reseta a janela (eco tardio continua sendo aguardado).
+    fast_exit_on_synthetic_swap=True (runs sintéticas): divergência estável já
+    explicada pelo de→para (``synthetic_substitution`` no match — a tela
+    convergiu, só o dado mudou) dispensa até a carência; medido na captura 13:
+    103 checkpoints × ~500 ms ≈ 51 s de espera pura por run sintética.
+    Divergência sem essa explicação mantém a carência integral.
     Retorna (matched, match, observed).
     """
     deadline = int(time.time() * 1000) + checkpoint_timeout_ms
@@ -497,6 +503,11 @@ def wait_for_signature_match(
             if last_match.get("matched") or return_first_result:
                 return bool(last_match.get("matched")), last_match, observed
             if early_exit_on_stable_mismatch:
+                if fast_exit_on_synthetic_swap and last_match.get("synthetic_substitution"):
+                    # Divergência totalmente explicada pelo de→para: o estado
+                    # convergiu (quiet já observado), só o dado mudou — a
+                    # carência seria espera pura em todos os checkpoints.
+                    return False, last_match, observed
                 now_ms = int(time.time() * 1000)
                 if mismatch_since_ms is None or session.last_out_ms != mismatch_out_ms:
                     # Primeira divergência estável (ou saída nova desde a

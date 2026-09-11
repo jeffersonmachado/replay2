@@ -30,6 +30,7 @@ from .deterministic import (
     _observed_snapshot_from_session,
     _should_apply_deterministic_input,
     _state_for_session,
+    _synthetic_swap_fast_exit,
     _wait_for_expected_observed,
     compare_expected_observed,
     stale_reference_override,
@@ -294,6 +295,7 @@ def replay_strict_global_controlled(
             # há por que esperar o timeout cheio do checkpoint. Sem isto o
             # strict-global pagava 5s por divergência (run 64, captura 81).
             early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
+            fast_exit_on_synthetic_swap=_synthetic_swap_fast_exit(params),
         )
         tel = sess_telemetry(sid)
         if tel is not None:

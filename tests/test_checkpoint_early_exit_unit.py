@@ -256,3 +256,112 @@ def test_strict_global_fail_fast_mantem_timeout_cheio(tmp_path):
         assert not kwargs.get("early_exit_on_stable_mismatch"), (
             "fail-fast não pode encurtar a espera do checkpoint"
         )
+
+
+# --- fast path de swap sintético (0.9.9): divergência totalmente explicada
+# pelo de→para significa estado convergido (só o dado mudou) — não há por que
+# pagar a carência de 500ms em CADA checkpoint divergente (medido: 103
+# checkpoints × ~500ms ≈ 51s de espera pura por run sintética, AIX e Linux).
+
+def test_swap_sintetico_sai_sem_carencia():
+    """Mismatch estável com synthetic_substitution: sai na 1ª estabilização."""
+    session = _FakeSession()
+    swap = lambda observed: {"matched": False, "synthetic_substitution": True}  # noqa: E731
+    (matched, _, _), elapsed = _run_wait(
+        session,
+        swap,
+        quiet_ms=100,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+        fast_exit_on_synthetic_swap=True,
+    )
+    assert matched is False
+    assert elapsed < 0.45, f"esperou {elapsed:.2f}s — carência não foi pulada"
+
+
+def test_swap_sem_flag_nova_mantem_carencia():
+    """Sem fast_exit_on_synthetic_swap, o swap ainda espera a carência
+    (comportamento histórico preservado fora do opt-in)."""
+    session = _FakeSession()
+    swap = lambda observed: {"matched": False, "synthetic_substitution": True}  # noqa: E731
+    (_, _, _), elapsed = _run_wait(
+        session,
+        swap,
+        quiet_ms=100,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert elapsed >= 0.5, f"saiu em {elapsed:.2f}s — carência sumiu sem o flag"
+
+
+def test_mismatch_real_mantem_carencia_mesmo_com_fast_path():
+    """Divergência NÃO explicada pelo de→para mantém a carência mesmo com o
+    fast path ligado — só swap confirmado encurta a espera."""
+    session = _FakeSession()
+    never = lambda observed: {"matched": False}  # noqa: E731
+    (_, _, _), elapsed = _run_wait(
+        session,
+        never,
+        quiet_ms=100,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+        fast_exit_on_synthetic_swap=True,
+    )
+    assert elapsed >= 0.5, f"saiu em {elapsed:.2f}s — divergência real foi encurtada"
+
+
+def test_wiring_fast_exit_swap_apenas_em_run_sintetica():
+    """_wait_for_expected_observed liga fast_exit_on_synthetic_swap só quando
+    params.synthetic é verdadeiro e o kill-switch não desliga."""
+    captured: list[dict] = []
+
+    def fake_wait(*args, **kwargs):
+        captured.append(kwargs)
+        return False, {"matched": False}, {}
+
+    session = _FakeSession()
+    selector = selectors.DefaultSelector()
+    try:
+        with patch.object(deterministic, "wait_for_signature_match", fake_wait):
+            for params, expected in (
+                ({"synthetic": True, "on_deterministic_mismatch": "send-anyway"}, True),
+                ({"synthetic": True, "on_deterministic_mismatch": "skip"}, True),
+                ({"synthetic": True, "synthetic_swap_fast_exit": "0",
+                  "on_deterministic_mismatch": "send-anyway"}, False),
+                ({"synthetic": True, "synthetic_swap_fast_exit": "off",
+                  "on_deterministic_mismatch": "send-anyway"}, False),
+                ({"on_deterministic_mismatch": "send-anyway"}, False),
+                ({"synthetic": False, "on_deterministic_mismatch": "send-anyway"}, False),
+                (None, False),
+            ):
+                captured.clear()
+                deterministic._wait_for_expected_observed(
+                    session=session,
+                    selector=selector,
+                    expected_event={"type": "deterministic_input", "screen_sample": "x"},
+                    params=params,
+                    should_pause_or_cancel=None,
+                    checkpoint_quiet_ms=100,
+                    checkpoint_timeout_ms=1000,
+                )
+                assert captured, "wait_for_signature_match não foi chamado"
+                assert captured[0].get("fast_exit_on_synthetic_swap") is expected, params
+    finally:
+        selector.close()
+
+
+def test_strict_global_wiring_fast_exit_swap(tmp_path):
+    """Strict-global: a flag nova chega ao wait_checkpoint apenas em runs
+    sintéticas; run real nunca encurta a carência."""
+    for params, expected in (
+        ({"input_mode": "deterministic", "on_deterministic_mismatch": "send-anyway",
+          "synthetic": True}, True),
+        ({"input_mode": "deterministic", "on_deterministic_mismatch": "send-anyway",
+          "synthetic": True, "synthetic_swap_fast_exit": "0"}, False),
+        ({"input_mode": "deterministic", "on_deterministic_mismatch": "send-anyway"}, False),
+    ):
+        captured: list[dict] = []
+        _run_strict_global(tmp_path, params, captured)
+        assert captured
+        for kwargs in captured:
+            assert kwargs.get("fast_exit_on_synthetic_swap") is expected, params

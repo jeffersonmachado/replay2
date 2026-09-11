@@ -15,7 +15,12 @@ Definições:
 - ``erp_response_ms``: porção dos pontos de sincronização atribuível ao
   ERP/rede — do fim do envio até o último byte de resposta antes do estado
   esperado (o restante do checkpoint wait é carência de quiet, que é
-  política do Replay2 → ``sync_wait_ms``);
+  política do Replay2 → ``sync_wait_ms``). Em waits que terminam em
+  mismatch, a porção ERP vem da anotação ``wait_erp_ms`` do
+  ``wait_for_signature_match`` (tempo até o último byte observado; zero se
+  nenhum byte chegou durante a espera) — antes da 0.9.9 o wait inteiro de
+  um mismatch era atribuído ao ERP, inflando este bucket com carência que
+  é política do Replay2;
 - ``pacing_ms``: sleeps de cadência por delta de ``ts_ms`` (política);
 - ``explicit_wait_ms``: waits declarados pela jornada (``{WAIT:ms}``);
 - ``sync_wait_ms``: esperas de quiet/dreno impostas pelo Replay2;
@@ -26,7 +31,10 @@ Definições:
   assinaturas fora dos waits;
 - ``other_ms``: residual (total - erp - buckets), sempre >= 0 por construção;
 - ``batching_saved_ms``: sleeps de pacing que o batching deixou de pagar
-  (medido em adaptive) ou economia prevista (shadow).
+  (medido em adaptive) ou economia prevista (shadow);
+- ``convergence_pacing_skip_count``/``convergence_pacing_saved_ms``:
+  pacing pulado (política adaptive) porque o wait de checkpoint anterior
+  convergiu — estado conhecido e estável, cadência seria artificial.
 
 ``replay_overhead_ratio = replay_overhead_ms / journey_total_ms``.
 """
@@ -61,6 +69,8 @@ class SessionTelemetry:
         self.adaptive_wait_count = 0
         self.conservative_fallback_count = 0
         self.batching_saved_ms = 0.0
+        self.convergence_pacing_skip_count = 0
+        self.convergence_pacing_saved_ms = 0.0
         self._ttfb: list[float] = []
         self._ttlb: list[float] = []
         self._tts: list[float] = []
@@ -104,6 +114,13 @@ class SessionTelemetry:
 
     def record_conservative_fallback(self) -> None:
         self.conservative_fallback_count += 1
+
+    def record_convergence_pacing_skip(self, saved_ms: float) -> None:
+        """Pacing pulado porque o wait anterior convergiu (§12/§24): o
+        estado é conhecido e estável, então a cadência por delta de ts_ms
+        seria espera artificial do Replay2 — não sincronização."""
+        self.convergence_pacing_skip_count += 1
+        self.convergence_pacing_saved_ms += max(0.0, saved_ms)
 
     def record_response_timing(
         self,
@@ -158,6 +175,8 @@ class SessionTelemetry:
             "adaptive_wait_count": self.adaptive_wait_count,
             "conservative_fallback_count": self.conservative_fallback_count,
             "batching_saved_ms": self.batching_saved_ms,
+            "convergence_pacing_skip_count": self.convergence_pacing_skip_count,
+            "convergence_pacing_saved_ms": self.convergence_pacing_saved_ms,
             "replay_overhead_ratio": (overhead / total) if total > 0 else 0.0,
         }
         if self.shadow_report is not None:

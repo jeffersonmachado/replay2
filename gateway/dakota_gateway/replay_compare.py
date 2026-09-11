@@ -451,6 +451,7 @@ def wait_for_signature_match(
     return_first_result: bool = False,
     early_exit_on_stable_mismatch: bool = False,
     mismatch_grace_ms: int | None = None,
+    fast_exit_on_synthetic_swap: bool = False,
 ) -> tuple[bool, dict, dict]:
     """Máquina de espera de checkpoint compartilhada.
 
@@ -466,9 +467,26 @@ def wait_for_signature_match(
     (mismatch_grace_ms, default max(quiet, 500ms)) sem saída nova, retorna a
     divergência em vez de esperar o timeout cheio. Saída que chega durante a
     carência reseta a janela (eco tardio continua sendo aguardado).
+    fast_exit_on_synthetic_swap=True (runs sintéticas): divergência estável já
+    explicada pelo de→para (``synthetic_substitution`` no match — a tela
+    convergiu, só o dado mudou) dispensa até a carência; medido na captura 13:
+    103 checkpoints × ~500 ms ≈ 51 s de espera pura por run sintética.
+    Divergência sem essa explicação mantém a carência integral.
     Retorna (matched, match, observed).
     """
     deadline = int(time.time() * 1000) + checkpoint_timeout_ms
+    wait_start_ms = deadline - checkpoint_timeout_ms
+
+    def _with_erp(match: dict) -> dict:
+        """Anota a porção ERP da espera: tempo até o último byte observado.
+
+        O restante (carência de quiet/grace/timeout) é política do Replay2 —
+        usado pelos call sites para separar erp_response_ms de sync_wait_ms
+        em vez de atribuir a espera inteira de um mismatch ao ERP.
+        """
+        match["wait_erp_ms"] = float(max(0, session.last_out_ms - wait_start_ms))
+        return match
+
     grace_ms = (
         int(mismatch_grace_ms)
         if mismatch_grace_ms is not None
@@ -495,8 +513,13 @@ def wait_for_signature_match(
             last_observed = observed
             last_match = compare(observed)
             if last_match.get("matched") or return_first_result:
-                return bool(last_match.get("matched")), last_match, observed
+                return bool(last_match.get("matched")), _with_erp(last_match), observed
             if early_exit_on_stable_mismatch:
+                if fast_exit_on_synthetic_swap and last_match.get("synthetic_substitution"):
+                    # Divergência totalmente explicada pelo de→para: o estado
+                    # convergiu (quiet já observado), só o dado mudou — a
+                    # carência seria espera pura em todos os checkpoints.
+                    return False, _with_erp(last_match), observed
                 now_ms = int(time.time() * 1000)
                 if mismatch_since_ms is None or session.last_out_ms != mismatch_out_ms:
                     # Primeira divergência estável (ou saída nova desde a
@@ -504,7 +527,7 @@ def wait_for_signature_match(
                     mismatch_since_ms = now_ms
                     mismatch_out_ms = session.last_out_ms
                 elif now_ms - mismatch_since_ms >= grace_ms:
-                    return False, last_match, observed
+                    return False, _with_erp(last_match), observed
         time.sleep(0.02)
     observed = last_observed or observed_snapshot_from_session(session)
-    return False, compare(observed), observed
+    return False, _with_erp(compare(observed)), observed

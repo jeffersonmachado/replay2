@@ -219,7 +219,20 @@ replay2/
   detalhe da captura), pela API (`execution_policy` no body de
   `/api/captures/{id}/synthetic-replay` e do X5) e pela CLI
   (`runs create --execution-policy`); valores inválidos normalizam para
-  `conservative`;
+  `conservative`. Desde a v0.9.9: (a) runs sintéticas ligam por default o
+  fast path da carência de mismatch — divergência estável já explicada pelo
+  de→para (`synthetic_substitution` no match) dispensa os 500ms de carência
+  em CADA checkpoint (~51s/run na captura 13); `synthetic_swap_fast_exit=0`
+  desliga; runs reais nunca ligam; (b) o pacing por delta de ts_ms é pulado
+  na política adaptive quando o wait anterior convergiu (match ou swap) —
+  estado conhecido e estável, cadência seria artificial (métricas
+  `convergence_pacing_skip_count`/`convergence_pacing_saved_ms`); WAIT
+  explícito nunca é pulado; (c) `LoadTestParams` carrega o contexto
+  sintético (`synthetic`/`synthetic_substitutions`/`synthetic_swap_fast_exit`)
+  via `load_test_params_from_dict` — sem isso o swap e o fast path ficavam
+  mortos no executor concurrent; (d) na telemetria, checkpoint wait com
+  mismatch atribui ao `erp_response_ms` só o tempo até o último byte
+  (`wait_erp_ms` no match) — quiet/carência vão para `sync_wait_ms`;
 - `replay_failures.py` / `replay_run_state.py` — taxonomia de falhas e estado
   de runs;
 - `screen.py` — normalização e assinatura de tela (fonte central do gateway);

@@ -120,6 +120,20 @@ def _deterministic_failure(
     )
 
 
+def _synthetic_swap_fast_exit(params: dict | None) -> bool:
+    """Fast path da carência de mismatch para runs sintéticas (§ captura 13):
+    divergência estável já explicada pelo de→para dispensa a carência.
+    Default ligado em trilhas sintéticas; ``synthetic_swap_fast_exit=0``
+    desliga (rollback). Runs reais nunca ligam — divergência real mantém a
+    carência que absorve eco tardio."""
+    raw = params if isinstance(params, dict) else {}
+    if not raw.get("synthetic"):
+        return False
+    return str(raw.get("synthetic_swap_fast_exit", "1")).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
 def _comparison_mode_from_params(params: dict | None, default: str = "visual") -> str:
     return resolve_comparison_mode(replay=params, default=default)["comparison_mode"]
 
@@ -425,6 +439,7 @@ def _wait_for_expected_observed(
         # não casou nunca vai casar (dado sintético/eco), então não há por
         # que esperar o timeout cheio do checkpoint.
         early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
+        fast_exit_on_synthetic_swap=_synthetic_swap_fast_exit(params),
     )
 
 

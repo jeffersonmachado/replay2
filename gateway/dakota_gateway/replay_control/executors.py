@@ -697,6 +697,43 @@ class LoadTestParams:
     match_ignore_case: bool = False
     input_mode: str = "raw"
     on_deterministic_mismatch: str = "fail-fast"
+    # Contexto sintético da run (§2.2/§16): o worker usa
+    # ``load_params.__dict__`` como ``params`` dos waits/comparações — sem
+    # estes campos o swap do de→para e o fast path da carência ficavam
+    # mortos no caminho parallel/concurrent (só strict-global os tinha).
+    synthetic: bool = False
+    synthetic_substitutions: list | None = None
+    synthetic_swap_fast_exit: str | None = None
+
+
+def load_test_params_from_dict(params: dict) -> LoadTestParams:
+    """Monta LoadTestParams a partir dos params da run (runner → worker).
+
+    Além dos campos de carga, propaga o contexto sintético
+    (``synthetic``/``synthetic_substitutions``/``synthetic_swap_fast_exit``)
+    para que a classificação de falhas, o swap do de→para e o fast path da
+    carência funcionem igual no strict-global e no parallel/concurrent.
+    """
+    params = params if isinstance(params, dict) else {}
+    return LoadTestParams(
+        concurrency=int(params.get("concurrency") or 1),
+        ramp_up_per_sec=float(params.get("ramp_up_per_sec") or 1.0),
+        speed=float(params.get("speed") or 1.0),
+        jitter_ms=int(params.get("jitter_ms") or 0),
+        on_checkpoint_mismatch=str(params.get("on_checkpoint_mismatch") or "continue"),
+        target_user_pool=list(params.get("target_user_pool") or []) or None,
+        match_mode=str(params.get("match_mode") or "strict"),
+        match_threshold=float(params.get("match_threshold") or 0.92),
+        match_ignore_case=bool(params.get("match_ignore_case") in (True, 1, "1", "true", "yes", "sim")),
+        input_mode=_replay_input_mode(params),
+        on_deterministic_mismatch=_on_deterministic_mismatch(params),
+        synthetic=bool(params.get("synthetic")),
+        synthetic_substitutions=list(params.get("synthetic_substitutions") or []),
+        synthetic_swap_fast_exit=(
+            None if params.get("synthetic_swap_fast_exit") is None
+            else str(params.get("synthetic_swap_fast_exit"))
+        ),
+    )
 
 
 def _soft_checkpoint_match(expected_sig: str, observed_sig: str, params: dict | None) -> dict | None:
@@ -797,6 +834,7 @@ def replay_parallel_sessions_concurrent_controlled(
             )
             pending: list = []            # [(ev, data)] — buffer de batch (adaptive)
             pending_saved_ms = [0]        # pacing economizado pelo batch aberto
+            converged = [False]           # wait anterior convergiu (match ou swap)
 
             def flush_pending():
                 """Fecha o batch aberto: UM write, um on_progress por evento."""
@@ -883,6 +921,14 @@ def replay_parallel_sessions_concurrent_controlled(
                         pass  # telemetria nunca derruba a run
                 if matched and guard.diverged:
                     guard.record_resync()
+                # Convergência comprovada: match real ou divergência swap
+                # totalmente explicada pelo de→para (estado conhecido e
+                # estável — quiet observado, só o dado mudou). Libera o skip
+                # de pacing do próximo input na política adaptive.
+                converged[0] = bool(matched) or (
+                    bool(match.get("synthetic_substitution"))
+                    and _synthetic_swap_fast_exit(load_params.__dict__)
+                )
                 return matched, match, observed
             try:
                 for ev in iter_indexed_events(index[sid]):
@@ -905,6 +951,21 @@ def replay_parallel_sessions_concurrent_controlled(
                                 scaled += random.randint(0, load_params.jitter_ms)
                         data = _decode_replay_input(ev)
                         is_wait_marker = str(ev.get("key_kind") or "") == "wait"
+                        if (
+                            scaled > 0
+                            and not is_wait_marker
+                            and policy == POLICY_ADAPTIVE
+                            and converged[0]
+                        ):
+                            # §12/§24: o wait anterior convergiu (match ou
+                            # swap do de→para) — o estado é conhecido e
+                            # estável, então a cadência por delta de ts_ms
+                            # seria espera artificial do Replay2, não
+                            # sincronização. WAIT explícito nunca é pulado.
+                            if sess_tel is not None:
+                                sess_tel.record_convergence_pacing_skip(float(scaled))
+                            scaled = 0
+                        converged[0] = False
                         requires_cmp = (
                             input_mode == "deterministic"
                             and _event_requires_deterministic_comparison(

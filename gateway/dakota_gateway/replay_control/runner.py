@@ -25,7 +25,7 @@ from .execution_telemetry import RunTelemetry
 from .latency_profile import LatencyProfile
 from .synchronization import extract_capture_typeahead_evidence
 from .executors import (
-    LoadTestParams,
+    load_test_params_from_dict,
     replay_parallel_sessions_concurrent_controlled,
     replay_parallel_sessions_controlled,
     replay_strict_global_controlled,
@@ -534,19 +534,7 @@ class Runner:
                 # Decide between sequential and concurrent based on params.concurrency
                 concurrency = int(params.get("concurrency") or 0)
                 if concurrency and concurrency > 1:
-                    lp = LoadTestParams(
-                        concurrency=concurrency,
-                        ramp_up_per_sec=float(params.get("ramp_up_per_sec") or 1.0),
-                        speed=float(params.get("speed") or 1.0),
-                        jitter_ms=int(params.get("jitter_ms") or 0),
-                        on_checkpoint_mismatch=str(params.get("on_checkpoint_mismatch") or "continue"),
-                        target_user_pool=list(params.get("target_user_pool") or []) or None,
-                        match_mode=str(params.get("match_mode") or "strict"),
-                        match_threshold=float(params.get("match_threshold") or 0.92),
-                        match_ignore_case=bool(params.get("match_ignore_case") in (True, 1, "1", "true", "yes", "sim")),
-                        input_mode=_replay_input_mode(params),
-                        on_deterministic_mismatch=_on_deterministic_mismatch(params),
-                    )
+                    lp = load_test_params_from_dict(params)
                     # precompute totals (da passagem única de metadados)
                     with m_lock:
                         metrics["sessions_total"] = int(capture_meta.get("sessions_total") or 0)

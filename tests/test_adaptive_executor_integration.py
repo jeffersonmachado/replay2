@@ -327,3 +327,279 @@ class AdaptiveBatchingTests(unittest := __import__("unittest").TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SyntheticParamsThreadingTests(__import__('unittest').TestCase):
+    """Os params sintéticos da run precisam chegar ao worker concorrente.
+
+    Regressão: o runner montava LoadTestParams só com campos de carga —
+    ``synthetic``/``synthetic_substitutions``/``synthetic_swap_fast_exit``
+    sumiam no caminho parallel/concurrent (load_params.__dict__ é o params
+    dos waits/comparações). Sem eles o swap do de→para nunca era detectado
+    e o fast path da carência ficava morto fora do strict-global.
+    """
+
+    _tmp_path = None
+
+    def _tmp(self) -> Path:
+        import tempfile
+        if self._tmp_path is None:
+            self._tmp_path = Path(tempfile.mkdtemp())
+        return self._tmp_path
+
+    def tearDown(self):
+        import shutil
+        if self._tmp_path is not None:
+            shutil.rmtree(self._tmp_path, ignore_errors=True)
+            self._tmp_path = None
+
+    def test_builder_propaga_params_sinteticos(self):
+        from dakota_gateway.replay_control.executors import load_test_params_from_dict
+        lp = load_test_params_from_dict({
+            "concurrency": 2,
+            "speed": 8,
+            "input_mode": "deterministic",
+            "on_deterministic_mismatch": "send-anyway",
+            "synthetic": True,
+            "synthetic_substitutions": [["229,9", "763,0"]],
+            "synthetic_swap_fast_exit": "1",
+        })
+        self.assertEqual(lp.concurrency, 2)
+        self.assertEqual(lp.speed, 8.0)
+        self.assertTrue(lp.__dict__["synthetic"])
+        self.assertEqual(
+            lp.__dict__["synthetic_substitutions"], [["229,9", "763,0"]]
+        )
+        from dakota_gateway.replay_control.deterministic import (
+            _substitution_pairs_from_params,
+            _synthetic_swap_fast_exit,
+        )
+        self.assertTrue(_synthetic_swap_fast_exit(lp.__dict__))
+        self.assertEqual(
+            _substitution_pairs_from_params(lp.__dict__), [["229,9", "763,0"]]
+        )
+
+    def test_builder_default_run_real_nao_liga_fast_exit(self):
+        from dakota_gateway.replay_control.executors import load_test_params_from_dict
+        from dakota_gateway.replay_control.deterministic import (
+            _synthetic_swap_fast_exit,
+        )
+        lp = load_test_params_from_dict({"concurrency": 2})
+        self.assertFalse(_synthetic_swap_fast_exit(lp.__dict__))
+
+    def test_worker_concorrente_recebe_params_sinteticos(self):
+        """End-to-end no worker: o params dos waits carrega os campos."""
+        events = [
+            {"type": "deterministic_input", "ts_ms": 1000,
+             "key_b64": _b64(b"1"), "key_kind": "printable", "screen_sig": "sig1"},
+            {"type": "deterministic_input", "ts_ms": 1400,
+             "key_b64": _b64(b"2"), "key_kind": "printable", "screen_sig": "sig2"},
+        ]
+        _write_capture(self._tmp(), {"s0": events})
+        captured: list[dict] = []
+
+        def fake_wait(*args, **kwargs):
+            captured.append(dict(kwargs.get("params") or {}))
+            return False, {"matched": False, "synthetic_substitution": True}, {}
+
+        _FakeSession.reset()
+        p1, p2 = _patch_sessions()
+        rt = AdaptiveRuntime(policy=POLICY_ADAPTIVE, telemetry=RunTelemetry(),
+                             synthetic_trail=True)
+        lp = LoadTestParams(
+            concurrency=1, ramp_up_per_sec=0, speed=1.0,
+            input_mode="deterministic", on_deterministic_mismatch="send-anyway",
+        )
+        lp.synthetic = True
+        lp.synthetic_substitutions = [["229,9", "763,0"]]
+        with p1, p2, \
+             mock.patch.object(executors_mod, "_wait_for_expected_observed", fake_wait), \
+             mock.patch.object(executors_mod, "_deterministic_failure", lambda **kw: {"message": "m"}), \
+             mock.patch.object(executors_mod, "expected_screen_text_from_event", lambda *a, **kw: ""), \
+             mock.patch.object(executors_mod, "observed_screen_text_from_session", lambda *a, **kw: ""):
+            replay_parallel_sessions_concurrent_controlled(
+                ReplayConfig(log_dir=str(self._tmp_path), target_host="local",
+                             checkpoint_quiet_ms=0),
+                lp,
+                window_params={},
+                should_pause_or_cancel=lambda: None,
+                on_progress=lambda *a: None,
+                on_session_result=lambda *a: None,
+                on_failure=lambda f: None,
+                adaptive=rt,
+            )
+        self.assertTrue(captured, "nenhum wait de checkpoint aconteceu")
+        from dakota_gateway.replay_control.deterministic import (
+            _synthetic_swap_fast_exit,
+        )
+        for params in captured:
+            self.assertTrue(params.get("synthetic"), params)
+            self.assertTrue(_synthetic_swap_fast_exit(params), params)
+
+
+class ConvergencePacingSkipTests(__import__("unittest").TestCase):
+    """§12/§24: pacing após convergência comprovada é espera artificial.
+
+    Quando o wait de checkpoint do evento anterior convergiu (match ou
+    divergência swap totalmente explicada pelo de→para), a tela está num
+    estado conhecido e estável — o sleep de cadência (delta de ts_ms /
+    speed) antes do próximo input é overhead puro do Replay2. Só vale na
+    política adaptive; divergência real e runs conservadoras mantêm o
+    pacing integral. Checkpoints e waits explícitos nunca são tocados.
+    """
+
+    _tmp_path = None
+
+    def _tmp(self) -> Path:
+        import tempfile
+        if self._tmp_path is None:
+            self._tmp_path = Path(tempfile.mkdtemp())
+        return self._tmp_path
+
+    def tearDown(self):
+        import shutil
+        if self._tmp_path is not None:
+            shutil.rmtree(self._tmp_path, ignore_errors=True)
+            self._tmp_path = None
+
+    @staticmethod
+    def _det_events(n: int, *, ts0: int = 1000, delta: int = 400) -> list[dict]:
+        return [
+            {"type": "deterministic_input", "ts_ms": ts0 + i * delta,
+             "key_b64": _b64(str(i).encode()), "key_kind": "printable",
+             "screen_sig": f"sig{i}"}
+            for i in range(n)
+        ]
+
+    def _run_det(self, events, *, policy, wait_results, synthetic=False,
+                 speed=1.0, telemetry=None):
+        _write_capture(self._tmp(), {"s0": events})
+        results_iter = iter(wait_results)
+
+        def fake_wait(*args, **kwargs):
+            try:
+                matched, match = next(results_iter)
+            except StopIteration:
+                matched, match = True, {"matched": True}
+            return matched, match, {}
+
+        _FakeSession.reset()
+        p1, p2 = _patch_sessions()
+        rt = AdaptiveRuntime(policy=policy, telemetry=telemetry,
+                             synthetic_trail=synthetic)
+        lp = LoadTestParams(
+            concurrency=1, ramp_up_per_sec=0, speed=speed,
+            input_mode="deterministic", on_deterministic_mismatch="send-anyway",
+        )
+        if synthetic:
+            lp.synthetic = True
+            lp.synthetic_substitutions = [["1", "9"]]
+        with p1, p2, \
+             mock.patch.object(executors_mod, "_wait_for_expected_observed", fake_wait), \
+             mock.patch.object(executors_mod, "_deterministic_failure", lambda **kw: {"message": "m"}), \
+             mock.patch.object(executors_mod, "expected_screen_text_from_event", lambda *a, **kw: ""), \
+             mock.patch.object(executors_mod, "observed_screen_text_from_session", lambda *a, **kw: ""):
+            replay_parallel_sessions_concurrent_controlled(
+                ReplayConfig(log_dir=str(self._tmp_path), target_host="local",
+                             checkpoint_quiet_ms=0),
+                lp,
+                window_params={},
+                should_pause_or_cancel=lambda: None,
+                on_progress=lambda *a: None,
+                on_session_result=lambda *a: None,
+                on_failure=lambda f: None,
+                adaptive=rt,
+            )
+        return _FakeSession.writes.get("s0", [])
+
+    def test_adaptive_pula_pacing_apos_convergencia(self):
+        """3 inputs com waits convergidos: só o 1º não tem pacing (delta do
+        1º é zero por construção); os 400ms × 2 seguintes são pulados."""
+        tel = RunTelemetry()
+        writes = self._run_det(
+            self._det_events(3), policy=POLICY_ADAPTIVE,
+            wait_results=[(True, {"matched": True})] * 3, telemetry=tel,
+        )
+        self.assertEqual(writes, [b"0", b"1", b"2"])
+        snap = tel.snapshot()
+        self.assertLess(snap["pacing_ms"], 150, snap["pacing_ms"])
+        self.assertEqual(snap["convergence_pacing_skip_count"], 2)
+        self.assertGreaterEqual(snap["convergence_pacing_saved_ms"], 700)
+
+    def test_conservative_mantem_pacing_mesmo_convergido(self):
+        tel = RunTelemetry()
+        self._run_det(
+            self._det_events(3), policy=POLICY_CONSERVATIVE,
+            wait_results=[(True, {"matched": True})] * 3, telemetry=tel,
+        )
+        snap = tel.snapshot()
+        self.assertGreaterEqual(snap["pacing_ms"], 700, snap["pacing_ms"])
+        self.assertEqual(snap.get("convergence_pacing_skip_count", 0), 0)
+
+    def test_divergencia_real_nao_pula_pacing(self):
+        """Mismatch sem explicação de swap: estado desconhecido → pacing."""
+        tel = RunTelemetry()
+        self._run_det(
+            self._det_events(3), policy=POLICY_ADAPTIVE, synthetic=True,
+            wait_results=[(False, {"matched": False})] * 3, telemetry=tel,
+        )
+        snap = tel.snapshot()
+        self.assertGreaterEqual(snap["pacing_ms"], 700, snap["pacing_ms"])
+        self.assertEqual(snap["convergence_pacing_skip_count"], 0)
+
+    def test_swap_sintetico_converge_e_pula_pacing(self):
+        """Divergência totalmente explicada pelo de→para = estado conhecido."""
+        tel = RunTelemetry()
+        self._run_det(
+            self._det_events(3), policy=POLICY_ADAPTIVE, synthetic=True,
+            wait_results=[(False, {"matched": False, "synthetic_substitution": True})] * 3,
+            telemetry=tel,
+        )
+        snap = tel.snapshot()
+        self.assertLess(snap["pacing_ms"], 150, snap["pacing_ms"])
+        self.assertEqual(snap["convergence_pacing_skip_count"], 2)
+
+    def test_swap_com_kill_switch_nao_pula(self):
+        """synthetic_swap_fast_exit=0 desliga também o skip de pacing."""
+        tel = RunTelemetry()
+        _FakeSession.reset()
+        events = self._det_events(3)
+        _write_capture(self._tmp(), {"s0": events})
+        results_iter = iter([(False, {"matched": False, "synthetic_substitution": True})] * 3)
+
+        def fake_wait(*args, **kwargs):
+            try:
+                matched, match = next(results_iter)
+            except StopIteration:
+                matched, match = True, {"matched": True}
+            return matched, match, {}
+
+        p1, p2 = _patch_sessions()
+        rt = AdaptiveRuntime(policy=POLICY_ADAPTIVE, telemetry=tel,
+                             synthetic_trail=True)
+        lp = LoadTestParams(
+            concurrency=1, ramp_up_per_sec=0, speed=1.0,
+            input_mode="deterministic", on_deterministic_mismatch="send-anyway",
+        )
+        lp.synthetic = True
+        lp.synthetic_substitutions = [["1", "9"]]
+        lp.synthetic_swap_fast_exit = "0"
+        with p1, p2, \
+             mock.patch.object(executors_mod, "_wait_for_expected_observed", fake_wait), \
+             mock.patch.object(executors_mod, "_deterministic_failure", lambda **kw: {"message": "m"}), \
+             mock.patch.object(executors_mod, "expected_screen_text_from_event", lambda *a, **kw: ""), \
+             mock.patch.object(executors_mod, "observed_screen_text_from_session", lambda *a, **kw: ""):
+            replay_parallel_sessions_concurrent_controlled(
+                ReplayConfig(log_dir=str(self._tmp_path), target_host="local",
+                             checkpoint_quiet_ms=0),
+                lp,
+                window_params={},
+                should_pause_or_cancel=lambda: None,
+                on_progress=lambda *a: None,
+                on_session_result=lambda *a: None,
+                on_failure=lambda f: None,
+                adaptive=rt,
+            )
+        snap = tel.snapshot()
+        self.assertGreaterEqual(snap["pacing_ms"], 700, snap["pacing_ms"])
+        self.assertEqual(snap.get("convergence_pacing_skip_count", 0), 0)

@@ -603,3 +603,92 @@ class ConvergencePacingSkipTests(__import__("unittest").TestCase):
         snap = tel.snapshot()
         self.assertGreaterEqual(snap["pacing_ms"], 700, snap["pacing_ms"])
         self.assertEqual(snap.get("convergence_pacing_skip_count", 0), 0)
+
+
+class ConcurrentEntryPreambleTests(__import__("unittest").TestCase):
+    """O executor concurrent não rodava o entry_preamble — trilhas com
+    preâmbulo de login cortado (capturas 13/62) só entravam no ERP no
+    strict-global; no parallel/concurrent o replay digitava no shell morto
+    (evidência: runs Linux da captura 51 com "bash: 361i: comando não
+    encontrado" em TODAS as telas observadas). A entrada é semântica da
+    jornada: vale para qualquer executor determinístico.
+    """
+
+    _tmp_path = None
+
+    def _tmp(self) -> Path:
+        import tempfile
+        if self._tmp_path is None:
+            self._tmp_path = Path(tempfile.mkdtemp())
+        return self._tmp_path
+
+    def tearDown(self):
+        import shutil
+        if self._tmp_path is not None:
+            shutil.rmtree(self._tmp_path, ignore_errors=True)
+            self._tmp_path = None
+
+    def _run(self, lp, sessions):
+        _write_capture(self._tmp(), sessions)
+        _FakeSession.reset()
+        p1, p2 = _patch_sessions()
+        rt = AdaptiveRuntime(policy=POLICY_CONSERVATIVE, telemetry=RunTelemetry())
+        with p1, p2:
+            replay_parallel_sessions_concurrent_controlled(
+                ReplayConfig(log_dir=str(self._tmp_path), target_host="local",
+                             checkpoint_quiet_ms=0),
+                lp,
+                window_params={},
+                should_pause_or_cancel=lambda: None,
+                on_progress=lambda *a: None,
+                on_session_result=lambda *a: None,
+                on_failure=lambda f: None,
+                adaptive=rt,
+            )
+
+    def test_preambulo_roda_uma_vez_por_sessao_antes_do_primeiro_write(self):
+        lp = LoadTestParams(concurrency=2, ramp_up_per_sec=0, speed=0)
+        lp.entry_preamble = [{"send": "k\r", "wait_text": "DAKOTA", "timeout_s": 1}]
+        lp.entry_fallback = {"send": "dbrt est\r"}
+        calls: list = []
+        writes_after: list = []
+
+        def fake_preamble(s, sel, steps, fallback=None, **kw):
+            calls.append((s.session_id, list(steps), fallback))
+            return []
+
+        def hook(sid, data):
+            # o preâmbulo da sessão precisa ter rodado antes de qualquer write
+            writes_after.append((sid, len([c for c in calls if c[0] == sid])))
+
+        _FakeSession.write_hook = None
+        with mock.patch.object(executors_mod, "_run_entry_preamble", fake_preamble):
+            _FakeSession.reset(write_hook=hook)
+            self._run(lp, {
+                "s0": _field_events("AB", ts0=1000),
+                "s1": _field_events("CD", ts0=1000),
+            })
+        self.assertEqual(sorted(c[0] for c in calls), ["s0", "s1"])
+        for sid, steps, fallback in calls:
+            self.assertEqual(steps, [{"send": "k\r", "wait_text": "DAKOTA", "timeout_s": 1}])
+            self.assertEqual(fallback, {"send": "dbrt est\r"})
+        for sid, ncalls in writes_after:
+            self.assertEqual(ncalls, 1, f"write de {sid} antes do preâmbulo")
+
+    def test_sem_preambulo_nao_chama(self):
+        lp = LoadTestParams(concurrency=1, ramp_up_per_sec=0, speed=0)
+        calls: list = []
+        with mock.patch.object(executors_mod, "_run_entry_preamble",
+                               lambda *a, **k: calls.append(a) or []):
+            self._run(lp, {"s0": _field_events("AB", ts0=1000)})
+        self.assertEqual(calls, [])
+
+    def test_builder_propaga_entry_preamble(self):
+        from dakota_gateway.replay_control.executors import load_test_params_from_dict
+        lp = load_test_params_from_dict({
+            "concurrency": 2,
+            "entry_preamble": [{"send": "k\r", "wait_text": "DAKOTA"}],
+            "entry_fallback": {"send": "dbrt est\r"},
+        })
+        self.assertEqual(lp.entry_preamble, [{"send": "k\r", "wait_text": "DAKOTA"}])
+        self.assertEqual(lp.entry_fallback, {"send": "dbrt est\r"})

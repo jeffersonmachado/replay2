@@ -331,7 +331,11 @@ replay2/
   repete no replay e estouraria o wait antes do send),
   gravado nos params da run e executado por `_run_entry_preamble`
   (`replay_control/executors.py`) uma vez por sessão, antes do primeiro
-  checkpoint; default ligado no 1-clique (`auto_entry`, `0` desliga). Se a
+  checkpoint — desde a v0.9.9 também no executor parallel/concurrent
+  (antes só o strict-global rodava e o concurrent digitava no shell morto;
+  `LoadTestParams.entry_preamble`/`entry_fallback` via
+  `load_test_params_from_dict`); default ligado no 1-clique (`auto_entry`,
+  `0` desliga). Se a
   âncora final do preamble falha (ex.: o comando de entrada gravado depende
   de artefato que não existe mais no servidor — o `k` da captura 62 roda
   `dbrt ferblo` e o `ferblo.dbo` sumiu, caindo num Confirm de FATAL ERROR),

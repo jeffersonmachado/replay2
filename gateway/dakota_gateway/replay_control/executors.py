@@ -704,6 +704,11 @@ class LoadTestParams:
     synthetic: bool = False
     synthetic_substitutions: list | None = None
     synthetic_swap_fast_exit: str | None = None
+    # Entrada automática no sistema (trilha com preâmbulo de login cortado):
+    # antes só o strict-global executava — o parallel/concurrent digitava no
+    # shell morto. É semântica da jornada, vale para todo executor.
+    entry_preamble: list | None = None
+    entry_fallback: dict | None = None
 
 
 def load_test_params_from_dict(params: dict) -> LoadTestParams:
@@ -733,6 +738,8 @@ def load_test_params_from_dict(params: dict) -> LoadTestParams:
             None if params.get("synthetic_swap_fast_exit") is None
             else str(params.get("synthetic_swap_fast_exit"))
         ),
+        entry_preamble=list(params.get("entry_preamble") or []) or None,
+        entry_fallback=params.get("entry_fallback") or None,
     )
 
 
@@ -816,6 +823,20 @@ def replay_parallel_sessions_concurrent_controlled(
             state.engine = s.screen_state
             sel = selectors.DefaultSelector()
             sel.register(s.master_fd, selectors.EVENT_READ, data=sid)
+            # Entrada automática no sistema (paridade com o strict-global):
+            # trilhas com preâmbulo de login cortado precisam entrar no ERP
+            # antes do primeiro evento — uma vez por sessão.
+            if load_params.entry_preamble:
+                try:
+                    warnings = _run_entry_preamble(
+                        s, sel, list(load_params.entry_preamble),
+                        load_params.entry_fallback,
+                        should_pause_or_cancel=should_pause_or_cancel,
+                    )
+                except Exception as exc:
+                    warnings = [f"entrada automática falhou: {exc}"]
+                if warnings:
+                    state.warnings.extend(warnings)
             last_in_ts = None
             recent_keys: list = []
 

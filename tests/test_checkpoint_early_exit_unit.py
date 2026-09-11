@@ -70,6 +70,60 @@ def test_mismatch_estavel_send_anyway_sai_cedo():
     assert elapsed < 2.0, f"esperou {elapsed:.1f}s — timeout cheio não foi evitado"
 
 
+def test_sem_saida_nova_nao_recomputa_compare_na_carencia():
+    """Sem bytes novos o estado do terminal não muda — snapshot+compare são
+    idênticos, então a carência não pode recomputar a cada iteração do loop.
+
+    Medido na captura 13 (AIX, run 88): ~7 iterações de ~70ms por carência de
+    500ms × ~100 divergências — dezenas de segundos de CPU POWER em compare
+    redundante por run."""
+    session = _FakeSession()
+    calls: list = []
+
+    def compare(observed):
+        if observed:  # ignora o compare({}) inicial de bootstrap
+            calls.append(1)
+        return {"matched": False}
+
+    (matched, _, _), _ = _run_wait(
+        session,
+        compare,
+        quiet_ms=50,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is False
+    assert len(calls) == 1, f"compare recomputado {len(calls)}× sem saída nova"
+
+
+def test_saida_nova_durante_carencia_recomputa_compare():
+    """O cache é por last_out_ms: byte novo invalida e o compare roda de novo."""
+    session = _FakeSession()
+    seen: list[str] = []
+
+    def compare(observed):
+        text = str(observed.get("screen_text") or "")
+        if observed:
+            seen.append(text)
+        return {"matched": text.endswith("fim")}
+
+    def late_output():
+        time.sleep(0.3)
+        session.text = "tela inicial fim"
+        session.last_out_ms = _now_ms()
+
+    threading.Thread(target=late_output, daemon=True).start()
+    (matched, _, _), _ = _run_wait(
+        session,
+        compare,
+        quiet_ms=50,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is True
+    assert seen == ["tela inicial", "tela inicial fim"], seen
+
+
 def test_sem_flag_mantem_espera_ate_o_timeout():
     """Comportamento default inalterado: sem a flag, espera o timeout cheio."""
     session = _FakeSession()
@@ -422,3 +476,85 @@ def test_wait_erp_ms_presente_no_match_e_no_timeout():
     (matched, match, _), _ = _run_wait(session, never, timeout_ms=600)
     assert matched is False
     assert match.get("wait_erp_ms") == 0.0, match.get("wait_erp_ms")
+
+
+# --- dedup da análise de falha no strict-global (0.9.9): no mismatch de um
+# deterministic_input, o wait_checkpoint calculava compare, telas de
+# evidência, classificação e overrides e JOGAVA FORA ao levantar
+# ReplayError; o except refazia tudo (2× custo por divergência — medido no
+# AIX como fatia dominante do other_ms). O contexto calculado no wait é
+# anexado à exceção e reusado.
+
+def _run_strict_mismatch(tmp_path, on_failure):
+    """Strict-global com 1 input que diverge (send-anyway). Retorna nada —
+    os espiões são instalados pelo chamador via mock.patch. A captura tem
+    APENAS o input (sem checkpoint avulso) para isolar a divergência do
+    deterministic_input — cada mismatch do checkpoint avulso também grava
+    falha e chamadas de tela, sujando as contagens."""
+    key_b64 = base64.b64encode(b"0").decode("ascii")
+    events = [
+        {"type": "session_start", "session_id": "s1", "seq_global": 1,
+         "seq_session": 1, "rows": 25, "cols": 80},
+        {"type": "deterministic_input", "session_id": "s1", "seq_global": 2,
+         "seq_session": 2, "ts_ms": 1000, "screen_sig": "sig-esperada",
+         "key_b64": key_b64},
+    ]
+    lines = [json.dumps(ev) for ev in events]
+    (tmp_path / "audit-early.part001.jsonl").write_text("\n".join(lines), encoding="utf-8")
+    cfg = ReplayConfig(log_dir=str(tmp_path), target_host="local", checkpoint_quiet_ms=0)
+
+    def fake_wait(*args, **kwargs):
+        return False, {"matched": False, "expected_sig": "sig-esperada",
+                       "observed_sig": "sig-observada"}, {"screen_sig": "sig-observada"}
+
+    with mock.patch.object(executors_mod, "_TargetSession", _ExecFakeSession), \
+         mock.patch.object(executors_mod.selectors, "DefaultSelector", _ExecFakeSelector), \
+         mock.patch.object(executors_mod, "wait_for_signature_match", fake_wait):
+        executors_mod.replay_strict_global_controlled(
+            cfg,
+            params={"input_mode": "deterministic", "on_deterministic_mismatch": "send-anyway"},
+            should_pause_or_cancel=lambda: None,
+            on_progress=lambda *a: None,
+            on_failure=on_failure,
+        )
+
+
+def test_strict_mismatch_nao_recomputa_compare_nem_telas(tmp_path):
+    """O except reusa o contexto do wait: zero compare/telas extras."""
+    compare_calls = []
+    exp_calls = []
+    obs_calls = []
+    real_compare = deterministic.compare_expected_observed
+
+    def spy_compare(*a, **kw):
+        compare_calls.append(1)
+        return real_compare(*a, **kw)
+
+    failures = []
+    with mock.patch.object(executors_mod, "compare_expected_observed", spy_compare), \
+         mock.patch.object(executors_mod, "expected_screen_text_from_event",
+                           lambda *a, **kw: exp_calls.append(1) or ""), \
+         mock.patch.object(executors_mod, "observed_screen_text_from_session",
+                           lambda *a, **kw: obs_calls.append(1) or ""):
+        _run_strict_mismatch(tmp_path, failures.append)
+
+    assert failures, "a divergência não foi registrada"
+    assert not compare_calls, f"compare recomputado no except ({len(compare_calls)}×)"
+    assert len(exp_calls) <= 1, f"tela esperada extraída {len(exp_calls)}×"
+    assert len(obs_calls) <= 1, f"tela observada extraída {len(obs_calls)}×"
+
+
+def test_strict_mismatch_falha_identica_ao_caminho_legado(tmp_path):
+    """O failure record do caminho dedup é idêntico ao recomputado."""
+    failures = []
+    _run_strict_mismatch(tmp_path, failures.append)
+    assert len(failures) == 1
+    f = failures[0]
+    assert f["event_type"] == "deterministic_input"
+    assert f["failure_type"] and f["severity"]
+    assert f["expected_value"] == "sig-esperada"
+    assert f["observed_value"] == "sig-observada"
+    ev = f["evidence"]
+    assert ev["mode"] == "strict-global-deterministic"
+    assert ev["action"] == "sent_anyway"
+    assert ev["match"]["matched"] is False

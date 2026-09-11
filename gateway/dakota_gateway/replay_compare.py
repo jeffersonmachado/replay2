@@ -452,6 +452,7 @@ def wait_for_signature_match(
     early_exit_on_stable_mismatch: bool = False,
     mismatch_grace_ms: int | None = None,
     fast_exit_on_synthetic_swap: bool = False,
+    fast_exit_predicate=None,
 ) -> tuple[bool, dict, dict]:
     """Máquina de espera de checkpoint compartilhada.
 
@@ -472,6 +473,10 @@ def wait_for_signature_match(
     convergiu, só o dado mudou) dispensa até a carência; medido na captura 13:
     103 checkpoints × ~500 ms ≈ 51 s de espera pura por run sintética.
     Divergência sem essa explicação mantém a carência integral.
+    fast_exit_predicate(match, observed) (opcional): predicado de saída
+    antecipada avaliado no primeiro mismatch estável — True dispensa a
+    carência (usado pelas runs sintéticas para divergências cuja
+    classificação final já seria low pelos overrides).
     Retorna (matched, match, observed).
     """
     deadline = int(time.time() * 1000) + checkpoint_timeout_ms
@@ -526,6 +531,12 @@ def wait_for_signature_match(
                     # Divergência totalmente explicada pelo de→para: o estado
                     # convergiu (quiet já observado), só o dado mudou — a
                     # carência seria espera pura em todos os checkpoints.
+                    return False, _with_erp(last_match), observed
+                if fast_exit_predicate is not None and fast_exit_predicate(last_match, last_observed):
+                    # Divergência estável cuja classificação final já seria
+                    # low pelos overrides (referência envelhecida, mudança de
+                    # contexto, conteúdo presente, swap de→para): esperar a
+                    # carência não muda a decisão, só atrasa a jornada.
                     return False, _with_erp(last_match), observed
                 now_ms = int(time.time() * 1000)
                 if mismatch_since_ms is None or session.last_out_ms != mismatch_out_ms:

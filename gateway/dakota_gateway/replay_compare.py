@@ -496,6 +496,10 @@ def wait_for_signature_match(
     mismatch_out_ms: int | None = None
     last_observed: dict = {}
     last_match = compare({})
+    # Cache do snapshot+compare por last_out_ms: sem bytes novos o estado do
+    # terminal é idêntico — recomputar a cada iteração do loop é CPU pura
+    # (medido no AIX: ~7 compares por carência de 500ms × ~100 divergências).
+    compared_out_ms = object()  # sentinela: nunca igual a um timestamp real
     while int(time.time() * 1000) < deadline:
         if should_pause_or_cancel is not None:
             should_pause_or_cancel()
@@ -509,9 +513,12 @@ def wait_for_signature_match(
                 pass
         quiet = int(time.time() * 1000) - session.last_out_ms
         if quiet >= checkpoint_quiet_ms:
-            observed = observed_snapshot_from_session(session)
-            last_observed = observed
-            last_match = compare(observed)
+            out_ms = getattr(session, "last_out_ms", None)
+            if out_ms is None or out_ms != compared_out_ms:
+                observed = observed_snapshot_from_session(session)
+                last_observed = observed
+                last_match = compare(observed)
+                compared_out_ms = out_ms
             if last_match.get("matched") or return_first_result:
                 return bool(last_match.get("matched")), _with_erp(last_match), observed
             if early_exit_on_stable_mismatch:

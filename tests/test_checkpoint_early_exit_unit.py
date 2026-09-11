@@ -70,6 +70,60 @@ def test_mismatch_estavel_send_anyway_sai_cedo():
     assert elapsed < 2.0, f"esperou {elapsed:.1f}s — timeout cheio não foi evitado"
 
 
+def test_sem_saida_nova_nao_recomputa_compare_na_carencia():
+    """Sem bytes novos o estado do terminal não muda — snapshot+compare são
+    idênticos, então a carência não pode recomputar a cada iteração do loop.
+
+    Medido na captura 13 (AIX, run 88): ~7 iterações de ~70ms por carência de
+    500ms × ~100 divergências — dezenas de segundos de CPU POWER em compare
+    redundante por run."""
+    session = _FakeSession()
+    calls: list = []
+
+    def compare(observed):
+        if observed:  # ignora o compare({}) inicial de bootstrap
+            calls.append(1)
+        return {"matched": False}
+
+    (matched, _, _), _ = _run_wait(
+        session,
+        compare,
+        quiet_ms=50,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is False
+    assert len(calls) == 1, f"compare recomputado {len(calls)}× sem saída nova"
+
+
+def test_saida_nova_durante_carencia_recomputa_compare():
+    """O cache é por last_out_ms: byte novo invalida e o compare roda de novo."""
+    session = _FakeSession()
+    seen: list[str] = []
+
+    def compare(observed):
+        text = str(observed.get("screen_text") or "")
+        if observed:
+            seen.append(text)
+        return {"matched": text.endswith("fim")}
+
+    def late_output():
+        time.sleep(0.3)
+        session.text = "tela inicial fim"
+        session.last_out_ms = _now_ms()
+
+    threading.Thread(target=late_output, daemon=True).start()
+    (matched, _, _), _ = _run_wait(
+        session,
+        compare,
+        quiet_ms=50,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is True
+    assert seen == ["tela inicial", "tela inicial fim"], seen
+
+
 def test_sem_flag_mantem_espera_ate_o_timeout():
     """Comportamento default inalterado: sem a flag, espera o timeout cheio."""
     session = _FakeSession()

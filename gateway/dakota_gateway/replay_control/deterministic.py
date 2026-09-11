@@ -37,6 +37,7 @@ def _deterministic_failure(
     observed_screen: str = "",
     expected_event: dict | None = None,
     observed_seq: int = 0,
+    precomputed: tuple | None = None,
 ) -> dict:
     match = match or {
         "comparison_mode_requested": _comparison_mode_from_params(params),
@@ -46,43 +47,48 @@ def _deterministic_failure(
         "matched": expected_sig == observed_sig,
         "fallback_reason": "legacy_deterministic_failure_adapter",
     }
-    failure_type, severity, reason = classify_checkpoint_failure(
-        expected_sig=expected_sig,
-        observed_sig=observed_sig,
-        params=params,
-        timeout_reached=True,
-        concurrent_mode=concurrent_mode,
-    )
-    swap = synthetic_swap_override(
-        match, params, expected_screen=expected_screen, observed_screen=observed_screen
-    )
-    if swap:
-        # Divergência explicada pelo de→para: é a troca de dado sintético
-        # ecoando na tela, não uma divergência funcional.
-        match, failure_type, severity, reason = swap
+    if precomputed is not None:
+        # Classificação + overrides já computados pelo wait_checkpoint que
+        # detectou o mismatch (dedup strict-global) — reusar, não recomputar.
+        failure_type, severity, reason = precomputed
     else:
-        failure_type, severity, reason = stale_reference_override(
-            failure_type,
-            severity,
-            reason,
-            expected_event=expected_event,
-            expected_screen=expected_screen,
-            observed_screen=observed_screen,
+        failure_type, severity, reason = classify_checkpoint_failure(
+            expected_sig=expected_sig,
+            observed_sig=observed_sig,
+            params=params,
+            timeout_reached=True,
+            concurrent_mode=concurrent_mode,
         )
-        failure_type, severity, reason = context_switch_override(
-            failure_type,
-            severity,
-            reason,
-            expected_screen=expected_screen,
-            observed_screen=observed_screen,
+        swap = synthetic_swap_override(
+            match, params, expected_screen=expected_screen, observed_screen=observed_screen
         )
-        failure_type, severity, reason = content_present_override(
-            failure_type,
-            severity,
-            reason,
-            expected_screen=expected_screen,
-            observed_screen=observed_screen,
-        )
+        if swap:
+            # Divergência explicada pelo de→para: é a troca de dado sintético
+            # ecoando na tela, não uma divergência funcional.
+            match, failure_type, severity, reason = swap
+        else:
+            failure_type, severity, reason = stale_reference_override(
+                failure_type,
+                severity,
+                reason,
+                expected_event=expected_event,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            )
+            failure_type, severity, reason = context_switch_override(
+                failure_type,
+                severity,
+                reason,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            )
+            failure_type, severity, reason = content_present_override(
+                failure_type,
+                severity,
+                reason,
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            )
     mismatch_mode = _on_deterministic_mismatch(params)
     action = "failed"
     if mismatch_mode == "skip":

@@ -384,7 +384,21 @@ def replay_strict_global_controlled(
                     },
                 )
             )
-        raise ReplayError(f"{reason} session={sid}: expected={expected_sig!r} got={got!r}")
+        err = ReplayError(f"{reason} session={sid}: expected={expected_sig!r} got={got!r}")
+        # Contexto do mismatch para o except reutilizar compare/telas/
+        # classificação já computados aqui (dedup: evita recomputar tudo no
+        # _deterministic_failure — fatia dominante do other_ms no AIX).
+        err.checkpoint_context = {
+            "match": match,
+            "expected_sig": expected_sig,
+            "observed_sig": got,
+            "expected_screen": expected_screen,
+            "observed_screen": observed_screen,
+            "failure_type": failure_type,
+            "severity": severity,
+            "reason": reason,
+        }
+        raise err
 
     try:
         for ev in _selected_events(cfg.log_dir, params):
@@ -406,29 +420,58 @@ def replay_strict_global_controlled(
                         # skip/send-anyway) é feito pelo _deterministic_failure
                         # no except — gravar nos dois pontos duplica a falha.
                         wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0), record_failure=False)
-                    except ReplayError:
+                    except ReplayError as exc:
                         if input_mode != "deterministic":
                             raise
-                        observed_snapshot = _observed_snapshot_from_session(get_sess(sid, ev))
-                        match = compare_expected_observed(expected_snapshot, observed_snapshot, params, event=ev, session_config=session_configs.get(sid), replay_config=cfg, recent_keys=recent_keys.get(sid))
-                        expected_failure_sig, observed_failure_sig = _match_failure_values(match, expected_snapshot, observed_snapshot)
-                        failure = _deterministic_failure(
-                            sid=sid,
-                            seq_global=seq_global,
-                            seq_session=int(ev.get("seq_session") or 0),
-                            expected_sig=expected_failure_sig,
-                            observed_sig=observed_failure_sig,
-                            params=params,
-                            checkpoint_timeout_ms=checkpoint_timeout_ms,
-                            checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
-                            mode_label="strict-global-deterministic",
-                            concurrent_mode=False,
-                            match=match,
-                            expected_screen=expected_screen_text_from_event(ev, session_configs.get(sid) or cfg),
-                            observed_screen=observed_screen_text_from_session(get_sess(sid, ev)),
-                            expected_event=ev,
-                            observed_seq=int(getattr(get_sess(sid, ev), "observed_seq", 0) or 0),
-                        )
+                        ctx = getattr(exc, "checkpoint_context", None)
+                        if ctx is not None:
+                            # O wait_checkpoint já fez compare + telas +
+                            # classificação + overrides deste mismatch —
+                            # reusar em vez de recomputar (2× custo por
+                            # divergência; fatia dominante do other_ms no
+                            # AIX). O match do contexto é o da detecção,
+                            # não um re-compare do estado final.
+                            failure = _deterministic_failure(
+                                sid=sid,
+                                seq_global=seq_global,
+                                seq_session=int(ev.get("seq_session") or 0),
+                                expected_sig=ctx["expected_sig"],
+                                observed_sig=ctx["observed_sig"],
+                                params=params,
+                                checkpoint_timeout_ms=checkpoint_timeout_ms,
+                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                                mode_label="strict-global-deterministic",
+                                concurrent_mode=False,
+                                match=ctx["match"],
+                                expected_screen=ctx["expected_screen"],
+                                observed_screen=ctx["observed_screen"],
+                                expected_event=ev,
+                                observed_seq=int(getattr(get_sess(sid, ev), "observed_seq", 0) or 0),
+                                precomputed=(
+                                    ctx["failure_type"], ctx["severity"], ctx["reason"],
+                                ),
+                            )
+                        else:
+                            observed_snapshot = _observed_snapshot_from_session(get_sess(sid, ev))
+                            match = compare_expected_observed(expected_snapshot, observed_snapshot, params, event=ev, session_config=session_configs.get(sid), replay_config=cfg, recent_keys=recent_keys.get(sid))
+                            expected_failure_sig, observed_failure_sig = _match_failure_values(match, expected_snapshot, observed_snapshot)
+                            failure = _deterministic_failure(
+                                sid=sid,
+                                seq_global=seq_global,
+                                seq_session=int(ev.get("seq_session") or 0),
+                                expected_sig=expected_failure_sig,
+                                observed_sig=observed_failure_sig,
+                                params=params,
+                                checkpoint_timeout_ms=checkpoint_timeout_ms,
+                                checkpoint_quiet_ms=cfg.checkpoint_quiet_ms,
+                                mode_label="strict-global-deterministic",
+                                concurrent_mode=False,
+                                match=match,
+                                expected_screen=expected_screen_text_from_event(ev, session_configs.get(sid) or cfg),
+                                observed_screen=observed_screen_text_from_session(get_sess(sid, ev)),
+                                expected_event=ev,
+                                observed_seq=int(getattr(get_sess(sid, ev), "observed_seq", 0) or 0),
+                            )
                         if not _should_apply_deterministic_input(on_failure, failure, params=params):
                             on_progress(seq_global, None)
                             continue

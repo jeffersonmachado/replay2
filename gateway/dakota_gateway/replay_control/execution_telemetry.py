@@ -15,7 +15,12 @@ Definições:
 - ``erp_response_ms``: porção dos pontos de sincronização atribuível ao
   ERP/rede — do fim do envio até o último byte de resposta antes do estado
   esperado (o restante do checkpoint wait é carência de quiet, que é
-  política do Replay2 → ``sync_wait_ms``);
+  política do Replay2 → ``sync_wait_ms``). Em waits que terminam em
+  mismatch, a porção ERP vem da anotação ``wait_erp_ms`` do
+  ``wait_for_signature_match`` (tempo até o último byte observado; zero se
+  nenhum byte chegou durante a espera) — antes da 0.9.9 o wait inteiro de
+  um mismatch era atribuído ao ERP, inflando este bucket com carência que
+  é política do Replay2;
 - ``pacing_ms``: sleeps de cadência por delta de ``ts_ms`` (política);
 - ``explicit_wait_ms``: waits declarados pela jornada (``{WAIT:ms}``);
 - ``sync_wait_ms``: esperas de quiet/dreno impostas pelo Replay2;

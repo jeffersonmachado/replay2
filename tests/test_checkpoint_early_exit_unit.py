@@ -365,3 +365,60 @@ def test_strict_global_wiring_fast_exit_swap(tmp_path):
         assert captured
         for kwargs in captured:
             assert kwargs.get("fast_exit_on_synthetic_swap") is expected, params
+
+
+# --- atribuição erp × sync na telemetria do checkpoint wait (0.9.9):
+# em mismatch, o wait inteiro ia para erp_response_ms (erp_ms=elapsed),
+# inflando o bucket do ERP com carência de quiet/grace que é política do
+# Replay2. wait_erp_ms anota no match o tempo até o último byte observado.
+
+def test_wait_erp_ms_apenas_ate_o_ultimo_byte():
+    """Mismatch com saída no início e silêncio depois: wait_erp_ms cobre só
+    até o último byte (~0,2s); a carência (~0,5s) não é resposta do ERP."""
+    session = _FakeSession()
+
+    def early_output():
+        time.sleep(0.2)
+        session.text = "saida parcial"
+        session.last_out_ms = _now_ms()
+
+    threading.Thread(target=early_output, daemon=True).start()
+    never = lambda observed: {"matched": False}  # noqa: E731
+    (matched, match, _), elapsed = _run_wait(
+        session,
+        never,
+        quiet_ms=100,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is False
+    assert elapsed >= 0.6, f"carência não aconteceu ({elapsed:.2f}s)"
+    assert "wait_erp_ms" in match, "match sem anotação de porção ERP"
+    assert match["wait_erp_ms"] <= 450, (
+        f"wait_erp_ms={match['wait_erp_ms']:.0f}ms — carência vazou para o ERP"
+    )
+
+
+def test_wait_erp_ms_zero_sem_saida_durante_a_espera():
+    """Sem nenhum byte durante a espera, a porção ERP é zero: o tempo todo
+    foi política do Replay2 (quiet + carência)."""
+    session = _FakeSession()
+    never = lambda observed: {"matched": False}  # noqa: E731
+    (matched, match, _), _ = _run_wait(
+        session,
+        never,
+        quiet_ms=100,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+    )
+    assert matched is False
+    assert match.get("wait_erp_ms") == 0.0, match.get("wait_erp_ms")
+
+
+def test_wait_erp_ms_presente_no_match_e_no_timeout():
+    """A anotação existe também no retorno por timeout (sem early exit)."""
+    session = _FakeSession()
+    never = lambda observed: {"matched": False}  # noqa: E731
+    (matched, match, _), _ = _run_wait(session, never, timeout_ms=600)
+    assert matched is False
+    assert match.get("wait_erp_ms") == 0.0, match.get("wait_erp_ms")

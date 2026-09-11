@@ -300,10 +300,12 @@ def replay_strict_global_controlled(
         tel = sess_telemetry(sid)
         if tel is not None:
             elapsed = (time.monotonic() - t0) * 1000.0
-            erp_ms = (
-                max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
-                if matched else elapsed
-            )
+            if matched:
+                erp_ms = max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
+            else:
+                # Mismatch: só o tempo até o último byte é resposta do ERP;
+                # quiet/carência/timeout são política do Replay2 (sync_wait).
+                erp_ms = min(float(match.get("wait_erp_ms") or 0.0), elapsed)
             tel.record(TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms)
             if matched:
                 tel.record_adaptive_wait()
@@ -851,10 +853,12 @@ def replay_parallel_sessions_concurrent_controlled(
                     recent_keys=recent_keys,
                 )
                 elapsed = (time.monotonic() - t0) * 1000.0
-                erp_ms = (
-                    max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
-                    if matched else elapsed
-                )
+                if matched:
+                    erp_ms = max(0.0, elapsed - float(cfg.checkpoint_quiet_ms))
+                else:
+                    # Mismatch: só o tempo até o último byte é resposta do
+                    # ERP; quiet/carência/timeout vão para sync_wait_ms.
+                    erp_ms = min(float(match.get("wait_erp_ms") or 0.0), elapsed)
                 if sess_tel is not None:
                     sess_tel.record(
                         TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms,

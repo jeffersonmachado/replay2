@@ -558,3 +558,128 @@ def test_strict_mismatch_falha_identica_ao_caminho_legado(tmp_path):
     assert ev["mode"] == "strict-global-deterministic"
     assert ev["action"] == "sent_anyway"
     assert ev["match"]["matched"] is False
+
+
+# ---------------------------------------------------------------------------
+# Fast-exit da carência para divergência JÁ explicada pelos overrides (0.9.9).
+# Medido na captura 13 (run 88, AIX): ~98 divergências × ~500ms de carência
+# ≈ 49s de espera pura por run — a classificação final já seria low
+# (referência envelhecida / mudança de contexto / conteúdo presente / swap
+# de→para), então esperar a carência inteira não muda a decisão, só atrasa.
+# A carência continua integral para divergências SEM explicação e para runs
+# reais (eco tardio precisa ser absorvido).
+# ---------------------------------------------------------------------------
+
+from dakota_gateway.replay_control.deterministic import (
+    explained_mismatch_fast_exit_predicate,
+)
+
+
+def _wait_with_predicate(session, predicate, **kwargs):
+    never = lambda observed: {"matched": False}  # noqa: E731
+    return _run_wait(
+        session,
+        never,
+        quiet_ms=50,
+        timeout_ms=4000,
+        early_exit_on_stable_mismatch=True,
+        fast_exit_predicate=predicate,
+        **kwargs,
+    )
+
+
+def test_predicado_ausente_em_run_real_e_sem_params():
+    """Runs reais nunca ligam o fast-exit: eco tardio precisa da carência."""
+    assert explained_mismatch_fast_exit_predicate(None, expected_event={}) is None
+    assert explained_mismatch_fast_exit_predicate(
+        {"synthetic_substitutions": [["a", "b"]]}, expected_event={}
+    ) is None
+
+
+def test_predicado_kill_switch_desliga():
+    """synthetic_explained_fast_exit=0 é o rollback do fast-exit."""
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True, "synthetic_explained_fast_exit": "0"},
+        expected_event={"screen_snapshot_age_ms": 20000, "screen_sample": "MENU X"},
+    )
+    assert pred is None
+
+
+def test_predicado_swap_depara_dispara_e_nao_dispara():
+    """Eco do de→para nas telas dispara; tela sem eco, não."""
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True, "synthetic_substitutions": [["229,9", "763,0"]]},
+        expected_event={"screen_sample": "Valor: 229,9"},
+    )
+    assert pred is not None
+    assert pred({"matched": False}, {"screen_text": "Valor: 763,0"}) is True
+    assert pred({"matched": False}, {"screen_text": "tela nada a ver"}) is False
+
+
+def test_predicado_stale_reference_dispara():
+    """Snapshot envelhecido (>=10s) + telas sem nenhuma linha em comum."""
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True},
+        expected_event={"screen_snapshot_age_ms": 20000,
+                        "screen_sample": "MENU PRINCIPAL\n1 - Pedidos"},
+    )
+    assert pred({"matched": False}, {"screen_text": "SHELL\n(ferblo)MIG24:/u >"}) is True
+    # Linha em comum -> sem override -> sem fast-exit.
+    assert pred({"matched": False}, {"screen_text": "MENU PRINCIPAL\noutro"}) is False
+
+
+def test_predicado_context_switch_dispara():
+    """Snapshot novo mas telas disjuntas com marcador de shell: o override de
+    mudança de contexto (app ↔ shell) se aplica mesmo sem idade."""
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True},
+        expected_event={"screen_snapshot_age_ms": 500,
+                        "screen_sample": "MENU PRINCIPAL\n1 - Pedidos"},
+    )
+    assert pred({"matched": False}, {"screen_text": "SHELL\n(ferblo)MIG24:/u >"}) is True
+    # Sem marcador de shell e sem linha em comum: nenhum override se aplica.
+    assert pred({"matched": False}, {"screen_text": "TELA Y\nopcao 9"}) is False
+
+
+def test_predicado_content_present_dispara():
+    """Toda linha esperada presente na observada (eco/rolagem): a sessão
+    avançou sem divergir — a carência é espera pura."""
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True},
+        expected_event={"screen_sample": "Digite a sua opcao:\n0. Finalizacao"},
+    )
+    assert pred(
+        {"matched": False},
+        {"screen_text": "Digite a sua opcao: 0\n0. Finalizacao\nlinha nova"},
+    ) is True
+    assert pred(
+        {"matched": False},
+        {"screen_text": "Digite a sua opcao:\nlinha diferente"},
+    ) is False
+
+
+def test_fast_exit_divergencia_explicada_sai_sem_carencia():
+    """End-to-end na máquina de espera: override aplicável => sai no primeiro
+    mismatch estável, sem os ~500ms de carência."""
+    session = _FakeSession(text="contexto totalmente diverso\n(ferblo)MIG24:/u >")
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True},
+        expected_event={"screen_snapshot_age_ms": 20000,
+                        "screen_sample": "MENU PRINCIPAL\n1 - Pedidos"},
+    )
+    (matched, _, _), elapsed = _wait_with_predicate(session, pred)
+    assert matched is False
+    assert elapsed < 0.40, f"carência não foi dispensada ({elapsed:.2f}s)"
+
+
+def test_fast_exit_divergencia_sem_explicacao_mantem_carencia():
+    """Sem override aplicável, a carência integral (~500ms) é respeitada."""
+    session = _FakeSession(text="MENU PRINCIPAL\noutro conteudo")
+    pred = explained_mismatch_fast_exit_predicate(
+        {"synthetic": True},
+        expected_event={"screen_snapshot_age_ms": 20000,
+                        "screen_sample": "MENU PRINCIPAL\n1 - Pedidos"},
+    )
+    (matched, _, _), elapsed = _wait_with_predicate(session, pred)
+    assert matched is False
+    assert elapsed >= 0.45, f"carência encurtada sem explicação ({elapsed:.2f}s)"

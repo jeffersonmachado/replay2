@@ -10,6 +10,7 @@ from ..replay_compare import (
     apply_synthetic_substitution_fallback,
     apply_volatile_mask_fallback,
     event_requires_comparison,
+    expected_screen_text_from_event,
     expected_snapshot_from_event,
     observed_snapshot_from_session,
     substitution_echo_line_indices,
@@ -138,6 +139,71 @@ def _synthetic_swap_fast_exit(params: dict | None) -> bool:
     return str(raw.get("synthetic_swap_fast_exit", "1")).strip().lower() not in (
         "0", "false", "no", "off",
     )
+
+
+def _synthetic_explained_fast_exit(params: dict | None) -> bool:
+    """Fast path ampliado da carência para runs sintéticas (§ captura 13,
+    run 88): divergência estável cuja classificação FINAL já seria low pelos
+    overrides (swap de→para, referência envelhecida, mudança de contexto
+    app↔shell, conteúdo presente) dispensa a carência — esperar ~500ms não
+    muda a decisão, só atrasa a jornada (~98 divergências ≈ 49s de espera
+    pura por run). Default ligado em trilhas sintéticas;
+    ``synthetic_explained_fast_exit=0`` desliga (rollback). Runs reais nunca
+    ligam — divergência real mantém a carência que absorve eco tardio."""
+    raw = params if isinstance(params, dict) else {}
+    if not raw.get("synthetic"):
+        return False
+    return str(raw.get("synthetic_explained_fast_exit", "1")).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def explained_mismatch_fast_exit_predicate(
+    params: dict | None,
+    *,
+    expected_event: dict | None,
+    config=None,
+):
+    """Predicado ``(match, observed) -> bool`` para a máquina de espera.
+
+    True quando a divergência estável já é explicada pelos overrides — a
+    carência seria espera pura. Retorna ``None`` quando o fast-exit está
+    desligado (run real ou kill-switch), isto é, sem predicado a máquina
+    mantém a carência integral.
+    """
+    if not _synthetic_explained_fast_exit(params):
+        return None
+
+    def _predicate(match: dict, observed: dict) -> bool:
+        if (match or {}).get("synthetic_substitution"):
+            return True
+        expected_screen = expected_screen_text_from_event(expected_event or {}, config)
+        observed_screen = str((observed or {}).get("screen_text") or "")
+        if not expected_screen or not observed_screen:
+            return False
+        if synthetic_swap_override(
+            match, params, expected_screen=expected_screen, observed_screen=observed_screen
+        ):
+            return True
+        # Os overrides só olham evento/telas — a classificação inicial é
+        # pass-through. "high" virando "low" indica que um override disparou.
+        _, severity, _ = content_present_override(
+            *context_switch_override(
+                *stale_reference_override(
+                    "timeout", "high", "",
+                    expected_event=expected_event,
+                    expected_screen=expected_screen,
+                    observed_screen=observed_screen,
+                ),
+                expected_screen=expected_screen,
+                observed_screen=observed_screen,
+            ),
+            expected_screen=expected_screen,
+            observed_screen=observed_screen,
+        )
+        return severity == "low"
+
+    return _predicate
 
 
 def _comparison_mode_from_params(params: dict | None, default: str = "visual") -> str:
@@ -446,6 +512,11 @@ def _wait_for_expected_observed(
         # que esperar o timeout cheio do checkpoint.
         early_exit_on_stable_mismatch=_on_deterministic_mismatch(params) in {"send-anyway", "skip"},
         fast_exit_on_synthetic_swap=_synthetic_swap_fast_exit(params),
+        fast_exit_predicate=explained_mismatch_fast_exit_predicate(
+            params,
+            expected_event=expected_event,
+            config=session_config or replay_config,
+        ),
     )
 
 

@@ -543,9 +543,9 @@ def wait_for_signature_match(
         if quiet >= checkpoint_quiet_ms:
             out_ms = getattr(session, "last_out_ms", None)
             if out_ms is None or out_ms != compared_out_ms:
+                _t0 = time.monotonic()
                 observed = observed_snapshot_from_session(session)
                 last_observed = observed
-                _t0 = time.monotonic()
                 last_match = compare(observed)
                 compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
                 compared_out_ms = out_ms
@@ -576,8 +576,8 @@ def wait_for_signature_match(
                 elif now_ms - mismatch_since_ms >= grace_ms:
                     return False, _with_erp(last_match), observed
         time.sleep(0.02)
-    observed = last_observed or observed_snapshot_from_session(session)
     _t0 = time.monotonic()
+    observed = last_observed or observed_snapshot_from_session(session)
     final_match = compare(observed)
     compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
     return False, _with_erp(final_match), observed

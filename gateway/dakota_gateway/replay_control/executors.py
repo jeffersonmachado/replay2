@@ -313,6 +313,7 @@ def replay_strict_global_controlled(
                 # quiet/carência/timeout são política do Replay2 (sync_wait).
                 erp_ms = min(float(match.get("wait_erp_ms") or 0.0), elapsed)
             tel.record(TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms)
+            tel.record_wait_compare(float(match.get("wait_compare_cpu_ms") or 0.0))
             if matched:
                 tel.record_adaptive_wait()
             profile = getattr(adaptive, "latency_profile", None)
@@ -971,6 +972,7 @@ def replay_parallel_sessions_concurrent_controlled(
                     sess_tel.record(
                         TelemetryBucket.CHECKPOINT_WAIT, elapsed, erp_ms=erp_ms,
                     )
+                    sess_tel.record_wait_compare(float(match.get("wait_compare_cpu_ms") or 0.0))
                     if matched:
                         sess_tel.record_adaptive_wait()
                         sess_tel.record_response_timing(

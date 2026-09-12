@@ -75,6 +75,34 @@ class SessionTelemetryTests(unittest.TestCase):
         t.end_session(100.0)
         self.assertEqual(t.snapshot()["replay_overhead_ratio"], 0.0)
 
+    def test_wait_compare_cpu_informativo_sem_dupla_contagem(self):
+        """wait_compare_cpu_ms é sub-porção INFORMATIVA do checkpoint wait
+        (CPU de compare/predicado dentro do wait): acumula, aparece no
+        snapshot e NÃO entra no overhead — senão dupla contagem com
+        sync_wait/erp (§16.14)."""
+        t = SessionTelemetry(session_id="s1")
+        t.begin_session(1000.0)
+        t.record(TelemetryBucket.CHECKPOINT_WAIT, 500.0, erp_ms=100.0)
+        t.record_wait_compare(320.0)
+        t.record_wait_compare(30.0)
+        t.end_session(1500.0)
+        snap = t.snapshot()
+        self.assertEqual(snap["wait_compare_cpu_ms"], 350.0)
+        self.assertEqual(snap["compare_ms"], 0.0)
+        # Invariante intacta: overhead = total - erp (o compare dentro do
+        # wait já está em checkpoint_wait/sync_wait — não soma de novo).
+        self.assertAlmostEqual(snap["replay_overhead_ms"], 400.0)
+        self.assertAlmostEqual(
+            snap["replay_overhead_ms"],
+            snap["journey_total_ms"] - snap["erp_response_ms"],
+        )
+
+    def test_wait_compare_cpu_default_zero_no_snapshot(self):
+        t = SessionTelemetry(session_id="s1")
+        t.begin_session(0.0)
+        t.end_session(10.0)
+        self.assertEqual(t.snapshot()["wait_compare_cpu_ms"], 0.0)
+
     def test_contadores_de_batch(self):
         t = SessionTelemetry(session_id="s1")
         t.begin_session(0.0)
@@ -128,6 +156,7 @@ class RunTelemetryTests(unittest.TestCase):
         for key in (
             "journey_total_ms", "erp_response_ms", "replay_overhead_ms",
             "pacing_ms", "sync_wait_ms", "checkpoint_wait_ms",
+            "wait_compare_cpu_ms",
             "explicit_wait_ms", "send_ms", "compare_ms",
             "time_to_first_byte_ms", "time_to_last_byte_ms",
             "time_to_expected_state_ms",

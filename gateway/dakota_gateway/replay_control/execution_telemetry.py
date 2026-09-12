@@ -61,6 +61,7 @@ class SessionTelemetry:
         self._buckets: dict[TelemetryBucket, float] = {}
         self._checkpoint_wait_ms = 0.0
         self._erp_ms = 0.0
+        self._wait_compare_cpu_ms = 0.0
         self._start: float | None = None
         self._end: float | None = None
         self.batch_count = 0
@@ -122,6 +123,15 @@ class SessionTelemetry:
         self.convergence_pacing_skip_count += 1
         self.convergence_pacing_saved_ms += max(0.0, saved_ms)
 
+    def record_wait_compare(self, cpu_ms: float) -> None:
+        """CPU de compare+predicado DENTRO dos waits de checkpoint
+        (``wait_compare_cpu_ms`` do ``wait_for_signature_match``).
+
+        Sub-porção informativa do checkpoint wait — nunca somada no
+        overhead (o tempo já está em ``checkpoint_wait_ms``/``sync_wait_ms``,
+        somar de novo seria dupla contagem, §16.14)."""
+        self._wait_compare_cpu_ms += max(0.0, cpu_ms)
+
     def record_response_timing(
         self,
         *,
@@ -163,6 +173,7 @@ class SessionTelemetry:
             "explicit_wait_ms": explicit,
             "sync_wait_ms": sync,
             "checkpoint_wait_ms": self._checkpoint_wait_ms,
+            "wait_compare_cpu_ms": self._wait_compare_cpu_ms,
             "send_ms": send,
             "compare_ms": compare,
             "other_ms": other,

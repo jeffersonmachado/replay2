@@ -70,6 +70,22 @@ def test_mismatch_estavel_send_anyway_sai_cedo():
     assert elapsed < 2.0, f"esperou {elapsed:.1f}s — timeout cheio não foi evitado"
 
 
+def test_wait_anota_cpu_de_compare_no_match():
+    """wait_compare_cpu_ms: CPU gasta em compare+predicado dentro do wait
+    (sub-métrica informativa — medida: o AIX gasta ~4x o Linux por checkpoint,
+    precisamos saber quanto é compare vs. carência de relógio)."""
+    session = _FakeSession()
+
+    def slow_compare(observed):
+        time.sleep(0.05)
+        return {"matched": True}
+
+    (matched, match, _), _ = _run_wait(session, slow_compare, quiet_ms=50, timeout_ms=1000)
+    assert matched is True
+    assert match.get("wait_compare_cpu_ms") is not None
+    assert match["wait_compare_cpu_ms"] >= 40.0, match["wait_compare_cpu_ms"]
+
+
 def test_sem_saida_nova_nao_recomputa_compare_na_carencia():
     """Sem bytes novos o estado do terminal não muda — snapshot+compare são
     idênticos, então a carência não pode recomputar a cada iteração do loop.

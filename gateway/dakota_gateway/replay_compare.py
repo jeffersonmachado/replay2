@@ -481,6 +481,7 @@ def wait_for_signature_match(
     """
     deadline = int(time.time() * 1000) + checkpoint_timeout_ms
     wait_start_ms = deadline - checkpoint_timeout_ms
+    compare_cpu_ms = 0.0  # CPU de compare+predicado dentro do wait (informativo)
 
     def _with_erp(match: dict) -> dict:
         """Anota a porção ERP da espera: tempo até o último byte observado.
@@ -490,6 +491,7 @@ def wait_for_signature_match(
         em vez de atribuir a espera inteira de um mismatch ao ERP.
         """
         match["wait_erp_ms"] = float(max(0, session.last_out_ms - wait_start_ms))
+        match["wait_compare_cpu_ms"] = compare_cpu_ms
         return match
 
     grace_ms = (
@@ -500,7 +502,9 @@ def wait_for_signature_match(
     mismatch_since_ms: int | None = None
     mismatch_out_ms: int | None = None
     last_observed: dict = {}
+    _t0 = time.monotonic()
     last_match = compare({})
+    compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
     # Cache do snapshot+compare por last_out_ms: sem bytes novos o estado do
     # terminal é idêntico — recomputar a cada iteração do loop é CPU pura
     # (medido no AIX: ~7 compares por carência de 500ms × ~100 divergências).
@@ -522,7 +526,9 @@ def wait_for_signature_match(
             if out_ms is None or out_ms != compared_out_ms:
                 observed = observed_snapshot_from_session(session)
                 last_observed = observed
+                _t0 = time.monotonic()
                 last_match = compare(observed)
+                compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
                 compared_out_ms = out_ms
             if last_match.get("matched") or return_first_result:
                 return bool(last_match.get("matched")), _with_erp(last_match), observed
@@ -532,12 +538,16 @@ def wait_for_signature_match(
                     # convergiu (quiet já observado), só o dado mudou — a
                     # carência seria espera pura em todos os checkpoints.
                     return False, _with_erp(last_match), observed
-                if fast_exit_predicate is not None and fast_exit_predicate(last_match, last_observed):
-                    # Divergência estável cuja classificação final já seria
-                    # low pelos overrides (referência envelhecida, mudança de
-                    # contexto, conteúdo presente, swap de→para): esperar a
-                    # carência não muda a decisão, só atrasa a jornada.
-                    return False, _with_erp(last_match), observed
+                if fast_exit_predicate is not None:
+                    _t0 = time.monotonic()
+                    _fast = fast_exit_predicate(last_match, last_observed)
+                    compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
+                    if _fast:
+                        # Divergência estável cuja classificação final já
+                        # seria low pelos overrides (referência envelhecida,
+                        # mudança de contexto, conteúdo presente, swap
+                        # de→para): esperar a carência não muda a decisão.
+                        return False, _with_erp(last_match), observed
                 now_ms = int(time.time() * 1000)
                 if mismatch_since_ms is None or session.last_out_ms != mismatch_out_ms:
                     # Primeira divergência estável (ou saída nova desde a
@@ -548,4 +558,7 @@ def wait_for_signature_match(
                     return False, _with_erp(last_match), observed
         time.sleep(0.02)
     observed = last_observed or observed_snapshot_from_session(session)
-    return False, _with_erp(compare(observed)), observed
+    _t0 = time.monotonic()
+    final_match = compare(observed)
+    compare_cpu_ms += (time.monotonic() - _t0) * 1000.0
+    return False, _with_erp(final_match), observed

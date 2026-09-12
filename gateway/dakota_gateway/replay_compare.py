@@ -4,6 +4,7 @@ import base64
 import re
 import time
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 from .screen import TerminalScreenState
 from dakota_terminal.volatile import mask_volatile_screen_text
@@ -64,6 +65,28 @@ def observed_screen_text_from_session(session, *, max_chars: int = MAX_SCREEN_EV
     return value[:max_chars]
 
 
+@lru_cache(maxsize=512)
+def _render_expected_screen_cached(
+    raw_b64: str, rows: int, cols: int, encoding: str, max_chars: int
+) -> str | None:
+    """Render da tela esperada memoizado por conteúdo+geometria+encoding.
+
+    O ``screen_raw_b64`` do evento é imutável, mas o render passava pelo
+    TerminalScreenState até 3× por compare (fallbacks volátil/echo/
+    substituição) + predicado de fast-exit + registro da falha — dezenas de
+    renders idênticos por run no caminho quente (medido na captura 13, AIX).
+    ``None`` sinaliza falha de render (o chamador cai no screen_sample);
+    string vazia é render válido de tela vazia (semântica original).
+    """
+    try:
+        raw = base64.b64decode(raw_b64.encode("ascii"), validate=False)
+        state = TerminalScreenState(rows=rows, cols=cols, encoding=encoding)
+        state.feed_bytes(raw)
+        return str(state.text() or "")[:max_chars]
+    except Exception:
+        return None
+
+
 def expected_screen_text_from_event(
     ev: dict,
     config=None,
@@ -81,13 +104,9 @@ def expected_screen_text_from_event(
         rows = int(getattr(config, "rows", 25) or 25)
         cols = int(getattr(config, "cols", 80) or 80)
         encoding = str(getattr(config, "encoding", "utf-8") or "utf-8")
-        try:
-            raw = base64.b64decode(raw_b64.encode("ascii"), validate=False)
-            state = TerminalScreenState(rows=rows, cols=cols, encoding=encoding)
-            state.feed_bytes(raw)
-            return str(state.text() or "")[:max_chars]
-        except Exception:
-            pass
+        rendered = _render_expected_screen_cached(raw_b64, rows, cols, encoding, max_chars)
+        if rendered is not None:
+            return rendered
     return str(ev.get("screen_sample") or "")[:max_chars]
 
 

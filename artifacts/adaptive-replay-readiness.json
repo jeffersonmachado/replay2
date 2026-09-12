@@ -1,7 +1,7 @@
 {
-  "version": "0.9.8-dev",
+  "version": "0.9.9",
   "base_version": "0.9.7",
-  "date": "2026-09-10",
+  "date": "2026-09-12",
   "baseline_green": true,
   "baseline": {
     "subset_tests": "85 passed",
@@ -11,10 +11,10 @@
   },
   "tests_green": true,
   "final_regression": {
-    "python_suite": "1764 passed, 197 deselected, 0 failed",
+    "python_suite": "2008 passed, 161 subtests, 0 failed",
     "js_suites": "18/18",
     "tcl": "68/68",
-    "new_adaptive_tests": "98 passed + 39 subtests (9 arquivos test_adaptive_*)"
+    "new_adaptive_tests": "98 passed + 39 subtests (9 arquivos test_adaptive_*) + campanha v0.9.9 (dedup, cache compare, fast-exit, telemetria, render cache, snapshot leve)"
   },
   "offline_ready": true,
   "offline_evidence": "tests/test_adaptive_offline_unit.py: estatico (sem imports de rede/IA) + dinamico (socket/DNS sabotados)",
@@ -61,27 +61,41 @@
   },
   "notes": [
     "execution_policy default = conservative (rollback trivial); adaptive e adaptive_shadow sao opt-in",
-    "integracao captura -> params.typeahead_evidence e automatica: Runner extrai evidencia de type-ahead da captura em runs nao-sinteticas com policy != conservative (extract_capture_typeahead_evidence, params.typeahead_stable_ms default 150)"
+    "integracao captura -> params.typeahead_evidence e automatica: Runner extrai evidencia de type-ahead da captura em runs nao-sinteticas com policy != conservative (extract_capture_typeahead_evidence, params.typeahead_stable_ms default 150)",
+    "v0.9.9: politicas semanticas intactas (quiet 250ms, grace 500ms, timeouts, checkpoints, hash-chain/HMAC); otimizacao foi de CPU do compare (render memoizado, snapshot sem cells, dedup, fast-exit com kill-switch synthetic_explained_fast_exit=0)"
   ],
   "server_evidence": {
-    "date": "2026-09-10",
-    "version_deployed": "0.9.8",
+    "date": "2026-09-12",
+    "version_deployed": "0.9.9",
     "hosts": {"aix": "10.5.8.25 (MIG24)", "linux": "10.5.8.24 (recital24)"},
+    "human_baseline_s": 127.4,
+    "human_baseline_source": "span primeiro->ultimo deterministic_input da captura 13 (dev/tmp/human_span.py)",
     "shadow_eval_volume": {
       "aix": {"captures_ok": 64, "total_actions": 100157, "safe_candidates": 3563, "false_safe_decisions": 0, "checkpoint_violations": 0, "bytes_equivalent": true, "promotion_criteria_met": true, "potential_saved_ms": 121455},
       "linux": {"captures_ok": 4, "total_actions": 254, "safe_candidates": 9, "false_safe_decisions": 0, "checkpoint_violations": 0, "bytes_equivalent": true, "promotion_criteria_met": true}
     },
     "real_runs_capture13_seed42": {
-      "strict_global": {
+      "strict_global_v099": {
+        "aix": {"runs": [95, 96], "duration_s": [93.8, 89.3], "failures": [94, 96], "wait_compare_cpu_s": [14.6, 8.9], "erp_response_s": [11.9, 13.2]},
+        "linux": {"runs": [22, 23], "duration_s": [46.2, 45.4], "failures": [103, 103], "wait_compare_cpu_s": [7.2, 6.2], "erp_response_s": [1.1, 1.2]},
+        "criterio": "sintetico < humano (127.4s) nos DOIS ambientes: AIX 89.3-93.8s (-26% a -30%), Linux 45.4-46.2s (-64%)",
+        "evidence_files": ["dev/tmp/v4-strict-aix.json", "dev/tmp/v4-strict-linux.json"]
+      },
+      "strict_global_historico": {
+        "aix": {"v097_s": 365.0, "v098_s": [221.6, 223.1], "v3_instrumentado_s": [223.4, 223.6], "v3_wait_compare_cpu_s": [101.5, 100.2], "v099_s": [93.8, 89.3]},
+        "linux": {"v098_s": [56.4, 56.7], "v099_s": [46.2, 45.4]},
+        "causa_raiz_v098": "~45% do tempo total era CPU do proprio Replay2 (render esperado refeito por poll, snapshot serializando 2000 cells por poll, analise de falha duplicada) — medido por wait_compare_cpu_ms"
+      },
+      "strict_global_v098": {
         "aix": {"conservative_s": 457.2, "adaptive_shadow_s": 336.5, "adaptive_s": 329.8, "failures_identical": 98},
         "linux": {"conservative_s": 333.4, "adaptive_shadow_s": 326.4, "adaptive_s": 195.9, "failures_identical": 103, "adaptive_overhead_ratio": 0.186}
       },
-      "parallel_sessions_conc2": {
+      "parallel_sessions_conc2_v098": {
         "aix": {"conservative_s": 277.5, "adaptive_s": 273.4, "conservative_fallbacks": 102, "batches": 0},
         "linux": {"conservative_s": 204.0, "adaptive_s": 204.2, "conservative_fallbacks": 102, "batches": 0},
         "leitura": "todo input da captura 13 tem checkpoint -> fronteira inviolavel -> batching corretamente vetado (fallback conservador), sem regressao funcional"
       },
-      "aix_linux_fairness": "decisoes identicas nos dois ambientes; espera por estado proporcional a resposta real (ERP ~142-147 s AIX vs ~101 s Linux)"
+      "aix_linux_fairness": "politica semantica identica nos dois ambientes (mesma jornada/seed/acoes); a espera termina quando o estado e atingido — Linux termina antes porque o ERP responde antes (erp_response ~1.1s vs ~12s)"
     },
     "operational_bug_fixed": "shadow_eval_adaptive_replay.py crashava no AIX (stdout latin-1, UnicodeEncodeError no resumo) — fix reconfigure(errors=replace) + teste de regressao (PR #2)"
   },

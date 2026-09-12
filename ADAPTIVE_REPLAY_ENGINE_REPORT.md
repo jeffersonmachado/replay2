@@ -1,6 +1,6 @@
-# ADAPTIVE_REPLAY_ENGINE_REPORT — Motor Adaptativo Determinístico (v0.9.8)
+# ADAPTIVE_REPLAY_ENGINE_REPORT — Motor Adaptativo Determinístico (v0.9.9)
 
-Data: 2026-09-10 · Base: dakota-replay2-0.9.7 · Escopo: jornadas sintéticas e
+Data: 2026-09-12 · Base: dakota-replay2-0.9.7 · Escopo: jornadas sintéticas e
 reais com velocidade próxima/superior à de operador humano, sem sacrificar
 determinismo, checkpoints, auditabilidade, comparabilidade AIX×Linux,
 segurança ou isolamento de rede. **100% offline. Nenhuma IA/SaaS.**
@@ -450,3 +450,113 @@ dinâmica — pipeline completo (parse → classificação → scheduler → evi
 → telemetria → perfil de latência com persistência) executa com
 `socket.socket`/`getaddrinfo`/`create_connection` sabotados para lançar
 `AssertionError`. Verde: o motor não toca rede nem DNS.
+
+---
+
+## 21. Campanha v0.9.9 — strict-global abaixo do tempo humano
+
+Critério de aceite desta rodada (definido pelo usuário): **a jornada
+sintética deve ser mais rápida que o operador humano**. Baseline humana =
+**127,4 s** (span primeiro→último `deterministic_input` da captura 13 no
+MIG24, `dev/tmp/human_span.py`). Fluxo medido: o real do 1-clique —
+`capture_synthesis_service.py` dispara run **strict-global** `send-anyway`
+(não o parallel-sessions do X5; a rodada v0.9.8 otimizou o caminho errado
+para este critério).
+
+### 21.1 Diagnóstico instrumentado (causa raiz)
+
+A telemetria `wait_compare_cpu_ms` (PR #8) separou, dentro dos waits de
+checkpoint, a CPU de compare+predicado da espera por I/O. Medição v3
+(strict-global, AIX, runs 93/94 — código equivalente à v0.9.8):
+
+| componente | run 93 | run 94 |
+|---|---|---|
+| duração total | 223,4 s | 223,6 s |
+| sync_wait_ms | ~122 s | ~122 s |
+| **wait_compare_cpu_ms** | **101,5 s** | **100,2 s** |
+| erp_response_ms | ~12 s | ~13 s |
+
+Ou seja: **~45% do tempo total era CPU do próprio Replay2 renderizando/
+comparando telas dentro dos waits** — não ERP, não pacing, não rede. O ERP
+respondia em ~12 s dos 223 s. Três causas comprovadas:
+
+1. **Render da tela esperada refeito a cada poll** — `replay_compare.py`
+   re-parseava o `screen_raw` (audit trail) para reconstruir a tela
+   esperada em cada iteração do wait (poll a cada ~50 ms × ~100
+   checkpoints × 3 renders por compare).
+2. **`snapshot()` serializava 2000 células `to_dict()` por poll** — a
+   assinatura (`text_sig`/`visual_sig`) só precisa do texto; os atributos
+   por célula eram serializados e descartados.
+3. **Análise de falha duplicada** — no strict-global a divergência era
+   analisada no `wait_checkpoint` e de novo no except do executor (mesma
+   tela, mesmo predicado), e o compare não era cacheado por
+   `last_out_ms`: saída inalterada ⇒ re-compare completo idêntico.
+
+### 21.2 Correções (PRs #6–#10, todas TDD)
+
+| PR | Mudança | Kill-switch |
+|---|---|---|
+| #6 | dedup da análise de falha no strict-global + cache de compare por `last_out_ms` (saída inalterada ⇒ resultado cacheado) | — |
+| #7 | fast-exit no wait quando a divergência já é explicada pelos overrides (`stale_reference`, `context_switch`, `content_present`, swap sintético) — sai sem esperar o timeout/grace | `synthetic_explained_fast_exit=0` |
+| #8 | telemetria `wait_compare_cpu_ms` (sub-métrica informativa; soma verificada sem dupla contagem por teste) | — |
+| #9 | memoização do render da tela esperada: `lru_cache(512)` em `_render_expected_screen_cached` por (raw_b64, rows, cols, encoding, max_chars) | — |
+| #10 | snapshot leve no wait: `engine.snapshot(include_cells=False)` + `snapshot_from_engine(include_cells=True)`; `canonical_snapshot_now` (`replay.py`) serializa o texto 1× só; **sigs byte-idênticas** (contrato testado) | — |
+
+Não tocados (política semântica): quiet 250 ms, grace 500 ms, timeouts,
+checkpoints, hash-chain/HMAC, ordem strict-global.
+
+### 21.3 Resultado — critério cumprido nos DOIS ambientes
+
+Runs strict-global reais (captura 13 → jornada sintética, seed 42, mesma
+massa/ações/concorrência nos dois hosts; 2 réplicas por host):
+
+| ambiente | v0.9.7 (v1) | v0.9.8 (v2) | instrumentado (v3) | **v0.9.9 (v4)** | humano |
+|---|---|---|---|---|---|
+| AIX/POWER (MIG24) | ~365 s | 221,6–223,1 s | 223,4–223,6 s | **93,8 / 89,3 s** | 127,4 s |
+| Linux/x86 (recital24) | — | 56,4–56,7 s | — | **46,2 / 45,4 s** | 127,4 s |
+
+- **AIX: 89,3–93,8 s < 127,4 s humano (−26% a −30%)**; journey 53,1–57,3 s,
+  `wait_compare_cpu` 101,5 s → **8,9–14,6 s** (−86% a −91%).
+- **Linux: 45,4–46,2 s < 127,4 s humano (−64%)**; `wait_compare_cpu`
+  6,2–7,2 s.
+- Falhas: AIX 94–96, Linux 103 — distribuição 72 `synthetic_data_swap`/low
+  + ~20 `screen_divergence`/low + 2–4 `screen_divergence`/medium, todas
+  esperadas de run sintética `send-anyway` (evidências OBS mostram telas
+  "DAKOTA S/A ESTOQUE" — pedido percorrido). A variação 98→94–96 vs
+  rodadas anteriores é efeito do instante da foto observada (compares mais
+  rápidos → menos divergência de contexto envelhecida), não mascaramento:
+  os valores de sig são idênticos, só o timing mudou — mesmo precedente do
+  fast-path de swap (PR #4, v0.9.8).
+- Comparabilidade AIX×Linux preservada: mesma política semântica, mesma
+  jornada/seed/ações; a espera termina quando o estado é atingido — Linux
+  naturalmente termina antes porque o ERP responde antes (erp_response
+  ~1,1 s vs ~12 s).
+
+Evidências: `dev/tmp/v2-strict-{aix,linux}.json`, `v3-strict-aix.json`,
+`v4-strict-{aix,linux}.json` (driver `dev/tmp/clone_run_parallel.py` nos
+servidores).
+
+### 21.4 Testes RED criados nesta campanha
+
+- dedup análise de falha strict (×2), cache de compare por `last_out_ms`
+  (×2 — incluindo invalidação quando a saída muda), fast-exit de
+  divergência explicada (×7), `wait_compare_cpu_ms` sem dupla contagem
+  (×3), memoização do render esperado (×4 — incluindo isolamento por
+  geometria/encoding), snapshot leve (×3 — **sigs byte-idênticas com e sem
+  cells**).
+- Regressão completa final: **2008 passed, 161 subtests, 0 failed** +
+  JS + Tcl. Flake preexistente documentado:
+  `test_synthetic_api_unit.py::test_analyze_source_endpoint` (varre
+  `/tmp`; falhou 1× por conteúdo transitório, passa isolado e nas re-runs
+  — não relacionado).
+
+### 21.5 Riscos novos e mitigação
+
+- **Fast-exit muda o instante da foto observada** da divergência explicada
+  (sai antes do grace). Mitigação: só se aplica a divergência já
+  classificada como esperada (swap/overrides), kill-switch
+  `synthetic_explained_fast_exit=0`, e o registro da falha permanece com
+  sig/severity idênticos.
+- **Caches (`lru_cache`, compare por `last_out_ms`)**: invalidação por
+  chave completa (raw+geometria+encoding) / por timestamp de saída;
+  testados contra reuso indevido.

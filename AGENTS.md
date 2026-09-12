@@ -167,7 +167,18 @@ replay2/
   determinística — nos modos `send-anyway`/`skip` uma tela já estável que
   divergiu não espera o timeout cheio do checkpoint: sai após uma carência de
   max(quiet, 500ms) sem saída nova, `early_exit_on_stable_mismatch` em
-  `replay_compare.wait_for_signature_match`; saída tardia reseta a carência), `executors.py` (executores strict-global/parallel-sessions/
+  `replay_compare.wait_for_signature_match`; saída tardia reseta a carência;
+  a máquina de espera cacheia snapshot+compare por `last_out_ms` — sem bytes
+  novos o estado do terminal é idêntico e não recomputa (v0.9.9). Em runs
+  sintéticas a divergência estável já explicada pelos overrides (swap de→para,
+  referência envelhecida, mudança de contexto app↔shell, conteúdo presente)
+  dispensa até a carência — `explained_mismatch_fast_exit_predicate` via
+  `fast_exit_predicate`, default ligado, kill-switch
+  `synthetic_explained_fast_exit=0`; runs reais nunca ligam (v0.9.9). No
+  strict-global, o `wait_checkpoint` anexa o contexto do mismatch
+  (match/telas/classificação) à exceção e o `except` o reusa via
+  `precomputed` do `_deterministic_failure` — sem recomputar a análise
+  (v0.9.9)), `executors.py` (executores strict-global/parallel-sessions/
   concurrent + `LoadTestParams`), `runner.py` (ciclo de vida de runs + classe
   `Runner`) e `__init__.py` (fachada que reexporta toda a superfície do
   módulo antigo). Desde a Fase 8, os modos parallel-sessions rodam EM

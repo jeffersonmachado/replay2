@@ -18,7 +18,7 @@ try:
 except Exception:  # pragma: no cover
     termios = None
 
-from .screen import TerminalScreenState
+from .screen import TerminalScreenState, build_screen_snapshot
 from .terminal_config import normalize_encoding, validate_terminal_geometry
 from .audit_writer import AuditWriter, b64, write_manifest
 from .schema import AuditEvent
@@ -356,16 +356,25 @@ class _TargetSession:
         return data
 
     def canonical_snapshot_now(self) -> dict:
-        """Retorna assinaturas canonicas do estado atual."""
-        snap = self.screen_state.snapshot()
+        """Retorna assinaturas canonicas do estado atual.
+
+        Caminho leve (0.9.9): o wait de checkpoint só consome assinaturas +
+        texto, então a engine serializa sem as 2000 células
+        (``include_cells=False`` — fatia dominante do wait_compare_cpu_ms no
+        AIX) e o texto é serializado uma única vez. Valores idênticos ao
+        caminho completo (contrato em tests/test_snapshot_lightweight_unit.py).
+        """
+        text = self.screen_state.text()
+        legacy = build_screen_snapshot(text)
+        canonical = self.screen_state.engine.snapshot(include_cells=False)
         return {
-            "text_sig": snap.text_sig or "",
-            "visual_sig": snap.visual_sig or "",
-            "semantic_sig": snap.semantic_sig or snap.screen_sig or "",
-            "screen_sig": snap.screen_sig or "",
+            "text_sig": canonical["text_sig"] or "",
+            "visual_sig": canonical["visual_sig"] or "",
+            "semantic_sig": canonical.get("semantic_sig") or legacy.screen_sig or "",
+            "screen_sig": legacy.screen_sig or "",
             # Texto da tela para a segunda chance com máscara de voláteis
             # (ruído ambiental, ex.: "Kb livres" da linha de status).
-            "screen_text": str(self.screen_state.text() or ""),
+            "screen_text": text,
         }
 
 

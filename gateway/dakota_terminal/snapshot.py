@@ -60,13 +60,17 @@ class RenderSnapshot:
 _SEMANTIC_BOX_CHARS = frozenset("┌┐└┘├┤┬┴┼─│")
 
 
-def snapshot_from_engine(engine) -> dict:
+def snapshot_from_engine(engine, *, include_cells: bool = True) -> dict:
     # FASE 6: passagem única sobre a matriz. Antes eram 4 travessias
     # independentes (to_dict + text_sig + visual_sig + semantic_sig), cada uma
     # relendo rows*cols dicionários; agora a lista de células e as três
     # serializações canônicas saem do mesmo loop. O resultado é
     # byte-idêntico: mesmas primitivas (_codepoints, memo de linha visual,
     # normalização de box drawing do semantic_sig) e mesma ordem de chaves.
+    # include_cells=False (0.9.9): pula a montagem das células (2000 to_dict
+    # por snapshot) para consumidores que só precisam das assinaturas (wait
+    # de checkpoint) — as assinaturas são byte-idênticas, pois saem das
+    # mesmas primitivas no mesmo loop.
     rows = engine.rows
     cols = engine.cols
     term = engine.term
@@ -79,7 +83,7 @@ def snapshot_from_engine(engine) -> dict:
     memo_get = line_memo.get
     cp = _codepoints
     cells: list[dict] = []
-    cells_append = cells.append
+    cells_append = cells.append if include_cells else None
     sem_lines: list[str] = []
     box_chars = _SEMANTIC_BOX_CHARS
     for row in engine.cells:
@@ -90,7 +94,8 @@ def snapshot_from_engine(engine) -> dict:
             # Dict novo por célula: consumidores podem mutar o snapshot
             # (ex.: montagem de diffs) — compartilhar dicts entre posições
             # ou entre snapshots corromperia todos eles.
-            cells_append(cell.to_dict())
+            if cells_append is not None:
+                cells_append(cell.to_dict())
             text_parts.append(cp(ch))
             vch = ch or " "
             key = (vch, cell.fg, cell.bg, cell.bold, cell.dim, cell.underline, cell.blink, cell.reverse, cell.hidden)

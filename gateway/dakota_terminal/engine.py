@@ -374,8 +374,8 @@ class TerminalEngine:
     def text(self) -> str:
         return "\n".join("".join(cell.ch for cell in row) for row in self.cells)
 
-    def snapshot(self) -> dict:
-        return snapshot_from_engine(self)
+    def snapshot(self, *, include_cells: bool = True) -> dict:
+        return snapshot_from_engine(self, include_cells=include_cells)
 
     # ── Estado serializável (dívida X6 — cache de replay em disco) ──────
     def is_state_clean(self) -> bool:

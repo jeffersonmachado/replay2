@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { complianceLabel, entryModeLabel, failureTypeLabel, severityLabel } from './dom.js';
+import { captureStatusLabel, complianceLabel, entryModeLabel, executionPolicyLabel, failureTypeLabel, roleLabel, severityLabel, statusLabel } from './dom.js';
 import { failureTableRow } from '../components/run_views.js';
 
 test('failureTypeLabel traduz a taxonomia conhecida para pt-BR leigo', () => {
@@ -77,4 +77,36 @@ test('entryModeLabel traduz os modos de entrada', () => {
   assert.equal(entryModeLabel('direct'), 'direto');
   assert.equal(entryModeLabel(''), '—');
   assert.equal(entryModeLabel('outro_modo'), 'outro_modo');
+});
+
+test('captureStatusLabel traduz o status da captura', () => {
+  assert.equal(captureStatusLabel('active'), 'ativa');
+  assert.equal(captureStatusLabel('finished'), 'concluída');
+  assert.equal(captureStatusLabel('interrupted'), 'interrompida');
+  assert.equal(captureStatusLabel('failed'), 'falhou');
+  assert.equal(captureStatusLabel('ACTIVE'), 'ativa');
+  assert.equal(captureStatusLabel(''), '—');
+  assert.equal(captureStatusLabel(null), '—');
+  assert.equal(captureStatusLabel('status_novo'), 'status_novo');
+});
+
+test('executionPolicyLabel traduz a política de execução do replay', () => {
+  assert.equal(executionPolicyLabel('conservative'), 'conservadora (padrão)');
+  assert.equal(executionPolicyLabel('adaptive'), 'adaptativa (acelera com segurança)');
+  assert.equal(executionPolicyLabel('adaptive_shadow'), 'shadow (mede, não acelera)');
+  assert.equal(executionPolicyLabel(''), '—');
+  assert.equal(executionPolicyLabel('outra_politica'), 'outra_politica');
+});
+
+test('statusLabel cobre created (benchmark/experimentos)', () => {
+  assert.equal(statusLabel('created'), 'criada');
+  assert.equal(statusLabel('CREATED'), 'criada');
+});
+
+test('roleLabel traduz os perfis de usuário', () => {
+  assert.equal(roleLabel('viewer'), 'leitura');
+  assert.equal(roleLabel('operator'), 'operador');
+  assert.equal(roleLabel('admin'), 'administrador');
+  assert.equal(roleLabel(''), '—');
+  assert.equal(roleLabel('perfil_novo'), 'perfil_novo');
 });

@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, formatDate, html, text } from "../core/dom.js";
+import { escapeHtml, formatDate, html, text, roleLabel } from "../core/dom.js";
 import { activatePageSections } from "../components/page_sections.js";
 
 async function loadSessionCard() {
@@ -8,7 +8,7 @@ async function loadSessionCard() {
     html("#admin_session_card", `
       <div class="r2ctl-detail-surface rounded-2xl p-4">
         <div class="font-mono text-sm text-stone-100">${escapeHtml(me.data.username || "-")}</div>
-        <div class="mt-1 text-xs text-stone-400">role=${escapeHtml(me.data.role || "-")}</div>
+        <div class="mt-1 text-xs text-stone-400" title="${escapeHtml(me.data.role || "-")}">perfil: ${escapeHtml(roleLabel(me.data.role))}</div>
       </div>
       <div class="r2ctl-detail-surface rounded-2xl p-4">
         <div class="font-mono text-sm text-stone-100">gateway ${gateway?.data?.running ? "ativo" : "inativo"}</div>
@@ -18,12 +18,12 @@ async function loadSessionCard() {
   }
   html("#admin_settings_card", `
     <div class="r2ctl-detail-surface rounded-2xl p-4">
-      <div class="font-mono text-sm text-stone-100">rotas HTML reorganizadas</div>
+      <div class="font-mono text-sm text-stone-100">navegação por áreas</div>
       <div class="mt-1 text-xs text-stone-400">Dashboard, Execuções, Gateway, Catálogo, Observabilidade e Administração</div>
     </div>
     <div class="r2ctl-detail-surface rounded-2xl p-4">
-      <div class="font-mono text-sm text-stone-100">assets JS modulares</div>
-      <div class="mt-1 text-xs text-stone-400">scripts por página servidos em /assets/js</div>
+      <div class="font-mono text-sm text-stone-100">dados sempre do servidor local</div>
+      <div class="mt-1 text-xs text-stone-400">as telas carregam as informações direto deste servidor, sem internet</div>
     </div>
   `);
 }

@@ -1,4 +1,4 @@
-import { escapeHtml, failureTypeLabel, formatCount, formatDate, modeLabel, statusLabel, statusToneClass } from "../core/dom.js";
+import { complianceLabel, entryModeLabel, escapeHtml, failureTypeLabel, formatCount, formatDate, modeLabel, statusLabel, statusToneClass } from "../core/dom.js";
 import { runSyntheticBadgeHtml } from "./run_views.js";
 
 export function runIdentityCard(run) {
@@ -10,7 +10,7 @@ export function runIdentityCard(run) {
       </div>
       <div class="mt-3 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
       <div class="mt-2 text-xs text-stone-400">criada em ${formatDate(run.created_at_ms)} • modo ${escapeHtml(modeLabel(run.mode))}</div>
-      <div class="mt-2 text-xs text-stone-400">compliance=${escapeHtml(run.compliance_status || "-")} • entry=${escapeHtml(run.entry_mode || "-")} • gateway=${escapeHtml(run.gateway_endpoint || "-")}</div>
+      <div class="mt-2 text-xs text-stone-400" title="compliance=${escapeHtml(run.compliance_status || "-")} • entry=${escapeHtml(run.entry_mode || "-")}">conformidade: ${escapeHtml(complianceLabel(run.compliance_status))} • entrada: ${escapeHtml(entryModeLabel(run.entry_mode))} • gateway: ${escapeHtml(run.gateway_endpoint || "-")}</div>
     </div>
   `;
 }

@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { failureTypeLabel, severityLabel } from './dom.js';
+import { complianceLabel, entryModeLabel, failureTypeLabel, severityLabel } from './dom.js';
 import { failureTableRow } from '../components/run_views.js';
 
 test('failureTypeLabel traduz a taxonomia conhecida para pt-BR leigo', () => {
@@ -60,4 +60,21 @@ test('failureTableRow escapa o rótulo de tipos desconhecidos (XSS)', () => {
   });
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+test('complianceLabel traduz os status de conformidade', () => {
+  assert.equal(complianceLabel('compliant'), 'conforme');
+  assert.equal(complianceLabel('warning'), 'atenção');
+  assert.equal(complianceLabel('non_compliant'), 'não conforme');
+  assert.equal(complianceLabel('rejected'), 'rejeitada');
+  assert.equal(complianceLabel('not_applicable'), 'não se aplica');
+  assert.equal(complianceLabel(''), '—');
+  assert.equal(complianceLabel('status_novo'), 'status_novo');
+});
+
+test('entryModeLabel traduz os modos de entrada', () => {
+  assert.equal(entryModeLabel('gateway_ssh'), 'via gateway');
+  assert.equal(entryModeLabel('direct'), 'direto');
+  assert.equal(entryModeLabel(''), '—');
+  assert.equal(entryModeLabel('outro_modo'), 'outro_modo');
 });

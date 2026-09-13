@@ -103,6 +103,31 @@ export function severityLabel(severity) {
   return labels[value] || String(severity || "-");
 }
 
+// Conformidade da sessão com a política de acesso (entrou pelo gateway
+// auditável ou direto) — rótulos leigos, código técnico fica no title.
+export function complianceLabel(status) {
+  const value = String(status || "").toLowerCase();
+  const labels = {
+    compliant: "conforme",
+    warning: "atenção",
+    non_compliant: "não conforme",
+    rejected: "rejeitada",
+    not_applicable: "não se aplica",
+  };
+  if (!value) return "—";
+  return labels[value] || String(status);
+}
+
+export function entryModeLabel(mode) {
+  const value = String(mode || "").toLowerCase();
+  const labels = {
+    gateway_ssh: "via gateway",
+    direct: "direto",
+  };
+  if (!value) return "—";
+  return labels[value] || String(mode);
+}
+
 export function statusToneClass(status) {
   const value = String(status || "").toLowerCase();
   if (["running", "resuming"].includes(value)) return "r2ctl-status r2ctl-status-running";

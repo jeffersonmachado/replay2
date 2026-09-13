@@ -167,15 +167,21 @@ Os testes do Replay2 estão organizados em camadas, da mais interna (unidade) à
 
 **Comando:** `./scripts/smoke-test-replay.sh --host 10.5.8.24 --port 8080`
 
-**Validações:**
+**Validações (contrato X6 — `timeline`/`playback` trafegam como refs; os
+eventos completos da janela vivem em `timeline_items`):**
 - `geometry.rows` e `geometry.cols` presentes
 - `geometry.geometry_source` definido
 - `geometry.encoding` presente
-- `timeline[].timestamp_ms` em todos os eventos
-- `playback.events[].data_b64` em todos os eventos
-- Snapshots com `content_kind: "terminal_snapshot"`
+- `timeline.event_refs` não-vazio
+- `timeline_items[].timestamp_ms` em todos os eventos
+- `playback.event_count` > 0 (meta do playback)
+- `data_b64` em todos os eventos `type: "bytes"` de `timeline_items`
+- Snapshots: itens de `timeline_items` com `snapshot_compact`
 - `text_sig` e `visual_sig` nos snapshots (quando disponível)
 - `session_start` com rows, cols, term, encoding
+- Cobertura local do contrato: `tests/test_smoke_replay_script_unit.py`
+  (stub HTTP com o payload X6 rodando o script por subprocess, incl.
+  stdout latin-1 do AIX)
 
 ---
 

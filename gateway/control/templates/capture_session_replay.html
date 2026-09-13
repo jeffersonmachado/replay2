@@ -370,7 +370,7 @@ input[type="range"] {
     const backLink = document.querySelector('[data-tab-link="back"]');
     if (backLink) backLink.href = `/runs/${encodeURIComponent(runId)}`;
     const title = document.getElementById('replay-section-title');
-    if (title) title.textContent = `Sessão Observada — Run #${runId}`;
+    if (title) title.textContent = `Sessão Observada — Execução #${runId}`;
     // Ações que chamam endpoints de captura não fazem sentido aqui.
     document.getElementById('operational-replay-card')?.classList.add('hidden');
     document.getElementById('synthetic-origin-banner')?.classList.add('hidden');
@@ -1467,11 +1467,11 @@ input[type="range"] {
     });
     const createData = await createResp.json();
     if (!createResp.ok || !createData?.id) {
-      if (statusEl) statusEl.textContent = createData?.error || `Falha ao criar run ${inputMode}.`;
+      if (statusEl) statusEl.textContent = createData?.error || `Falha ao criar a execução (modo ${inputMode}).`;
       return;
     }
     const runId = Number(createData.id || 0);
-    if (statusEl) statusEl.textContent = `Run #${runId} criada. Iniciando...`;
+    if (statusEl) statusEl.textContent = `Execução #${runId} criada. Iniciando...`;
     const startResp = await fetch(`/api/runs/${runId}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1480,7 +1480,7 @@ input[type="range"] {
     });
     const startData = await startResp.json().catch(() => ({}));
     if (!startResp.ok) {
-      if (statusEl) statusEl.textContent = startData?.error || `Run #${runId} criada, mas falhou ao iniciar.`;
+      if (statusEl) statusEl.textContent = startData?.error || `Execução #${runId} criada, mas falhou ao iniciar.`;
       return;
     }
     window.location = `/runs/${runId}`;

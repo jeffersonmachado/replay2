@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = join(here, '..', '..', '..', 'templates');
 const captures = readFileSync(join(TEMPLATES, 'captures.html'), 'utf8');
 const sessionReplay = readFileSync(join(TEMPLATES, 'capture_session_replay.html'), 'utf8');
+const runs = readFileSync(join(TEMPLATES, 'runs.html'), 'utf8');
 
 test('captures.html: painel de dados sintéticos explica em linguagem leiga', () => {
   assert.match(captures, /refazer a jornada no sistema novo/);
@@ -50,4 +51,12 @@ test('session replay: filtro "Determinístico" vira "Teclas verificadas"', () =>
 
 test('session replay: badge DET carrega explicação no title', () => {
   assert.match(sessionReplay, /title="Tecla com verificação de tela/);
+});
+
+test('runs.html: filtro de gravidade mostra rótulos leigos, valores da API preservados', () => {
+  assert.match(runs, /<option value="critical">crítica<\/option>/);
+  assert.match(runs, /<option value="high">alta<\/option>/);
+  assert.match(runs, /<option value="medium">média<\/option>/);
+  assert.match(runs, /<option value="low">baixa<\/option>/);
+  assert.match(runs, /<option value="info">informativa<\/option>/);
 });

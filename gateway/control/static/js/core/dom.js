@@ -58,6 +58,7 @@ export function statusLabel(status) {
     pending: "pendente",
     resuming: "retomando",
     completed: "concluída",
+    created: "criada",
     done: "concluída",
   };
   return labels[value] || String(status || "-");
@@ -126,6 +127,45 @@ export function entryModeLabel(mode) {
   };
   if (!value) return "—";
   return labels[value] || String(mode);
+}
+
+// Status da captura (gravação da sessão real) — rótulos leigos; o código
+// técnico (active/finished/...) permanece disponível no title.
+export function captureStatusLabel(status) {
+  const value = String(status || "").toLowerCase();
+  const labels = {
+    active: "ativa",
+    finished: "concluída",
+    interrupted: "interrompida",
+    failed: "falhou",
+  };
+  if (!value) return "—";
+  return labels[value] || String(status);
+}
+
+// Política de execução do motor de replay (conservative/adaptive/shadow) —
+// mesma redação em toda a UI; o valor cru da API fica no title/parênteses.
+export function executionPolicyLabel(policy) {
+  const value = String(policy || "").toLowerCase();
+  const labels = {
+    conservative: "conservadora (padrão)",
+    adaptive: "adaptativa (acelera com segurança)",
+    adaptive_shadow: "shadow (mede, não acelera)",
+  };
+  if (!value) return "—";
+  return labels[value] || String(policy);
+}
+
+// Perfil de acesso do usuário do painel.
+export function roleLabel(role) {
+  const value = String(role || "").toLowerCase();
+  const labels = {
+    viewer: "leitura",
+    operator: "operador",
+    admin: "administrador",
+  };
+  if (!value) return "—";
+  return labels[value] || String(role);
 }
 
 export function statusToneClass(status) {

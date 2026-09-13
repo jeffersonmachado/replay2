@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, formatCount, html, text } from "../core/dom.js";
+import { escapeHtml, formatCount, html, text, complianceLabel, failureTypeLabel, statusLabel } from "../core/dom.js";
 import { failureTableRow, runTableRow, runSyntheticOrigin } from "../components/run_views.js";
 import { emptyTableRow } from "../components/tables.js";
 import { activatePageSections } from "../components/page_sections.js";
@@ -49,7 +49,7 @@ async function loadSection() {
     const result = await apiJson("/api/runs?limit=500");
     if (!result?.data) return;
     const runs = (result.data.runs || []).slice().sort((a, b) => (b.created_at_ms || 0) - (a.created_at_ms || 0));
-    renderTable("#history_rows", runs, "#history_refresh_status", "Nenhuma run no historico.");
+    renderTable("#history_rows", runs, "#history_refresh_status", "Nenhuma execução no histórico.");
     return;
   }
 
@@ -70,7 +70,7 @@ async function loadSection() {
       typeSelect.innerHTML =
         `<option value="">Todos os tipos</option>` +
         (payload.available_types || [])
-          .map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`)
+          .map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(failureTypeLabel(t))} (${escapeHtml(t)})</option>`)
           .join("");
       typeSelect.value = failureType;
       typeSelect.dataset.loaded = "1";
@@ -84,7 +84,7 @@ async function loadSection() {
               item.failure_type === failureType
                 ? "bg-rose-900/40 text-rose-200 border-rose-800"
                 : "bg-stone-800/60 text-stone-300 hover:bg-stone-700/60"
-            }">${escapeHtml(item.failure_type)} · ${formatCount(item.count)}</button>`,
+            }" title="${escapeHtml(item.failure_type)}">${escapeHtml(failureTypeLabel(item.failure_type))} · ${formatCount(item.count)}</button>`,
         )
         .join("") || `<span class="text-xs text-stone-500">nenhuma falha registrada</span>`,
     );
@@ -105,7 +105,7 @@ async function loadSection() {
     const result = await apiJson("/api/runs?limit=500");
     if (!result?.data) return;
     const runs = (result.data.runs || []).filter((r) => COMPLIANCE_BLOCKED.has(String(r.compliance_status || "").toLowerCase()));
-    renderTable("#compliance_rows", runs, "#compliance_refresh_status", "Nenhuma run com compliance bloqueado.");
+    renderTable("#compliance_rows", runs, "#compliance_refresh_status", "Nenhuma execução com conformidade bloqueada.");
     return;
   }
 }
@@ -121,23 +121,23 @@ async function compareRuns() {
   const a = resA?.data?.run;
   const b = resB?.data?.run;
   if (!a || !b) {
-    html("#compare_result", `<p class="text-sm text-rose-300">Uma ou ambas as runs nao foram encontradas.</p>`);
+    html("#compare_result", `<p class="text-sm text-rose-300">Uma ou ambas as execuções não foram encontradas.</p>`);
     return;
   }
   html(
     "#compare_result",
     `<div class="grid gap-4 lg:grid-cols-2">
       <div class="r2ctl-detail-surface rounded-2xl p-4">
-        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run A — #${a.id}</div>
-        <div class="text-sm text-stone-200">Status: ${escapeHtml(a.status || "-")}</div>
-        <div class="mt-1 text-sm text-stone-200">Compliance: ${escapeHtml(a.compliance_status || "-")}</div>
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Execução A — #${a.id}</div>
+        <div class="text-sm text-stone-200">Status: <span title="${escapeHtml(a.status || "-")}">${escapeHtml(statusLabel(a.status))}</span></div>
+        <div class="mt-1 text-sm text-stone-200">Conformidade: <span title="${escapeHtml(a.compliance_status || "-")}">${escapeHtml(complianceLabel(a.compliance_status))}</span></div>
         <div class="mt-1 text-sm text-stone-200">Destino: ${escapeHtml(a.target_user || "-")}@${escapeHtml(a.target_host || "-")}</div>
         <div class="mt-1 text-xs text-stone-400">Progresso: ${a.last_seq_global_applied || 0} eventos</div>
       </div>
       <div class="r2ctl-detail-surface rounded-2xl p-4">
-        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Run B — #${b.id}</div>
-        <div class="text-sm text-stone-200">Status: ${escapeHtml(b.status || "-")}</div>
-        <div class="mt-1 text-sm text-stone-200">Compliance: ${escapeHtml(b.compliance_status || "-")}</div>
+        <div class="text-xs uppercase tracking-[0.14em] text-stone-400 mb-2">Execução B — #${b.id}</div>
+        <div class="text-sm text-stone-200">Status: <span title="${escapeHtml(b.status || "-")}">${escapeHtml(statusLabel(b.status))}</span></div>
+        <div class="mt-1 text-sm text-stone-200">Conformidade: <span title="${escapeHtml(b.compliance_status || "-")}">${escapeHtml(complianceLabel(b.compliance_status))}</span></div>
         <div class="mt-1 text-sm text-stone-200">Destino: ${escapeHtml(b.target_user || "-")}@${escapeHtml(b.target_host || "-")}</div>
         <div class="mt-1 text-xs text-stone-400">Progresso: ${b.last_seq_global_applied || 0} eventos</div>
       </div>

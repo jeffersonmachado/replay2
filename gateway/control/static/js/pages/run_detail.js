@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, html } from "../core/dom.js";
+import { escapeHtml, html, failureTypeLabel, severityLabel } from "../core/dom.js";
 import { adaptiveMetricsCard, comparisonSummaryCard, exportLinks, failureTypeList, reprocessFailureCard, runIdentityCard } from "../components/detail_views.js";
 import { failureHasScreenDiff, renderFailureInlinePlayerHtml } from "../components/failure_diff.js";
 import { runSyntheticOrigin, runSyntheticSubstitutions } from "../components/run_views.js";
@@ -242,8 +242,8 @@ async function loadDetail(id) {
         const ts = f.ts_ms ? new Date(f.ts_ms).toLocaleString("pt-BR") : "—";
         const diffLabel = failureHasScreenDiff(f) ? "Ver telas" : "Detalhes";
         return '<tr class="border-b border-stone-800/40">'
-          + '<td class="py-1 pr-2 text-stone-200">' + escapeHtml(f.failure_type || "—") + '</td>'
-          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs">' + escapeHtml(sev) + '</span></td>'
+          + '<td class="py-1 pr-2 text-stone-200" title="' + escapeHtml(f.failure_type || "—") + '">' + escapeHtml(failureTypeLabel(f.failure_type)) + '</td>'
+          + '<td class="py-1 pr-2"><span class="rounded-full bg-stone-800 px-2 py-0.5 text-xs" title="' + escapeHtml(sev) + '">' + escapeHtml(severityLabel(sev)) + '</span></td>'
           + '<td class="py-1 pr-2 font-mono text-xs text-stone-400">' + escapeHtml(String(f.session_id || "—")) + '</td>'
           + '<td class="py-1 pr-2 text-stone-400">' + escapeHtml(String(f.seq_global ?? "—")) + '</td>'
           + '<td class="py-1 pr-2 text-xs text-stone-400">' + escapeHtml(ts) + '</td>'

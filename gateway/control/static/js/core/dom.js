@@ -70,6 +70,39 @@ export function modeLabel(mode) {
   return String(mode || "-");
 }
 
+// Rótulos leigos (pt-BR) da taxonomia de falhas — o usuário final não conhece
+// os códigos técnicos. O código original deve permanecer acessível na
+// renderização (title/parênteses) para suporte e paridade com a API.
+export function failureTypeLabel(type) {
+  const value = String(type || "").toLowerCase();
+  const labels = {
+    functional: "falha funcional",
+    timeout: "tempo esgotado",
+    screen_divergence: "tela diferente do esperado",
+    synthetic_data_swap: "troca de dados esperada",
+    technical_error: "erro técnico",
+    navigation_error: "erro de navegação",
+    concurrency_error: "erro de concorrência",
+    checkpoint_mismatch: "ponto de verificação divergente",
+    integrity_error: "erro de integridade",
+    cancelled: "cancelada",
+  };
+  if (!value) return "—";
+  return labels[value] || String(type);
+}
+
+export function severityLabel(severity) {
+  const value = String(severity || "").toLowerCase();
+  const labels = {
+    low: "baixa",
+    medium: "média",
+    high: "alta",
+    critical: "crítica",
+    info: "informativa",
+  };
+  return labels[value] || String(severity || "-");
+}
+
 export function statusToneClass(status) {
   const value = String(status || "").toLowerCase();
   if (["running", "resuming"].includes(value)) return "r2ctl-status r2ctl-status-running";

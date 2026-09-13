@@ -1,4 +1,4 @@
-import { escapeHtml, formatCount, formatDate, statusLabel, statusToneClass } from "../core/dom.js";
+import { escapeHtml, failureTypeLabel, formatCount, formatDate, modeLabel, statusLabel, statusToneClass } from "../core/dom.js";
 import { runSyntheticBadgeHtml } from "./run_views.js";
 
 export function runIdentityCard(run) {
@@ -9,7 +9,7 @@ export function runIdentityCard(run) {
         <span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </div>
       <div class="mt-3 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
-      <div class="mt-2 text-xs text-stone-400">criada em ${formatDate(run.created_at_ms)} • modo ${escapeHtml(run.mode || "-")}</div>
+      <div class="mt-2 text-xs text-stone-400">criada em ${formatDate(run.created_at_ms)} • modo ${escapeHtml(modeLabel(run.mode))}</div>
       <div class="mt-2 text-xs text-stone-400">compliance=${escapeHtml(run.compliance_status || "-")} • entry=${escapeHtml(run.entry_mode || "-")} • gateway=${escapeHtml(run.gateway_endpoint || "-")}</div>
     </div>
   `;
@@ -64,7 +64,7 @@ export function exportLinks(runId) {
 
 const EXECUTION_POLICY_LABELS = {
   conservative: "conservadora (padrão)",
-  adaptive: "adaptativa (batching seguro)",
+  adaptive: "adaptativa (acelera com segurança)",
   adaptive_shadow: "shadow (mede, não acelera)",
 };
 
@@ -143,7 +143,7 @@ export function reprocessFailureCard(item) {
     <div class="rounded-xl border border-stone-800 bg-stone-950/40 p-3">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div class="font-mono text-sm text-stone-100">${escapeHtml(item.failure_type || "falha")}</div>
+          <div class="text-sm text-stone-100">${escapeHtml(item.failure_type ? failureTypeLabel(item.failure_type) : "falha")} <span class="font-mono text-xs text-stone-500">${escapeHtml(item.failure_type || "")}</span></div>
           <div class="mt-1 text-xs text-stone-400">sessão ${escapeHtml(item.session_id || "-")} • seq ${escapeHtml(item.seq_global || 0)}</div>
         </div>
         <div class="flex flex-wrap gap-2">

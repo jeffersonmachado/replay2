@@ -1,4 +1,4 @@
-import { escapeHtml } from "../core/dom.js";
+import { escapeHtml, failureTypeLabel, severityLabel } from "../core/dom.js";
 
 // Comparação linha a linha das telas gravadas numa falha de replay
 // (expected_screen × observed_screen do evidence). As telas vêm de um
@@ -246,8 +246,8 @@ export function renderFailureInlinePlayerHtml(failure, position, total, substitu
       <span id="fp_position" class="rounded-full bg-stone-800 px-3 py-1 text-xs text-stone-200">falha ${position} de ${total} · seq ${escapeHtml(String(item.seq_global ?? "—"))}</span>
     </div>
     <div class="mb-3 grid gap-2 text-xs text-stone-400">
-      <div><span class="text-stone-500">Tipo:</span> <span class="text-stone-200">${escapeHtml(item.failure_type || "—")}</span>
-        <span class="text-stone-500">· gravidade:</span> <span class="text-stone-200">${escapeHtml(item.severity || "—")}</span>
+      <div><span class="text-stone-500">Tipo:</span> <span class="text-stone-200">${escapeHtml(item.failure_type ? `${failureTypeLabel(item.failure_type)} (${item.failure_type})` : "—")}</span>
+        <span class="text-stone-500">· gravidade:</span> <span class="text-stone-200" title="${escapeHtml(item.severity || "")}">${escapeHtml(item.severity ? severityLabel(item.severity) : "—")}</span>
         <span class="text-stone-500">· sessão:</span> <span class="font-mono text-stone-200">${escapeHtml(String(item.session_id || "—"))}</span>
         <span class="text-stone-500">·</span> <span class="text-stone-200">${escapeHtml(ts)}</span></div>
       <div><span class="text-stone-500">Mensagem:</span> <span class="text-stone-300">${escapeHtml(item.message || "—")}</span></div>

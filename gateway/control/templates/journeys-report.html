@@ -1,5 +1,5 @@
 <div id="report-content">
-  <p class="r2ctl-section-copy text-sm">Carregando relatorios...</p>
+  <p class="r2ctl-section-copy text-sm">Carregando relatórios...</p>
 </div>
 
 <script>
@@ -10,7 +10,7 @@ function renderReports(reports) {
   var container = document.getElementById('report-content');
 
   if (!reports.length) {
-    container.innerHTML = '<div class="r2ctl-report-card"><p>Nenhum relatorio encontrado. Execute o Pipeline em Engenharia → Pipeline para gerar jornadas e seus relatorios.</p></div>';
+    container.innerHTML = '<div class="r2ctl-report-card"><p>Nenhum relatório encontrado. Execute o Pipeline em Engenharia → Pipeline para gerar jornadas e seus relatórios.</p></div>';
     return;
   }
 
@@ -25,10 +25,10 @@ function renderReports(reports) {
       '<div class="r2ctl-report-stat r2ctl-report-stat-success"><div class="num">' + generated.length + '</div><div class="lbl">Jornadas geradas</div></div>' +
       '<div class="r2ctl-report-stat r2ctl-report-stat-danger"><div class="num">' + skipped.length + '</div><div class="lbl">Puladas (CRUD incompleto)</div></div>' +
       '<div class="r2ctl-report-stat"><div class="num">' + totalSteps + '</div><div class="lbl">Total de passos</div></div>' +
-      '<div class="r2ctl-report-stat"><div class="num">' + totalFields + '</div><div class="lbl">Decisoes de campos</div></div>' +
+      '<div class="r2ctl-report-stat"><div class="num">' + totalFields + '</div><div class="lbl">Decisões de campos</div></div>' +
     '</div>' +
     generated.map(function(r) { return renderGenerated(r); }).join('') +
-    (skipped.length ? '<h3 class="r2ctl-section-title mt-6">Entidades nao elegiveis (CRUD incompleto)</h3>' + skipped.map(function(r) { return renderSkipped(r); }).join('') : '');
+    (skipped.length ? '<h3 class="r2ctl-section-title mt-6">Entidades não elegíveis (CRUD incompleto)</h3>' + skipped.map(function(r) { return renderSkipped(r); }).join('') : '');
 }
 
 // Renderiza direto do servidor se disponivel, senao busca via API
@@ -62,13 +62,13 @@ function renderGenerated(r) {
     '<div class="r2ctl-flex-between">' +
       '<div>' +
         '<h3>' + esc(r.entity_name) + ' <span class="r2ctl-status-pill r2ctl-status-ok">JORNADA GERADA</span></h3>' +
-        '<span class="r2ctl-report-meta">' + esc(r.journey_id) + ' | Score CRUD: ' + (sel.completeness_score || 100) + ' | ' + esc(r.created_at || '') + '</span>' +
+        '<span class="r2ctl-report-meta">' + esc(r.journey_id) + ' | Cobertura de operações (CRUD): ' + (sel.completeness_score || 100) + ' | ' + esc(r.created_at || '') + '</span>' +
       '</div>' +
     '</div>' +
 
-    '<details class="r2ctl-details mt-2"><summary>📋 Decisao 1: Por que esta entidade foi selecionada?</summary>' +
+    '<details class="r2ctl-details mt-2"><summary>📋 Decisão 1: Por que esta entidade foi selecionada?</summary>' +
       '<div class="r2ctl-reason">' + esc(sel.justification || '') + '</div>' +
-      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>CREATE</th><th>READ</th><th>UPDATE</th><th>DELETE</th><th>Completo</th><th>Total Ops</th></tr>' +
+      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Criar</th><th>Ler</th><th>Atualizar</th><th>Apagar</th><th>Completo</th><th>Total de operações</th></tr>' +
       '<tr>' +
         '<td>' + (sel.has_create ? '✅' : '❌') + '</td>' +
         '<td>' + (sel.has_read ? '✅' : '❌') + '</td>' +
@@ -79,24 +79,24 @@ function renderGenerated(r) {
       '</tr></table></div>' +
     '</details>' +
 
-    '<details class="r2ctl-details mt-2"><summary>📝 Decisao 2: Passos da jornada (' + steps.length + ' passos)</summary>' +
+    '<details class="r2ctl-details mt-2"><summary>📝 Decisão 2: Passos da jornada (' + steps.length + ' passos)</summary>' +
       '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>#</th><th>Tipo</th><th>Programa Inferido</th><th>Justificativa</th></tr>' +
       steps.map(s => '<tr><td>' + s.order + '</td><td>' + esc(s.type) + '</td><td class="font-mono">' + esc(s.program || '?') + '</td><td class="text-xs">' + esc(s.justification || '') + '</td></tr>').join('') +
       '</table></div>' +
     '</details>' +
 
-    '<details class="r2ctl-details mt-2"><summary>🔍 Decisao 3: Campos selecionados (' + selected.length + ' de ' + fields.length + ')</summary>' +
+    '<details class="r2ctl-details mt-2"><summary>🔍 Decisão 3: Campos selecionados (' + selected.length + ' de ' + fields.length + ')</summary>' +
       (selected.length ? '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Campo</th><th>Justificativas</th></tr>' +
         selected.map(f => '<tr><td class="font-mono font-semibold">' + esc(f.field_name) + '</td><td class="text-xs">' + f.reasons.map(r => '<div class="r2ctl-reason">' + esc(r) + '</div>').join('') + '</td></tr>').join('') +
-      '</table></div>' : '<p class="text-xs text-stone-400">Nenhum campo selecionado para preenchimento automatico</p>') +
-      (notSelected.length ? '<details class="r2ctl-details mt-1"><summary class="text-xs">' + notSelected.length + ' campos nao selecionados</summary>' +
+      '</table></div>' : '<p class="text-xs text-stone-400">Nenhum campo selecionado para preenchimento automático</p>') +
+      (notSelected.length ? '<details class="r2ctl-details mt-1"><summary class="text-xs">' + notSelected.length + ' campos não selecionados</summary>' +
         '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Campo</th><th>Motivo</th></tr>' +
         notSelected.map(f => '<tr><td class="font-mono">' + esc(f.field_name) + '</td><td class="text-xs text-stone-400">' + f.reasons.map(r => esc(r)).join('; ') + '</td></tr>').join('') +
       '</table></div></details>' : '') +
     '</details>' +
 
-    '<details class="r2ctl-details mt-2"><summary>🏷 Decisao 4: Programas inferidos & Bindings</summary>' +
-      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Operacao</th><th>Programa</th></tr>' +
+    '<details class="r2ctl-details mt-2"><summary>🏷 Decisão 4: Programas inferidos e vínculos</summary>' +
+      '<div class="r2ctl-table-scroll"><table class="r2ctl-mini-table"><tr><th>Operação</th><th>Programa</th></tr>' +
       Object.entries(progs).map(([k,v]) => '<tr><td>' + esc(k) + '</td><td class="font-mono">' + esc(v) + '</td></tr>').join('') +
       '</table></div>' +
       '<p class="r2ctl-report-meta mt-1">Dataset: ' + formatBindings(rep.dataset_bindings || {}) + '</p>' +

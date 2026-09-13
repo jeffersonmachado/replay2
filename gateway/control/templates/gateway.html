@@ -1,10 +1,10 @@
 <div class="space-y-6" data-page-group="gateway">
-  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegacao do gateway">
+  <nav class="r2ctl-card rounded-3xl p-3 shadow-inner shadow-black/20" aria-label="Navegação do gateway">
     <div class="flex flex-wrap gap-2 text-xs">
       <a href="/gateway/status" class="r2ctl-btn-soft" data-tab-link="status">Status</a>
       <a href="/gateway/monitor" class="r2ctl-btn-soft" data-tab-link="monitor">Monitor</a>
       <a href="/gateway/events" class="r2ctl-btn-soft" data-tab-link="events">Eventos</a>
-      <a href="/gateway/sessions" class="r2ctl-btn-soft" data-tab-link="sessions">Sessoes</a>
+      <a href="/gateway/sessions" class="r2ctl-btn-soft" data-tab-link="sessions">Sessões</a>
       <a href="/gateway/compliance" class="r2ctl-btn-soft" data-tab-link="compliance">Compliance</a>
     </div>
   </nav>
@@ -14,7 +14,7 @@
     <div class="mb-4 flex items-start justify-between gap-3">
       <div>
         <h2 class="r2ctl-section-title text-lg font-semibold">Gateway</h2>
-        <p class="r2ctl-section-copy text-sm">Controle centralizado de ativacao e captura.</p>
+        <p class="r2ctl-section-copy text-sm">Controle centralizado de ativação e captura.</p>
       </div>
       <div class="flex items-center gap-2">
         <button id="gateway_activate_btn" class="r2ctl-btn-pill r2ctl-btn-pill-emerald hidden">Ativar Gateway</button>
@@ -106,15 +106,15 @@
       </div>
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
-          <p class="text-xs text-stone-400">SSH Daemon</p>
+          <p class="text-xs text-stone-400">Servidor SSH</p>
           <p id="gw_svc_sshd" class="mt-1 text-sm font-semibold text-stone-200">conectando...</p>
         </div>
         <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
-          <p class="text-xs text-stone-400">Capture Daemon (socket)</p>
+          <p class="text-xs text-stone-400" title="serviço capture-daemon (socket Unix)">Serviço de captura</p>
           <p id="gw_svc_daemon" class="mt-1 text-sm font-semibold text-stone-200">...</p>
         </div>
         <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
-          <p class="text-xs text-stone-400">Wrapper de captura</p>
+          <p class="text-xs text-stone-400" title="programa intermediário que registra a sessão">Wrapper de captura</p>
           <p id="gw_svc_wrapper" class="mt-1 text-sm font-semibold text-stone-200">...</p>
         </div>
         <div class="r2ctl-detail-surface rounded-xl px-3 py-2">
@@ -129,20 +129,20 @@
       <div id="gw_svc_error" class="mt-2 text-xs text-stone-500 hidden"></div>
     </div>
 
-    <!-- Opcoes avancadas colapsaveis -->
+    <!-- Opções avançadas colapsáveis -->
     <details class="r2ctl-detail-surface rounded-2xl">
       <summary class="cursor-pointer px-4 py-3 text-xs uppercase tracking-[0.18em] text-stone-400 select-none">
-        Opcoes avancadas (opcional)
+        Opções avançadas (opcional)
       </summary>
       <div class="px-4 pb-4 pt-2 grid gap-3 sm:grid-cols-2">
         <div>
-          <label class="block text-xs text-stone-400 mb-1">Perfil de conexao (opcional)</label>
+          <label class="block text-xs text-stone-400 mb-1">Perfil de conexão (opcional)</label>
           <select id="gw_profile_select" class="r2ctl-input w-full">
             <option value="">— nenhum —</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs text-stone-400 mb-1">Usuario operacional (opcional)</label>
+          <label class="block text-xs text-stone-400 mb-1">Usuário operacional (opcional)</label>
           <select id="gw_opuser_select" class="r2ctl-input w-full">
             <option value="">— nenhum —</option>
           </select>
@@ -166,7 +166,7 @@
         <p class="r2ctl-section-copy text-sm">Acompanhamento dos eventos recentes do gateway sem poluir a tela principal.</p>
       </div>
       <div class="flex flex-col gap-3 sm:flex-row">
-        <input id="monitor_log_dir" placeholder="log_dir do gateway para monitorar" class="r2ctl-input min-w-[280px]" />
+        <input id="monitor_log_dir" placeholder="diretório de log do gateway (log_dir)" class="r2ctl-input min-w-[280px]" />
         <button id="load_gateway_monitor_btn" class="r2ctl-btn-soft">Atualizar monitor</button>
       </div>
     </div>
@@ -180,7 +180,7 @@
       <div class="r2ctl-detail-surface rounded-2xl p-4">
         <div class="mb-3 flex items-center justify-between gap-3">
           <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Tipos mais frequentes</h3>
-          <span id="gw_monitor_status" class="text-xs text-stone-400">aguardando log_dir</span>
+          <span id="gw_monitor_status" class="text-xs text-stone-400">aguardando diretório de log (log_dir)</span>
         </div>
         <div id="gw_top_types" class="space-y-2 text-sm text-stone-200"></div>
       </div>
@@ -207,10 +207,10 @@
         <thead class="sticky top-0 bg-stone-800/95 text-stone-400 uppercase tracking-[0.12em]">
           <tr>
             <th class="px-3 py-2 text-left w-12">#</th>
-            <th class="px-3 py-2 text-left w-24">Timestamp</th>
+            <th class="px-3 py-2 text-left w-24">Data/hora</th>
             <th class="px-3 py-2 text-left w-28">Tipo</th>
             <th class="px-3 py-2 text-left w-20">Ator</th>
-            <th class="px-3 py-2 text-left w-12">Dir</th>
+            <th class="px-3 py-2 text-left w-12">Direção</th>
             <th class="px-3 py-2 text-left">Detalhes</th>
           </tr>
         </thead>
@@ -237,15 +237,15 @@
         </div>
         <!-- logname — Combobox -->
         <div class="relative" data-combobox='{"minSearchLength":0}'>
-          <input id="gw_session_logname" data-combobox-input class="r2ctl-input w-full" placeholder="logname" autocomplete="off" />
+          <input id="gw_session_logname" data-combobox-input class="r2ctl-input w-full" placeholder="usuário (logname)" autocomplete="off" />
           <div data-combobox-dropdown class="absolute z-50 mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 shadow-lg max-h-60 overflow-auto hidden"></div>
           <select id="gw_session_logname_output" data-combobox-output hidden>
-            <option value="">todos os lognames</option>
+            <option value="">todos os usuários (logname)</option>
           </select>
         </div>
         <!-- session_id — Combobox -->
         <div class="relative" data-combobox='{"minSearchLength":0}'>
-          <input id="gw_session_id_filter" data-combobox-input class="r2ctl-input w-full" placeholder="session_id" autocomplete="off" />
+          <input id="gw_session_id_filter" data-combobox-input class="r2ctl-input w-full" placeholder="sessão (session_id)" autocomplete="off" />
           <div data-combobox-dropdown class="absolute z-50 mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 shadow-lg max-h-60 overflow-auto hidden"></div>
           <select id="gw_session_id_filter_output" data-combobox-output hidden>
             <option value="">todas as sessões</option>
@@ -255,10 +255,10 @@
           <option value="">todos os tipos</option>
         </select>
         <select id="gw_session_uid_select" class="r2ctl-input" title="uid">
-          <option value="">todos os uid</option>
+          <option value="">todos os usuários (uid)</option>
         </select>
         <select id="gw_session_gid_select" class="r2ctl-input" title="gid">
-          <option value="">todos os gid</option>
+          <option value="">todos os grupos (gid)</option>
         </select>
       </div>
       <div class="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -268,7 +268,7 @@
       </div>
     </div>
     <div class="mb-3 flex items-center justify-between gap-3">
-      <span id="gw_sessions_status" class="text-xs text-stone-400">aguardando log_dir</span>
+      <span id="gw_sessions_status" class="text-xs text-stone-400">aguardando diretório de log (log_dir)</span>
       <button id="load_gateway_sessions_btn" class="r2ctl-btn-soft">Atualizar sessões</button>
     </div>
     <div id="gw_sessions" class="space-y-3"></div>
@@ -283,21 +283,21 @@
       </div>
     </div>
     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-      <input id="gw_detail_seq_from" placeholder="seq_global de" class="r2ctl-input" />
-      <input id="gw_detail_seq_to" placeholder="seq_global até" class="r2ctl-input" />
-      <input id="gw_detail_ts_from" placeholder="ts_ms de" class="r2ctl-input" />
-      <input id="gw_detail_ts_to" placeholder="ts_ms até" class="r2ctl-input" />
-      <input id="gw_detail_limit" placeholder="limite timeline" class="r2ctl-input" value="200" />
+      <input id="gw_detail_seq_from" placeholder="sequência global de (seq_global)" class="r2ctl-input" />
+      <input id="gw_detail_seq_to" placeholder="sequência global até (seq_global)" class="r2ctl-input" />
+      <input id="gw_detail_ts_from" placeholder="data/hora em ms de (ts_ms)" class="r2ctl-input" />
+      <input id="gw_detail_ts_to" placeholder="data/hora em ms até (ts_ms)" class="r2ctl-input" />
+      <input id="gw_detail_limit" placeholder="limite da linha do tempo" class="r2ctl-input" value="200" />
     </div>
     <div id="gw_detail_table_view" class="r2ctl-detail-surface mt-4 max-h-[480px] overflow-auto rounded-2xl">
       <table class="w-full text-xs text-stone-200">
         <thead class="sticky top-0 bg-stone-800/95 text-stone-400 uppercase tracking-[0.12em]">
           <tr>
             <th class="px-3 py-2 text-left w-12">#</th>
-            <th class="px-3 py-2 text-left w-24">Timestamp</th>
+            <th class="px-3 py-2 text-left w-24">Data/hora</th>
             <th class="px-3 py-2 text-left w-28">Tipo</th>
             <th class="px-3 py-2 text-left w-20">Ator</th>
-            <th class="px-3 py-2 text-left w-12">Dir</th>
+            <th class="px-3 py-2 text-left w-12">Direção</th>
             <th class="px-3 py-2 text-left">Detalhes</th>
           </tr>
         </thead>

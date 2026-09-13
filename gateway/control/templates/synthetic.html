@@ -37,11 +37,11 @@
     <div id="plan-fields" class="r2ctl-syn-scroll-200"></div>
     <div id="preflight-summary" class="r2ctl-syn-muted">A validação prévia aparecerá aqui.</div>
     <div id="preflight-records" class="r2ctl-syn-scroll-200"></div>
-    <div id="bulk-summary" class="r2ctl-syn-muted">A geração em massa depende de um preflight válido.</div>
+    <div id="bulk-summary" class="r2ctl-syn-muted">A geração em massa depende de uma verificação prévia válida.</div>
     <div id="bulk-sample" class="r2ctl-syn-scroll-200"></div>
   </div>
   <div class="r2ctl-syn-card">
-    <h2>🗺️ Journeys de Negócio</h2>
+    <h2>🗺️ Jornadas de negócio</h2>
     <div id="journeys-content" class="r2ctl-syn-scroll-200">
       <p class="r2ctl-syn-muted">Jornadas de negócio reais (inferidas de código-fonte).</p>
       <table class="r2ctl-syn-table"><tr><th>ID</th><th>Nome</th><th>Categoria</th><th>Ações</th></tr></table>
@@ -67,8 +67,8 @@
     <h2>📈 Relatórios</h2>
     <div>
       <select id="journey-select" class="r2ctl-syn-input r2ctl-syn-input-block"></select>
-      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="runStress()">▶ Stress</button>
-      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="viewReport()">📄 Report</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="runStress()">▶ Estresse</button>
+      <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="viewReport()">📄 Relatório</button>
       <button class="r2ctl-syn-btn r2ctl-syn-btn-sm" onclick="exportJUnit()">📋 JUnit</button>
     </div>
   </div>
@@ -183,7 +183,7 @@ function renderPlanDetails(plan) {
       <tr>
         <td>${escapeHtml(field.name)}</td>
         <td>${escapeHtml(field.datatype)}</td>
-        <td><span class="r2ctl-syn-badge ${badgeClass(!!field.required)}">${field.required ? 'sim' : 'nao'}</span></td>
+        <td><span class="r2ctl-syn-badge ${badgeClass(!!field.required)}">${field.required ? 'sim' : 'não'}</span></td>
         <td>${escapeHtml(field.format || '-')}</td>
       </tr>`).join('')}
   </table>`;
@@ -202,8 +202,8 @@ function renderPreflight(preflight) {
   ).join(' ');
 
   summaryEl.innerHTML =
-    `<div class="r2ctl-syn-stat-row"><span>Preflight</span><span class="r2ctl-syn-badge ${badgeClass(preflight.ok)}">${preflight.ok ? 'aprovado' : 'reprovado'}</span></div>` +
-    `<div class="r2ctl-syn-muted">${preflight.sample_size} registro(s), ${preflight.total_violations} violacao(oes)</div>` +
+    `<div class="r2ctl-syn-stat-row"><span>Verificação prévia (preflight)</span><span class="r2ctl-syn-badge ${badgeClass(preflight.ok)}">${preflight.ok ? 'aprovado' : 'reprovado'}</span></div>` +
+    `<div class="r2ctl-syn-muted">${preflight.sample_size} registro(s), ${preflight.total_violations} violação(ões)</div>` +
     (warnings ? `<div class="r2ctl-syn-stack">${warnings}</div>` : '');
 
   document.getElementById('preflight-records').innerHTML = preflight.records.map(record => {
@@ -225,7 +225,7 @@ function renderPreflight(preflight) {
 function renderBulk(result) {
   const summaryEl = document.getElementById('bulk-summary');
   if (!result) {
-    summaryEl.textContent = 'A geração em massa depende de um preflight válido.';
+    summaryEl.textContent = 'A geração em massa depende de uma verificação prévia válida.';
     document.getElementById('bulk-sample').innerHTML = '';
     return;
   }
@@ -233,7 +233,7 @@ function renderBulk(result) {
   if (result.blocked) {
     summaryEl.innerHTML =
       `<div class="r2ctl-syn-stat-row"><span>Geração em massa</span><span class="r2ctl-syn-badge ${badgeClass(false)}">bloqueada</span></div>` +
-      `<div class="r2ctl-syn-muted">${escapeHtml(result.message || 'preflight inválido')}</div>`;
+      `<div class="r2ctl-syn-muted">${escapeHtml(result.message || 'verificação prévia inválida')}</div>`;
     document.getElementById('bulk-sample').innerHTML = '';
     return;
   }
@@ -241,7 +241,7 @@ function renderBulk(result) {
   const dataset = result.dataset || {};
   summaryEl.innerHTML =
     `<div class="r2ctl-syn-stat-row"><span>${escapeHtml(dataset.name || 'dataset')}</span><span class="r2ctl-syn-badge ${badgeClass(true)}">${escapeHtml(dataset.quantity || 0)} registros</span></div>` +
-    `<div class="r2ctl-syn-muted">${escapeHtml(dataset.entity_name || '-')} • seed ${escapeHtml(dataset.seed || 0)}</div>`;
+    `<div class="r2ctl-syn-muted">${escapeHtml(dataset.entity_name || '-')} • semente ${escapeHtml(dataset.seed || 0)}</div>`;
   renderJsonTable('bulk-sample', dataset.sample || []);
 }
 
@@ -275,7 +275,7 @@ async function loadStatus() {
     sel.innerHTML = (jc.journeys||[]).map(j => `<option value="${escapeHtml(j.journey_id)}">${escapeHtml(j.name)}</option>`).join('');
     document.getElementById('journeys-content').innerHTML = '<table class="r2ctl-syn-table"><tr><th>ID</th><th>Nome</th><th>Cat</th><th></th></tr>' +
       (jc.journeys||[]).slice(0,15).map(j => `<tr><td>${escapeHtml(j.journey_id)}</td><td>${escapeHtml(j.name)}</td><td>${escapeHtml(j.category||'')}</td><td><a href="${API}/roteiro/${escapeHtml(j.journey_id)}?format=md" target="_blank" class="r2ctl-syn-btn r2ctl-syn-btn-sm">📄 Roteiro</a></td></tr>`).join('') + '</table>' +
-      ((jc.journeys||[]).length === 0 ? '<p class="r2ctl-syn-muted">Nenhuma jornada de negócio. Execute o Pipeline com código-fonte real.</p>' : '');
+      ((jc.journeys||[]).length === 0 ? '<p class="r2ctl-syn-muted">Nenhuma jornada de negócio. Execute a Preparação (pipeline) com código-fonte real.</p>' : '');
 
     const et = await api(API+'/entity-tests');
     document.getElementById('entity-tests-content').innerHTML = '<table class="r2ctl-syn-table"><tr><th>Entidade</th><th>Nome</th><th>Criado em</th></tr>' +
@@ -329,7 +329,7 @@ async function loadDataPlans() {
 async function runPreflight() {
   const plan = selectedPlan();
   if (!plan) {
-    log('Selecione um plano antes do preflight');
+    log('Selecione um plano antes da verificação prévia');
     return;
   }
 
@@ -345,7 +345,7 @@ async function runPreflight() {
     renderPlanDetails(response.plan);
     renderPreflight(response.preflight);
     renderBulk(null);
-    log(`Preflight ${response.preflight.ok ? 'aprovado' : 'reprovado'} com ${response.preflight.total_violations} violacao(oes)`);
+    log(`Verificação prévia ${response.preflight.ok ? 'aprovada' : 'reprovada'} com ${response.preflight.total_violations} violação(ões)`);
   } catch(e) {
     log('Falha: '+e.message);
   }

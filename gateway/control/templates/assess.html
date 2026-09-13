@@ -1,7 +1,7 @@
 <!-- assess.html — Avaliação IA -->
 <div class="r2ctl-section">
   <h2 class="r2ctl-section-title">Avaliação IA</h2>
-  <p class="r2ctl-section-copy text-sm">Analise inteligente: garbage collector, gargalos, riscos e recomendacoes.</p>
+  <p class="r2ctl-section-copy text-sm">Análise inteligente do código-fonte legado: código sem uso, gargalos, riscos e recomendações.</p>
 </div>
 
 <div class="r2ctl-card mb-4">
@@ -10,12 +10,12 @@
     <textarea id="assess_pipeline" rows="6" class="r2ctl-input w-full mb-3" placeholder='Cole o JSON retornado pelo endpoint /api/synthetic/pipeline ou deixe em branco para teste'></textarea>
 
     <div class="mb-3">
-      <label class="block text-sm text-stone-300 mb-1">Diretorio do codigo-fonte (opcional)</label>
+      <label class="block text-sm text-stone-300 mb-1">Diretório do código-fonte (opcional)</label>
       <input id="assess_source_dir" type="text" placeholder="/caminho/para/codigo/fonte" class="r2ctl-input w-full">
     </div>
 
     <button id="assess_run_btn" class="r2ctl-btn-brand" onclick="runAssess()">
-      ▶ Executar Assessment
+      ▶ Executar avaliação
     </button>
     <span id="assess_status" class="ml-3 text-sm text-stone-400 hidden"></span>
   </div>
@@ -24,7 +24,7 @@
 <div id="assess_result" class="hidden">
   <div class="r2ctl-card mb-3 p-4">
     <div class="flex items-center justify-between mb-2">
-      <h3 class="text-sm font-medium text-stone-200">Health Score</h3>
+      <h3 class="text-sm font-medium text-stone-200">Saúde do sistema</h3>
       <span id="assess_score" class="text-2xl font-bold"></span>
     </div>
     <div id="assess_summary" class="text-sm text-stone-300"></div>
@@ -32,7 +32,7 @@
 
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
     <div class="r2ctl-card"><div class="p-4">
-      <h3 class="text-sm font-medium text-stone-200 mb-2">🗑 Garbage</h3>
+      <h3 class="text-sm font-medium text-stone-200 mb-2">🗑 Código sem uso</h3>
       <div id="assess_garbage" class="text-sm text-stone-300"></div>
     </div></div>
     <div class="r2ctl-card"><div class="p-4">
@@ -44,7 +44,7 @@
       <div id="assess_bottlenecks" class="text-sm text-stone-300"></div>
     </div></div>
     <div class="r2ctl-card"><div class="p-4">
-      <h3 class="text-sm font-medium text-stone-200 mb-2">💡 Recomendacoes</h3>
+      <h3 class="text-sm font-medium text-stone-200 mb-2">💡 Recomendações</h3>
       <div id="assess_recs" class="text-sm text-stone-300"></div>
     </div></div>
   </div>
@@ -52,6 +52,10 @@
 
 <script>
 function escapeHtml(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");}
+// Gravidade/prioridade exibidas em pt-BR; o código original (high/medium/low)
+// fica no title para o suporte correlacionar com a API.
+const SEV_PT = {high:'alta',medium:'média',low:'baixa'};
+function sevLabel(v){const k=String(v||'').toLowerCase();return SEV_PT[k]||String(v||'');}
 async function runAssess() {
   const btn = document.getElementById('assess_run_btn');
   const status = document.getElementById('assess_status');
@@ -60,7 +64,7 @@ async function runAssess() {
 
   let pipelineResult = {};
   const raw = document.getElementById('assess_pipeline').value.trim();
-  if (raw) { try { pipelineResult = JSON.parse(raw); } catch(e) { status.textContent = 'JSON invalido'; btn.disabled = false; return; } }
+  if (raw) { try { pipelineResult = JSON.parse(raw); } catch(e) { status.textContent = 'JSON inválido'; btn.disabled = false; return; } }
 
   try {
     const resp = await fetch('/api/synthetic/assess', {
@@ -86,7 +90,7 @@ async function runAssess() {
 
       document.getElementById('assess_risks').innerHTML = (data.risks||[]).slice(0,10).map(r =>
         `<div class="mb-2 p-2 border-l-2 ${r.severity==='high'?'border-red-500':'border-amber-500'}">
-          <span class="text-${r.severity==='high'?'red':'amber'}-300 text-xs">${escapeHtml(String(r.severity||'').toUpperCase())}</span>
+          <span class="text-${r.severity==='high'?'red':'amber'}-300 text-xs" title="${escapeHtml(r.severity||'')}">${escapeHtml(sevLabel(r.severity))}</span>
           <div class="text-xs text-stone-400">${escapeHtml((r.factors||[]).join('; '))}</div>
           <div class="text-xs text-stone-300 mt-1">→ ${escapeHtml(r.recommendation)}</div>
         </div>`
@@ -98,14 +102,14 @@ async function runAssess() {
 
       document.getElementById('assess_recs').innerHTML = (data.recommendations||[]).map(r =>
         `<div class="mb-2 p-2 border border-stone-700/40 rounded">
-          <span class="text-xs px-1 rounded ${r.priority==='high'?'bg-red-900/40 text-red-300':'bg-amber-900/40 text-amber-300'}">${escapeHtml(r.priority)}</span>
+          <span class="text-xs px-1 rounded ${r.priority==='high'?'bg-red-900/40 text-red-300':'bg-amber-900/40 text-amber-300'}" title="${escapeHtml(r.priority)}">${escapeHtml(sevLabel(r.priority))}</span>
           <span class="text-xs text-stone-400 ml-1">${escapeHtml(r.category)}</span>
           <div class="text-sm text-stone-200">${escapeHtml(r.title)}</div>
-          <div class="text-xs text-stone-400">Esforco: ${escapeHtml(r.effort)} | Impacto: ${escapeHtml(r.impact)}</div>
+          <div class="text-xs text-stone-400">Esforço: ${escapeHtml(r.effort)} | Impacto: ${escapeHtml(r.impact)}</div>
         </div>`
-      ).join('') || 'Nenhuma recomendacao';
+      ).join('') || 'Nenhuma recomendação';
 
-      status.textContent = 'Concluido'; result.classList.remove('hidden');
+      status.textContent = 'Concluído'; result.classList.remove('hidden');
     } else { status.textContent = 'Erro: ' + (data.error||'desconhecido'); }
   } catch(e) { status.textContent = 'Erro: ' + e.message; }
   btn.disabled = false;

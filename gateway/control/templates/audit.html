@@ -32,7 +32,7 @@ function renderAuditEntities(entities) {
     return;
   }
 
-  // ── Sumario com diretorios ──
+  // ── Sumário com diretórios ──
   var totalPrograms = 0, totalDeps = 0, totalDirs = 0;
   var allPrograms = {};
   var allProgramDirs = {};
@@ -42,7 +42,7 @@ function renderAuditEntities(entities) {
   });
   totalPrograms = Object.keys(allPrograms).length;
 
-  // Agrupa programas por diretorio
+  // Agrupa programas por diretório
   var dirTree = {};
   Object.values(allPrograms).forEach(function(p) {
     var dirPath = p.parent_dir || p.dir || 'raiz';
@@ -51,24 +51,24 @@ function renderAuditEntities(entities) {
   });
   totalDirs = Object.keys(dirTree).length;
 
-  // Dados de diretorios vindos do servidor
+  // Dados de diretórios vindos do servidor
   var programDirs = (_d.program_dirs || []);
   var dataDirs = (_d.data_dirs || []);
 
   var summaryHtml = '<div class="r2ctl-flex-between" style="margin-bottom:16px;padding:12px 16px;background:var(--r2-charcoal-800);border-radius:8px;">' +
     '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + entities.length + '</span> entidades inferidas</div>' +
     '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalPrograms + '</span> programas</div>' +
-    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDirs + '</span> diretorios</div>' +
-    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDeps + '</span> dependencias</div>' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDirs + '</span> diretórios</div>' +
+    '<div><span class="font-mono" style="font-size:20px;font-weight:700;color:var(--r2-accent);">' + totalDeps + '</span> dependências</div>' +
     '</div>';
 
-  // ── Painel de Navegacao Remota (producao: 10.5.8.25:/dakota1) ──
+  // ── Painel de Navegação Remota (produção: 10.5.8.25:/dakota1) ──
   var remoteNavHtml = '';
   var rn = _d.remote_navigation;
   if (rn && !rn.error) {
     remoteNavHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
       '<span class="r2ctl-badge-warning" style="margin-right:6px">remoto</span>' +
-      'Navegacao — Producao (' + escapeHtml(rn.source || '10.5.8.25:/dakota1') + ')</summary>' +
+      'Navegação — Produção (' + escapeHtml(rn.source || '10.5.8.25:/dakota1') + ')</summary>' +
       '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;">';
 
     // Card: MENUSIG
@@ -76,7 +76,7 @@ function renderAuditEntities(entities) {
       remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px;border-left:3px solid var(--r2-warning);">' +
         '<h4 style="margin:0 0 6px;font-size:13px;color:var(--r2-warning);">MENUSIG — Menu Principal</h4>' +
         '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.menusig.file || '') + '</code></p>' +
-        '<p style="margin:2px 0;font-size:11px;">Dispatch: <code class="font-mono">' + escapeHtml(rn.menusig.dispatch || '') + '</code></p>';
+        '<p style="margin:2px 0;font-size:11px;">Despacho: <code class="font-mono">' + escapeHtml(rn.menusig.dispatch || '') + '</code></p>';
       if (rn.menusig.gmenu_calls && rn.menusig.gmenu_calls.length > 0) {
         remoteNavHtml += '<p style="margin:2px 0;font-size:11px;">gmenu(): ' +
           rn.menusig.gmenu_calls.map(function(c) { return '<code class="font-mono" style="margin:1px 2px">' + escapeHtml(c) + '</code>'; }).join(' ') + '</p>';
@@ -91,9 +91,9 @@ function renderAuditEntities(entities) {
     // Card: GMENUCAD
     if (rn.gmenucad && rn.gmenucad.function) {
       remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-        '<h4 style="margin:0 0 6px;font-size:13px;">GMENUCAD — CRUD Generico</h4>' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">GMENUCAD — CRUD Genérico</h4>' +
         '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.gmenucad.file || '') + '</code></p>' +
-        '<p style="margin:2px 0;font-size:11px;">Funcao: <code class="font-mono">' + escapeHtml(rn.gmenucad.function || '') + '</code> | Variavel: <code>' + escapeHtml(rn.gmenucad.variable || '') + '</code></p>';
+        '<p style="margin:2px 0;font-size:11px;">Função: <code class="font-mono">' + escapeHtml(rn.gmenucad.function || '') + '</code> | Variável: <code>' + escapeHtml(rn.gmenucad.variable || '') + '</code></p>';
       if (rn.gmenucad.crud_options && rn.gmenucad.crud_options.length > 0) {
         remoteNavHtml += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">' +
           rn.gmenucad.crud_options.map(function(o) {
@@ -101,7 +101,7 @@ function renderAuditEntities(entities) {
           }).join('') + '</div>';
       }
       if (rn.gmenucad.lOpca_cases && rn.gmenucad.lOpca_cases.length > 0) {
-        remoteNavHtml += '<p style="margin:2px 0;font-size:10px;color:var(--r2-text-secondary);">Cases: ' +
+        remoteNavHtml += '<p style="margin:2px 0;font-size:10px;color:var(--r2-text-secondary);">Casos: ' +
           rn.gmenucad.lOpca_cases.map(function(c) { return '<code>' + escapeHtml(c) + '</code>'; }).join(', ') + '</p>';
       }
       remoteNavHtml += '</div>';
@@ -112,7 +112,7 @@ function renderAuditEntities(entities) {
       remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
         '<h4 style="margin:0 0 6px;font-size:13px;">GMENU — Menu Customizado</h4>' +
         '<p style="margin:0;font-size:11px;"><code class="font-mono">' + escapeHtml(rn.gmenu.file || '') + '</code></p>' +
-        '<p style="margin:2px 0;font-size:11px;">Funcoes: ' +
+        '<p style="margin:2px 0;font-size:11px;">Funções: ' +
           (rn.gmenu.functions || []).map(function(f) { return '<code class="font-mono" style="margin:1px 2px">' + escapeHtml(f) + '</code>'; }).join(' ') + '</p>';
       if (rn.gmenu.gmenucad_full) {
         remoteNavHtml += '<p style="margin:2px 0;font-size:10px;color:var(--r2-accent);">gMenuCad: <code>' + escapeHtml(rn.gmenu.gmenucad_full) + '</code></p>';
@@ -123,7 +123,7 @@ function renderAuditEntities(entities) {
     // Card: Modulos (modulo.dbf remoto)
     if (rn.modules && rn.modules.length > 0) {
       remoteNavHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-        '<h4 style="margin:0 0 6px;font-size:13px;">' + rn.modules.length + ' Modulos (modulo.dbf remoto)</h4>' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">' + rn.modules.length + ' Módulos (modulo.dbf remoto)</h4>' +
         '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
       rn.modules.forEach(function(m) {
         remoteNavHtml += '<span style="font-size:10px;padding:2px 6px;background:var(--r2-charcoal-700);border-radius:3px;white-space:nowrap;">' +
@@ -137,7 +137,7 @@ function renderAuditEntities(entities) {
   } else if (rn && rn.error) {
     remoteNavHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
       '<span class="r2ctl-badge-neutral" style="margin-right:6px">remoto</span>' +
-      'Navegacao — indisponivel</summary>' +
+      'Navegação — indisponível</summary>' +
       '<p class="is-muted" style="margin:4px 0;font-size:11px;">' + escapeHtml(rn.error) + '</p></details>';
   }
 
@@ -147,7 +147,7 @@ function renderAuditEntities(entities) {
   if (sis) {
     localSistemaHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
       '<span class="r2ctl-badge-accent" style="margin-right:6px">' + escapeHtml(sis.base_path || '/opt/dados/sistema') + '</span>' +
-      'Estrutura do diretorio local</summary>';
+      'Estrutura do diretório local</summary>';
 
     // ── Menu Analysis Cards (INFERENCIA) — ANTES do grid ──
     var ma = sis.menu_analysis;
@@ -186,11 +186,11 @@ function renderAuditEntities(entities) {
 
       // Card: Resumo da inferencia
       localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px;margin-bottom:12px;">' +
-        '<h4 style="margin:0 0 6px;font-size:13px;">Inferencia de estrutura</h4>' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">Inferência de estrutura</h4>' +
         '<p style="margin:0;font-size:11px;">' +
         (ma.total_scanned || 0) + ' arquivos | ' +
         (ma.total_programs || 0) + ' programas | ' +
-        '<span class="r2ctl-badge-accent" style="margin:0 4px">' + (ma.total_modules || 0) + ' modulos inferidos</span> | ' +
+        '<span class="r2ctl-badge-accent" style="margin:0 4px">' + (ma.total_modules || 0) + ' módulos inferidos</span> | ' +
         (ma.total_menus || 0) + ' menus | ' +
         (ma.total_with_entities || 0) + ' c/ entidades | ' +
         (ma.total_with_calls || 0) + ' c/ chamadas' +
@@ -203,11 +203,11 @@ function renderAuditEntities(entities) {
     if (sis.modules && sis.modules.length > 0) {
       var isDict = sis.modules[0] && typeof sis.modules[0] === 'object';
       localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-        '<h4 style="margin:0 0 6px;font-size:13px;">' + sis.module_count + ' Modulos de programa</h4>' +
+        '<h4 style="margin:0 0 6px;font-size:13px;">' + sis.module_count + ' Módulos de programa</h4>' +
         '<p style="margin:0 0 4px;font-size:11px;color:var(--r2-accent);">' + (sis.programs_prg || 0) + ' .prg / ' + (sis.programs_dbo || 0) + ' .dbo</p>';
       if (isDict) {
         localSistemaHtml += '<div class="r2ctl-table-scroll" style="max-height:400px">' +
-          '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Modulo</th><th>Arquivos</th><th>.prg</th><th>.dbo</th><th>.dbf</th><th>.fmo</th><th>.fmt</th></tr>';
+          '<table class="r2ctl-mini-table" style="margin:0"><tr><th>Módulo</th><th>Arquivos</th><th>.prg</th><th>.dbo</th><th>.dbf</th><th>.fmo</th><th>.fmt</th></tr>';
         sis.modules.forEach(function(m) {
           localSistemaHtml += '<tr>' +
             '<td class="font-mono">' + escapeHtml(m.name || m) + '</td>' +
@@ -252,17 +252,17 @@ function renderAuditEntities(entities) {
       localSistemaHtml += '</table></div>';
     }
 
-    // Card: outros diretorios de dados
+    // Card: outros diretórios de dados
     if (sis.other_dirs && sis.other_dirs.length > 0) {
       localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-        '<h4 style="margin:0 0 6px;font-size:13px;">Outros diretorios de dados</h4>';
+        '<h4 style="margin:0 0 6px;font-size:13px;">Outros diretórios de dados</h4>';
       sis.other_dirs.forEach(function(od) {
         localSistemaHtml += '<details class="r2ctl-details" style="margin-top:4px"><summary>' +
           '<span class="font-mono">' + escapeHtml(od.name) + '/</span>' +
           ' <span class="r2ctl-badge-neutral">' + (od.files || 0) + ' arquivos</span>' +
           '</summary>';
         if (od.subdirs && od.subdirs.length > 0) {
-          localSistemaHtml += '<table class="r2ctl-mini-table" style="margin:4px 0"><tr><th>Subdiretorio</th><th>Arquivos</th><th>.prg</th><th>.dbf</th></tr>';
+          localSistemaHtml += '<table class="r2ctl-mini-table" style="margin:4px 0"><tr><th>Subdiretório</th><th>Arquivos</th><th>.prg</th><th>.dbf</th></tr>';
           od.subdirs.forEach(function(sd) {
             localSistemaHtml += '<tr>' +
               '<td class="font-mono">' + escapeHtml(sd.name) + '/</td>' +
@@ -273,7 +273,7 @@ function renderAuditEntities(entities) {
           });
           localSistemaHtml += '</table>';
         } else {
-          localSistemaHtml += '<p class="is-muted" style="margin:2px 0;font-size:11px">sem subdiretorios</p>';
+          localSistemaHtml += '<p class="is-muted" style="margin:2px 0;font-size:11px">sem subdiretórios</p>';
         }
         localSistemaHtml += '</details>';
       });
@@ -284,10 +284,10 @@ function renderAuditEntities(entities) {
     if (ma) {
       if (ma.inferred_modules && ma.inferred_modules.length > 0) {
         localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-          '<h4 style="margin:0 0 6px;font-size:13px;">' + ma.inferred_modules.length + ' Modulos inferidos</h4>' +
+          '<h4 style="margin:0 0 6px;font-size:13px;">' + ma.inferred_modules.length + ' Módulos inferidos</h4>' +
           '<div class="r2ctl-table-scroll" style="max-height:500px">' +
           '<table class="r2ctl-mini-table" style="margin:0">' +
-          '<tr><th>Modulo</th><th>Prog</th><th>Ent</th><th>Menu</th><th>Top programas</th></tr>';
+          '<tr><th>Módulo</th><th>Prog</th><th>Ent</th><th>Menu</th><th>Top programas</th></tr>';
         ma.inferred_modules.forEach(function(mi) {
           var topProgs = (mi.top_programs || []).slice(0, 4).map(function(p) {
             var badge = p.is_menu ? 'r2ctl-badge-warning' : 'r2ctl-badge-neutral';
@@ -306,14 +306,14 @@ function renderAuditEntities(entities) {
         localSistemaHtml += '</table></div></div>';
       }
 
-      // Card: Arvore de navegacao (analise real do codigo)
+      // Card: Árvore de navegação (análise real do código)
       if (ma.navigation_tree && ma.navigation_tree.length > 0) {
         localSistemaHtml += '<div class="r2ctl-report-card" style="padding:10px">' +
-          '<h4 style="margin:0 0 6px;font-size:13px;">Arvore de navegacao — ' + ma.navigation_tree.length + ' modulos</h4>' +
-          '<p style="margin:0 0 6px;font-size:10px;color:var(--r2-text-secondary);">Analise do codigo: menu.prg → modulo.dbf → menumirage(modulo) → programa de entrada</p>' +
+          '<h4 style="margin:0 0 6px;font-size:13px;">Árvore de navegação — ' + ma.navigation_tree.length + ' módulos</h4>' +
+          '<p style="margin:0 0 6px;font-size:10px;color:var(--r2-text-secondary);">Análise do código: menu.prg → modulo.dbf → menumirage(modulo) → programa de entrada</p>' +
           '<div class="r2ctl-table-scroll" style="max-height:500px">' +
           '<table class="r2ctl-mini-table" style="margin:0">' +
-          '<tr><th>Modulo</th><th>Descricao</th><th>Progs</th><th>Entrada</th><th>Amostra</th></tr>';
+          '<tr><th>Módulo</th><th>Descrição</th><th>Progs</th><th>Entrada</th><th>Amostra</th></tr>';
         ma.navigation_tree.forEach(function(nt) {
           var entryDisplay = nt.entry_program
             ? '<code class="font-mono" style="font-size:10px;color:var(--r2-accent);">' + escapeHtml(nt.entry_program) + '</code>'
@@ -357,17 +357,17 @@ function renderAuditEntities(entities) {
     localSistemaHtml += '</div></details>';
   }
 
-  // ── Painel de diretorios (programas vs dados) ──
+  // ── Painel de diretórios (programas vs dados) ──
   var dirsPanelHtml = '';
   if (totalDirs > 0 || dataDirs.length > 0) {
     dirsPanelHtml = '<details class="r2ctl-details" style="margin-bottom:12px"><summary>' +
       '<span class="r2ctl-badge-info" style="margin-right:6px">' + totalDirs + ' dirs programas</span>' +
       (dataDirs.length > 0 ? '<span class="r2ctl-badge-warning" style="margin-left:6px">' + dataDirs.length + ' dirs dados</span>' : '') +
-      ' Estrutura de diretorios (programas vs dados)</summary>' +
+      ' Estrutura de diretórios (programas vs dados)</summary>' +
       '<div class="r2ctl-table-scroll" style="margin-top:8px">' +
       '<table class="r2ctl-mini-table">' +
         '<tr><th colspan="3" style="background:var(--r2-charcoal-700);color:var(--r2-accent);">Programas</th></tr>' +
-        '<tr><th>Diretorio</th><th>Programas</th><th>Programas (lista)</th></tr>';
+        '<tr><th>Diretório</th><th>Programas</th><th>Programas (lista)</th></tr>';
 
     // Usa program_dirs do servidor se disponivel
     var dirsSource = programDirs.length > 0 ? programDirs : Object.values(dirTree).map(function(d) {
@@ -386,13 +386,13 @@ function renderAuditEntities(entities) {
       '</tr>';
     });
 
-    // Diretorios de dados
+    // Diretórios de dados
     if (dataDirs.length > 0) {
       dirsPanelHtml += '<tr><th colspan="3" style="background:var(--r2-charcoal-700);color:var(--r2-warning);">Dados</th></tr>';
       dataDirs.forEach(function(dd) {
         dirsPanelHtml += '<tr>' +
           '<td class="font-mono" style="font-size:12px" colspan="2">' + escapeHtml(dd) + '</td>' +
-          '<td class="is-muted">storage das entidades</td>' +
+          '<td class="is-muted">armazenamento das entidades</td>' +
         '</tr>';
       });
     }
@@ -413,7 +413,7 @@ function renderAuditEntities(entities) {
         'Programas que utilizam esta entidade</summary>' +
         '<div class="r2ctl-table-scroll" style="margin-top:6px">' +
         '<table class="r2ctl-mini-table">' +
-          '<tr><th>Programa</th><th>Objetivo / Proposito</th><th>Diretorio</th><th>Entidades</th></tr>' +
+          '<tr><th>Programa</th><th>Objetivo / Propósito</th><th>Diretório</th><th>Entidades</th></tr>' +
           programs.map(function(p) {
             var entBadge = p.entity_count > 1
               ? '<span class="r2ctl-badge-info">' + p.entity_count + ' entidades</span>'
@@ -431,15 +431,15 @@ function renderAuditEntities(entities) {
       '</details>';
     }
 
-    // ── Dependencias section ──
+    // ── Dependências section ──
     var depsHtml = '';
     if (deps.length > 0) {
       depsHtml = '<details class="r2ctl-details" style="margin-top:6px"><summary>' +
-        '<span class="r2ctl-badge-warning" style="margin-right:6px">' + deps.length + ' dependencias</span>' +
-        'Relacoes com outras entidades</summary>' +
+        '<span class="r2ctl-badge-warning" style="margin-right:6px">' + deps.length + ' dependências</span>' +
+        'Relações com outras entidades</summary>' +
         '<div class="r2ctl-table-scroll" style="margin-top:6px">' +
         '<table class="r2ctl-mini-table">' +
-          '<tr><th>Entidade relacionada</th><th>Tipo de relacao</th><th>Via programa</th></tr>' +
+          '<tr><th>Entidade relacionada</th><th>Tipo de relação</th><th>Via programa</th></tr>' +
           deps.map(function(d) {
             var viaProg = d.via_program
               ? '<span class="font-mono">' + escapeHtml(d.via_program) + '</span>'
@@ -459,19 +459,19 @@ function renderAuditEntities(entities) {
       '<div class="r2ctl-flex-between">' +
         '<div>' +
           '<h3>' + escapeHtml(e.name) + '</h3>' +
-          '<span class="r2ctl-report-meta">inferencia: ' + escapeHtml(e.inference_type || 'entity_discovery') +
-            ' | confianca: ' + ((e.confidence || 0)*100).toFixed(0) + '%' +
-            ' | decisao: ' + escapeHtml(e.final_decision || '—') +
+          '<span class="r2ctl-report-meta">inferência: ' + escapeHtml(e.inference_type || 'entity_discovery') +
+            ' | confiança: ' + ((e.confidence || 0)*100).toFixed(0) + '%' +
+            ' | decisão: ' + escapeHtml(e.final_decision || '—') +
           '</span>' +
         '</div>' +
         '<span class="r2ctl-status-pill r2ctl-status-neutral">' + escapeHtml(e.inference_type || 'entity_discovery') + '</span>' +
       '</div>' +
       programsHtml +
       depsHtml +
-      '<details class="r2ctl-details" style="margin-top:6px"><summary>' + evidence.length + ' evidencias de inferencia</summary>' +
+      '<details class="r2ctl-details" style="margin-top:6px"><summary>' + evidence.length + ' evidências de inferência</summary>' +
         '<div class="r2ctl-table-scroll">' +
         '<table class="r2ctl-mini-table">' +
-          '<tr><th>Regra</th><th>Padrao</th><th>Arquivo</th><th>Linha</th><th>Score</th></tr>' +
+          '<tr><th>Regra</th><th>Padrão</th><th>Arquivo</th><th>Linha</th><th>Pontuação</th></tr>' +
           evidence.map(function(ev) { return '<tr>' +
             '<td class="font-mono">' + escapeHtml(ev.rule || '') + '</td>' +
             '<td class="font-mono is-truncate" title="' + escapeHtml(ev.pattern || '') + '">' + escapeHtml(ev.pattern || '') + '</td>' +

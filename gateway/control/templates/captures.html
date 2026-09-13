@@ -123,7 +123,7 @@
       <div class="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-300">Dados sinteticos</h3>
-          <p class="text-xs text-stone-400">Gerar sessoes parametrizadas a partir da captura finalizada.</p>
+          <p class="text-xs text-stone-400">Cria dados de teste a partir do que foi gravado, para refazer a jornada no sistema novo.</p>
         </div>
         <div class="flex items-center gap-2">
           <button id="cap_synthesize_btn" class="r2ctl-btn-soft text-xs">Gerar</button>
@@ -139,7 +139,7 @@
         <label class="block">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Nº de sessões</span>
           <input id="cap_synth_samples" type="number" min="1" max="10000" value="10" class="r2ctl-input w-full" />
-          <span class="mt-1 block text-[11px] text-stone-500">Quantas sessões sintéticas gerar.</span>
+          <span class="mt-1 block text-[11px] text-stone-500">Quantas variações de dados gerar. Usado pelo botão Gerar — o Replay sintético executa 1 sessão por vez.</span>
         </label>
         <label class="block">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Dados</span>
@@ -156,7 +156,7 @@
             <option value="adaptive_shadow">Shadow (só mede)</option>
             <option value="adaptive">Adaptativa</option>
           </select>
-          <span class="mt-1 block text-[11px] text-stone-500">Conservadora: cadência histórica. Shadow: executa igual e mede o que o modo adaptativo economizaria. Adaptativa: batching conservador de digitação contígua — checkpoints e barreiras jamais são atravessados.</span>
+          <span class="mt-1 block text-[11px] text-stone-500">Conservadora: mesmo ritmo da gravação. Shadow: executa igual e só mede quanto o modo adaptativo economizaria. Adaptativa: acelera trechos seguros de digitação, sem pular nenhuma verificação.</span>
         </label>
         <div class="block lg:col-span-4">
           <span class="mb-1 block text-xs uppercase tracking-[0.14em] text-stone-400">Manter originais (replay)</span>

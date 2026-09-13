@@ -18,10 +18,10 @@
     <div id="synthetic-origin-banner" class="hidden mb-4 rounded-2xl px-4 py-3 bg-rose-900/30 border border-rose-700/40 flex flex-wrap items-center justify-between gap-3">
       <div class="text-sm text-rose-100 flex flex-wrap items-center gap-2">
         <span class="inline-flex items-center gap-1 rounded-full border border-rose-900/60 bg-rose-950/50 px-2 py-0.5 text-xs text-rose-200">sintético • captura #<span id="synthetic-origin-id"></span></span>
-        <span class="text-xs text-rose-100/90">Trilha gerada com dados sintéticos a partir da captura de referência.</span>
+        <span class="text-xs text-rose-100/90">Esta jornada foi refeita com dados de teste a partir da captura original.</span>
         <a id="synthetic-origin-link" href="#" class="text-xs underline decoration-rose-400/60 underline-offset-2 hover:text-rose-100">ver replay de origem</a>
       </div>
-      <button id="depara-open-btn" class="r2ctl-btn-soft text-xs">⇄ De→para por tela</button>
+      <button id="depara-open-btn" class="r2ctl-btn-soft text-xs" title="Mostra, campo a campo, o valor original da captura e o valor usado no teste">⇄ De→para por tela</button>
     </div>
 
     <!-- Metadados -->
@@ -75,7 +75,7 @@
     <!-- Controles de playback -->
     <div class="mb-4 rounded-2xl px-4 py-3 bg-sky-900/30 border border-sky-700/40 flex items-center justify-between gap-3">
       <div class="text-sm text-sky-200">
-        <strong>Playback local:</strong> Clique em Iniciar Playback para revisar a trilha bruta capturada.
+        <strong>Assistir à gravação:</strong> clique em ▶ Iniciar Playback para ver a sessão como um vídeo — não executa nada no sistema.
         <div id="playback-status-message" class="mt-1 hidden text-xs text-emerald-200/90">Reprodução concluída. Você pode reproduzir novamente.</div>
       </div>
       <button id="playback-start-btn" class="r2ctl-btn-pill r2ctl-btn-pill-success text-xs opacity-50 cursor-not-allowed" disabled>⏳ Carregando dados...</button>
@@ -176,7 +176,7 @@
         <button id="events-filter-all" class="r2ctl-btn-soft text-xs active">Todos</button>
         <button id="events-filter-in" class="r2ctl-btn-soft text-xs">📥 Entrada</button>
         <button id="events-filter-out" class="r2ctl-btn-soft text-xs">📤 Saída</button>
-        <button id="events-filter-det" class="r2ctl-btn-soft text-xs">🎯 Determinístico</button>
+        <button id="events-filter-det" class="r2ctl-btn-soft text-xs" title="Mostra só as teclas em que o sistema conferiu a tela">🎯 Teclas verificadas</button>
       </div>
     </div>
 
@@ -694,7 +694,7 @@ input[type="range"] {
       map.set(key, ev);
     });
     // deterministic_input vive em timeline_items (refs det-N): sem este
-    // segundo registro, o filtro "Determinístico" nunca resolvia os refs.
+    // segundo registro, o filtro "Teclas verificadas" nunca resolvia os refs.
     (replayData?.timeline_items || []).forEach((ev, idx) => {
       const key = String(ev?.event_id || ev?.id || ev?.seq_global || ev?.seq || `ti-${idx}`);
       if (!map.has(key)) map.set(key, ev);
@@ -924,7 +924,7 @@ input[type="range"] {
       const displayTs = ev.timestamp_ms || ev.ts_ms;
       return '<div class="event-item">' +
         '<div class="event-direction ' + eventDirectionClass(ev) + '">' +
-          (ev.type === 'deterministic_input' ? '🎯 DET' : (ev.direction === 'in' ? '📥 IN' : '📤 OUT')) +
+          (ev.type === 'deterministic_input' ? '<span title="Tecla com verificação de tela — o sistema confere se a tela bate com a gravação">🎯 DET</span>' : (ev.direction === 'in' ? '📥 IN' : '📤 OUT')) +
         '</div>' +
         '<div class="space-y-2">' +
           '<div class="flex items-center justify-between gap-3 text-xs text-stone-400">' +

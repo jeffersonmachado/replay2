@@ -1,4 +1,4 @@
-import { escapeHtml, formatAgo, formatCount } from "../core/dom.js";
+import { complianceLabel, escapeHtml, formatAgo, formatCount } from "../core/dom.js";
 
 export function gatewayMetricRows(items, emptyLabel) {
   return (items || []).length
@@ -34,9 +34,9 @@ export function gatewaySessionCard(item) {
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.session_id || "-")}</div>
-          <div class="mt-1 text-xs text-stone-400">actor=${escapeHtml(item.actor || "-")} • compliance=${escapeHtml(item.compliance_status || "-")} • ${formatAgo(item.last_ts_ms)}</div>
-          <div class="mt-1 text-xs text-stone-400">logname=${escapeHtml(item.logname || "-")} • uid=${item.uid !== null && item.uid !== undefined ? item.uid : "-"} • gid=${item.gid !== null && item.gid !== undefined ? item.gid : "-"}</div>
-          <div class="mt-1 text-xs text-stone-400">checkpoint=${formatCount(item.checkpoint_count || 0)} • deterministic=${formatCount(item.deterministic_input_count || 0)} • in=${formatCount(item.bytes_in || 0)} • out=${formatCount(item.bytes_out || 0)}</div>
+          <div class="mt-1 text-xs text-stone-400" title="actor=${escapeHtml(item.actor || "-")} • compliance=${escapeHtml(item.compliance_status || "-")}">usuário: ${escapeHtml(item.actor || "-")} • conformidade: ${escapeHtml(complianceLabel(item.compliance_status))} • ${formatAgo(item.last_ts_ms)}</div>
+          <div class="mt-1 text-xs text-stone-400">login: ${escapeHtml(item.logname || "-")} • uid=${item.uid !== null && item.uid !== undefined ? item.uid : "-"} • gid=${item.gid !== null && item.gid !== undefined ? item.gid : "-"}</div>
+          <div class="mt-1 text-xs text-stone-400" title="checkpoint=${formatCount(item.checkpoint_count || 0)} • deterministic=${formatCount(item.deterministic_input_count || 0)}">verificações: ${formatCount(item.checkpoint_count || 0)} • teclas verificadas: ${formatCount(item.deterministic_input_count || 0)} • recebidos: ${formatCount(item.bytes_in || 0)} • enviados: ${formatCount(item.bytes_out || 0)}</div>
           <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.compliance_reason || "sem motivo registrado")}</div>
         </div>
         <button class="r2ctl-btn-soft" data-session="${escapeHtml(item.session_id || "")}">Ver timeline</button>

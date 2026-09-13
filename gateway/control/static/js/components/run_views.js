@@ -1,4 +1,4 @@
-import { escapeHtml, failureTypeLabel, formatAgo, formatCount, formatDate, severityLabel, statusLabel, statusToneClass } from "../core/dom.js";
+import { complianceLabel, escapeHtml, failureTypeLabel, formatAgo, formatCount, formatDate, severityLabel, statusLabel, statusToneClass } from "../core/dom.js";
 
 // Extrai a origem sintética da run (params_json gravado pelo replay
 // sintético 1-clique: synthetic=true, source_capture_id, journey_id).
@@ -68,7 +68,7 @@ export function runLinkCard(run) {
         <span class="r2ctl-status-pill ${statusToneClass(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </div>
       <div class="mt-2 text-sm text-stone-300">${escapeHtml(run.target_user || "-")}@${escapeHtml(run.target_host || "-")}</div>
-      <div class="mt-1 text-xs text-stone-400">compliance=${escapeHtml(run.compliance_status || "-")} • ${formatAgo(run.created_at_ms)}</div>
+      <div class="mt-1 text-xs text-stone-400" title="compliance=${escapeHtml(run.compliance_status || "-")}">conformidade: ${escapeHtml(complianceLabel(run.compliance_status))} • ${formatAgo(run.created_at_ms)}</div>
     </a>
   `;
 }
@@ -77,7 +77,7 @@ export function runCompactCard(run) {
   return `
     <div class="r2ctl-obs-run">
       <div class="font-mono text-sm text-stone-100">#${escapeHtml(run.id)}</div>
-      <div class="mt-1 text-xs text-stone-400">${escapeHtml(run.target_host || "-")} • ${escapeHtml(run.compliance_status || "-")}</div>
+      <div class="mt-1 text-xs text-stone-400" title="compliance=${escapeHtml(run.compliance_status || "-")}">${escapeHtml(run.target_host || "-")} • ${escapeHtml(complianceLabel(run.compliance_status))}</div>
     </div>
   `;
 }
@@ -95,7 +95,7 @@ export function runTableRow(run) {
       </td>
       <td class="px-4 py-4 text-stone-300">${formatCount(run.last_seq_global_applied || 0)}</td>
       <td class="px-4 py-4">
-        <span class="r2ctl-status-pill ${statusToneClass(run.compliance_status)}">${escapeHtml(run.compliance_status || "-")}</span>
+        <span class="r2ctl-status-pill ${statusToneClass(run.compliance_status)}" title="${escapeHtml(run.compliance_status || "")}">${escapeHtml(complianceLabel(run.compliance_status))}</span>
       </td>
       <td class="px-4 py-4">
         <div class="r2ctl-actions">

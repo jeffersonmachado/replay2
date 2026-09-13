@@ -2,11 +2,11 @@
   <section class="r2ctl-card rounded-3xl p-5 shadow-inner shadow-black/20">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <h2 class="r2ctl-section-title text-lg font-semibold">Detalhe da run</h2>
-        <p class="r2ctl-section-copy text-sm">Contexto completo, comparação, compliance, falhas e exportações.</p>
+        <h2 class="r2ctl-section-title text-lg font-semibold">Detalhe da execução</h2>
+        <p class="r2ctl-section-copy text-sm">Contexto completo, comparação, conformidade, falhas e exportações.</p>
       </div>
       <div class="flex gap-3">
-        <input id="detail_id" placeholder="id da run" class="r2ctl-input r2ctl-input-id" />
+        <input id="detail_id" placeholder="id da execução" class="r2ctl-input r2ctl-input-id" />
         <button id="load_detail_btn" class="r2ctl-btn-soft">Carregar</button>
       </div>
     </div>
@@ -21,13 +21,13 @@
     </div>
     <!-- Player de divergências: duas telas lado a lado, navegação entre falhas -->
     <div id="failure_player" class="hidden mb-4 rounded-2xl border border-stone-800 bg-stone-950/40 p-4"></div>
-    <pre id="events" class="r2ctl-detail-surface max-h-[420px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma run para carregar eventos.</pre>
+    <pre id="events" class="r2ctl-detail-surface max-h-[420px] overflow-auto rounded-2xl p-4 text-xs leading-6 whitespace-pre-wrap">Selecione uma execução para carregar eventos.</pre>
   </section>
-  <!-- Modal de→para dos dados sintéticos substituídos na run -->
+  <!-- Modal de→para dos dados sintéticos substituídos na execução -->
   <div id="run_depara_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
     <div class="r2ctl-card rounded-3xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-5 shadow-inner shadow-black/20">
       <div class="mb-4 flex items-center justify-between gap-3">
-        <h3 class="text-lg font-semibold">⇄ Dados sintéticos desta run</h3>
+        <h3 class="text-lg font-semibold">⇄ Dados sintéticos desta execução</h3>
         <button id="run_depara_close_btn" class="r2ctl-btn-soft text-xs">✕ Fechar</button>
       </div>
       <div id="run_depara_content" class="text-sm">

@@ -386,7 +386,7 @@ function applyViewToggle(tableContainerId, cardsContainerId, toggleBtnId, countI
 async function loadGatewayMonitor() {
   const logDir = await resolveLogDir();
   if (!logDir) {
-    text("#gw_monitor_status", "informe um log_dir para monitorar");
+    text("#gw_monitor_status", "informe o diretório de log (log_dir) para monitorar");
     return;
   }
   const result = await apiJson(`/api/gateway/monitor?log_dir=${encodeURIComponent(logDir)}&limit=40`);
@@ -523,7 +523,7 @@ function renderGatewaySessions(data) {
 async function loadGatewaySessions() {
   const logDir = await resolveLogDir();
   if (!logDir) {
-    text("#gw_sessions_status", "informe um log_dir para monitorar");
+    text("#gw_sessions_status", "informe o diretório de log (log_dir) para monitorar");
     return;
   }
   const qs = buildQuery({

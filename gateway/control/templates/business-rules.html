@@ -1,4 +1,4 @@
-<div id="br-content"><p class="r2ctl-section-copy text-sm">Execute o Pipeline primeiro para gerar a avaliacao de regras de negocio.</p></div>
+<div id="br-content"><p class="r2ctl-section-copy text-sm">Execute o Pipeline primeiro para gerar a avaliação de regras de negócio.</p></div>
 
 <script src="/assets/mermaid.min.js"></script>
 <script>
@@ -42,7 +42,7 @@ var _d = window.__R2CTL_PAGE_STATE__ || {};
   if (_d.rulesEvaluated && _d.rulesEvaluated > 0) {
     renderBR(_d, container);
   } else {
-    container.innerHTML = '<div class="r2ctl-report-card"><p>Execute o Pipeline em Engenharia → Pipeline primeiro para gerar a avaliacao de regras de negocio.</p></div>';
+    container.innerHTML = '<div class="r2ctl-report-card"><p>Execute o Pipeline em Engenharia → Pipeline primeiro para gerar a avaliação de regras de negócio.</p></div>';
   }
 })();
 
@@ -66,20 +66,22 @@ function renderBR(d, container) {
     '<div style="font-size:11px;color:#6b7280;margin-bottom:12px">' +
       '<a href="/" style="color:#6b7280;text-decoration:none">Dashboard</a> › ' +
       '<a href="/pipeline" style="color:#6b7280;text-decoration:none">Engenharia</a> › ' +
-      '<span style="color:#e5e7eb">Regras de Negocio</span> › ' +
-      '<span style="color:#93c5fd">Manutencao de Dados Inferidos</span>' +
+      '<span style="color:#e5e7eb">Regras de Negócio</span> › ' +
+      '<span style="color:#93c5fd">Manutenção de Dados Inferidos</span>' +
     '</div>' +
     '<div class="r2ctl-report-summary">' +
       '<div class="r2ctl-report-stat"><div class="num">'+(d.rules_evaluated||d.rulesEvaluated||0)+'</div><div class="lbl">Regras avaliadas</div></div>' +
       '<div class="r2ctl-report-stat r2ctl-report-stat-success"><div class="num">'+(d.rules_ok||d.rulesOk||0)+'</div><div class="lbl">Regras OK</div></div>' +
-      '<div class="r2ctl-report-stat '+(gaps.length?'r2ctl-report-stat-danger':'r2ctl-report-stat-success')+'"><div class="num">'+gaps.length+'</div><div class="lbl">Gaps detectados</div></div>' +
+      '<div class="r2ctl-report-stat '+(gaps.length?'r2ctl-report-stat-danger':'r2ctl-report-stat-success')+'"><div class="num">'+gaps.length+'</div><div class="lbl">Lacunas detectadas</div></div>' +
       '<div class="r2ctl-report-stat"><div class="num">'+flows.length+'</div><div class="lbl">Fluxos</div></div>' +
     '</div>' +
 
-    (gaps.length ? '<h3 class="r2ctl-section-title mt-5">Gaps de Negocio Detectados</h3>' +
+    (gaps.length ? '<h3 class="r2ctl-section-title mt-5">Lacunas de negócio detectadas</h3>' +
       gaps.map(function(g) {
         var isCritical = g.severity === 'critical';
         var statusLabel = {open:'🔴 Aberto',investigating:'🔍 Investigando',resolved:'✅ Resolvido',dismissed:'⬜ Descartado'}[g.status]||'';
+        // Gravidade em pt-BR; o código original (critical/high/...) fica no title.
+        var sevPt = {critical:'crítica',high:'alta',medium:'média',low:'baixa'}[String(g.severity||'').toLowerCase()] || (g.severity||'');
         var files = g.suggested_files || [];
         return '<div class="r2ctl-report-card '+(isCritical?'r2ctl-report-card-danger':'')+' gap-card" data-gap-id="'+esc(g.gap_id)+'">' +
           '<div class="r2ctl-flex-between">' +
@@ -88,26 +90,26 @@ function renderBR(d, container) {
               '<span class="r2ctl-report-meta">'+esc(statusLabel)+'</span>' +
             '</div>' +
             '<div class="r2ctl-flex-actions">' +
-              '<span class="r2ctl-status-pill '+(isCritical?'r2ctl-status-danger':'r2ctl-status-warn')+'">'+esc((g.severity||'').toUpperCase())+'</span>' +
-              (files.length ? '<button onclick="toggleGapFiles(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-info">🔎 Investigar ('+files.length+' '+((files[0]||'').indexOf('(criar)')===0?'stubs':'arquivos')+')</button>' : '') +
-              '<button onclick="dismissGap(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-neutral" title="Descartar gap">✕</button>' +
+              '<span class="r2ctl-status-pill '+(isCritical?'r2ctl-status-danger':'r2ctl-status-warn')+'" title="'+esc(g.severity||'')+'">'+esc(sevPt)+'</span>' +
+              (files.length ? '<button onclick="toggleGapFiles(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-info">🔎 Investigar ('+files.length+' '+((files[0]||'').indexOf('(criar)')===0?'esboços':'arquivos')+')</button>' : '') +
+              '<button onclick="dismissGap(\''+esc(g.gap_id)+'\')" class="r2ctl-btn-action r2ctl-btn-action-neutral" title="Descartar lacuna">✕</button>' +
             '</div>' +
           '</div>' +
           '<p class="text-sm mt-1.5">Entidade faltante: <strong>'+esc(g.missing_entity||g.dep)+'</strong>. Fluxo afetado: <strong>'+esc(g.affected_flow||'')+'</strong></p>' +
           '<p class="text-xs mt-1 text-rose-100"><strong>Impacto:</strong> '+esc(g.impact||'')+'</p>' +
-          '<p class="text-xs mt-1 text-emerald-200"><strong>Recomendacao:</strong> '+esc(g.recommendation||'')+'</p>' +
+          '<p class="text-xs mt-1 text-emerald-200"><strong>Recomendação:</strong> '+esc(g.recommendation||'')+'</p>' +
           (files.length ? '<div id="gap-files-'+esc(g.gap_id)+'" class="r2ctl-gap-files">' +
-            '<strong>'+((files[0]||'').indexOf('(criar)')===0 ? 'Stubs sugeridos para criacao' : 'Arquivos sugeridos para investigacao')+':</strong>' +
+            '<strong>'+((files[0]||'').indexOf('(criar)')===0 ? 'Esboços (stubs) sugeridos para criação' : 'Arquivos sugeridos para investigação')+':</strong>' +
             '<ul>'+files.map(function(f) { return '<li>'+(f.indexOf('(criar)')===0 ? '📄 <code class="r2ctl-code-chip r2ctl-code-chip-new">'+esc(f)+'</code> <span class="r2ctl-report-meta">(novo)</span>' : '<code class="r2ctl-code-chip">'+esc(f)+'</code>')+'</li>'; }).join('')+'</ul>' +
-            '<p class="mt-1.5">💡 '+((files[0]||'').indexOf('(criar)')===0 ? 'Estes arquivos nao existem no codigo-fonte. Considere cria-los para implementar a entidade <strong>'+esc(g.missing_entity||'')+'</strong>.' : 'Verifique se esses arquivos implementam operacoes para <strong>'+esc(g.missing_entity||'')+'</strong>. Se nao existir, considere criar stubs.')+'</p>' +
+            '<p class="mt-1.5">💡 '+((files[0]||'').indexOf('(criar)')===0 ? 'Estes arquivos não existem no código-fonte. Considere criá-los para implementar a entidade <strong>'+esc(g.missing_entity||'')+'</strong>.' : 'Verifique se esses arquivos implementam operações para <strong>'+esc(g.missing_entity||'')+'</strong>. Se não existir, considere criar esboços (stubs).')+'</p>' +
           '</div>' : '') +
         '</div>';
       }).join('')
-    : '<div class="r2ctl-report-card r2ctl-report-card-success"><p class="font-semibold">✅ Nenhum gap de negocio detectado. Todas as regras estao cobertas.</p></div>') +
+    : '<div class="r2ctl-report-card r2ctl-report-card-success"><p class="font-semibold">✅ Nenhuma lacuna de negócio detectada. Todas as regras estão cobertas.</p></div>') +
 
     (d.recommendation ? '<div class="r2ctl-report-card r2ctl-report-card-success"><p class="text-sm">'+esc(d.recommendation)+'</p></div>' : '') +
 
-    '<h3 class="r2ctl-section-title mt-5">Fluxos de Negocio' +
+    '<h3 class="r2ctl-section-title mt-5">Fluxos de Negócio' +
       (d.flows_total && d.flows_total > flows.length ? ' <span class="text-xs r2ctl-report-meta">(mostrando ' + flows.length + ' de ' + d.flows_total + ')</span>' : '') +
     '</h3>' +
     // Filtros
@@ -162,7 +164,7 @@ function renderBR(d, container) {
         // Diagrama Mermaid com zoom/pan
         '<div class="mermaid" id="' + flowId + '" style="background:#0f172a;border-radius:8px;padding:12px;max-width:100%;overflow:auto;cursor:grab;min-height:80px">' + mermaidDef + '</div>' +
         // Justificativas
-        '<details style="margin-top:10px;font-size:12px;color:#9ca3af"><summary style="cursor:pointer;color:#6b7280">📋 Justificativas das inferencias (' + steps.length + ' passos)</summary>' +
+        '<details style="margin-top:10px;font-size:12px;color:#9ca3af"><summary style="cursor:pointer;color:#6b7280">📋 Justificativas das inferências (' + steps.length + ' passos)</summary>' +
           '<div style="max-height:300px;overflow-y:auto;margin-top:6px">' +
             steps.map(function(s, j) {
               var why = s.why || 'Sem justificativa registrada';
@@ -182,12 +184,12 @@ function renderBR(d, container) {
       '</div>';
     }).join('') +
 
-    '<p class="text-xs r2ctl-report-meta mt-5">⬢ Azul = ponto de partida | ⬢ Verde = entidades no fluxo | → = direcao | Arraste e use scroll para zoom no diagrama</p>' +
+    '<p class="text-xs r2ctl-report-meta mt-5">⬢ Azul = ponto de partida | ⬢ Verde = entidades no fluxo | → = direção | Arraste e use scroll para zoom no diagrama</p>' +
 
-    // Secao de comparacao com roteiros esperados
-    '<h3 class="r2ctl-section-title mt-6">Comparacao com Roteiros Esperados</h3>' +
+    // Seção de comparação com roteiros esperados
+    '<h3 class="r2ctl-section-title mt-6">Comparação com roteiros esperados</h3>' +
     '<div class="r2ctl-report-card" style="font-size:12px">' +
-      '<p class="text-sm mb-2"><strong>Roteiros de negocio conhecidos</strong> vs <strong>Fluxos inferidos do codigo-fonte</strong>:</p>' +
+      '<p class="text-sm mb-2"><strong>Roteiros de negócio conhecidos</strong> vs <strong>Fluxos inferidos do código-fonte</strong>:</p>' +
       buildRouteComparison(flows) +
     '</div>';
 
@@ -268,7 +270,7 @@ function buildRouteComparison(flows) {
 
   var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">';
   html += '<div style="color:#9ca3af;font-weight:600;padding:4px 0;border-bottom:1px solid #374151">Roteiro Esperado</div>';
-  html += '<div style="color:#9ca3af;font-weight:600;padding:4px 0;border-bottom:1px solid #374151">Entidades Encontradas no Codigo</div>';
+  html += '<div style="color:#9ca3af;font-weight:600;padding:4px 0;border-bottom:1px solid #374151">Entidades Encontradas no Código</div>';
 
   for (var r = 0; r < expectedRoutes.length; r++) {
     var route = expectedRoutes[r];
@@ -289,14 +291,14 @@ function buildRouteComparison(flows) {
     html += '<div style="padding:6px 0">' +
       '<span style="color:' + color + ';font-weight:700;font-size:14px">' + matchPct + '%</span> ' +
       found.join(' · ') +
-      (missingCanonical.length > 0 ? '<br><span style="color:#f87171;font-size:10px">Faltando: ' + missingCanonical.join(', ') + ' — verifique aliases no codigo Recital</span>' : '') +
+      (missingCanonical.length > 0 ? '<br><span style="color:#f87171;font-size:10px">Faltando: ' + missingCanonical.join(', ') + ' — verifique aliases no código Recital</span>' : '') +
     '</div>';
   }
   html += '</div>';
 
   html += '<p class="text-xs r2ctl-report-meta mt-3" style="color:#6b7280">' +
-    '💡 O codigo Recital usa aliases (ex: <code>cli</code>=cliente, <code>fornec</code>=fornecedor, <code>ped</code>=pedido). ' +
-    'Execute o Pipeline para melhorar a inferencia de relacionamentos entre entidades.' +
+    '💡 O código Recital usa aliases (ex: <code>cli</code>=cliente, <code>fornec</code>=fornecedor, <code>ped</code>=pedido). ' +
+    'Execute o Pipeline para melhorar a inferência de relacionamentos entre entidades.' +
   '</p>';
 
   return html;
@@ -558,7 +560,7 @@ function toggleGapFiles(gapId) {
 }
 
 async function dismissGap(gapId) {
-  if (!confirm('Descartar o gap '+gapId+'? Ele nao sera mais exibido como pendente.')) return;
+  if (!confirm('Descartar a lacuna '+gapId+'? Ela não será mais exibida como pendente.')) return;
   try {
     await fetch('/api/business/gaps', {
       method: 'POST',

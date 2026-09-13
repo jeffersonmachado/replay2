@@ -29,3 +29,4 @@ gateway/control/static/js/components/ui_lay_labels.test.mjs
 gateway/control/static/js/components/playback_pacing.test.mjs
 gateway/control/static/js/components/template_syntax.test.mjs
 gateway/control/static/js/components/production_no_terminal_parser.test.mjs
+gateway/control/static/js/components/templates_lay_text.test.mjs

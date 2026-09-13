@@ -2,6 +2,14 @@
 """smoke-test-capture.py — Valida o pipeline de captura via API HTTP."""
 import argparse, http.cookiejar, json, sys, os, urllib.request, urllib.error
 
+# AIX: stdout latin-1 nao pode derrubar o script nos caracteres unicode
+# (setas/acentos) — mesmo padrao do shadow_eval_adaptive_replay.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 PASS = FAIL = 0
 
 def check(ok: bool, label: str, detail: str = ""):

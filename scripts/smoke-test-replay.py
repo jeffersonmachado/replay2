@@ -2,6 +2,14 @@
 """smoke-test-replay.py — Valida a estrutura de dados de replay via API HTTP."""
 import argparse, http.cookiejar, json, sys, os, urllib.request, urllib.error
 
+# AIX: stdout latin-1 nao pode derrubar o script nos caracteres unicode
+# (setas/acentos) — mesmo padrao do shadow_eval_adaptive_replay.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 PASS = FAIL = 0
 
 def check(ok: bool, label: str, detail: str = ""):
@@ -132,24 +140,30 @@ def main():
     enc = geom.get("encoding", "?")
     check(enc and enc != "?", f"encoding: {enc}")
 
-    # 3. Timeline
+    # 3. Timeline (contrato X6: `timeline` trafega como refs —
+    # {"event_refs", "checkpoint_refs"}; os eventos completos da janela
+    # vivem em `timeline_items`)
     print("--- 3. Timeline ---")
-    tl = data.get("timeline", [])
-    has_ts = all(e.get("timestamp_ms") is not None for e in tl) if tl else True
-    check(len(tl) > 0, f"timeline: {len(tl)} eventos")
+    tl = data.get("timeline", {})
+    tl_refs = tl.get("event_refs", []) if isinstance(tl, dict) else []
+    items = data.get("timeline_items", [])
+    check(len(tl_refs) > 0, f"timeline refs: {len(tl_refs)} eventos")
+    check(isinstance(items, list) and len(items) > 0, f"timeline_items: {len(items) if isinstance(items, list) else '?'} eventos")
+    has_ts = all(isinstance(e, dict) and e.get("timestamp_ms") is not None for e in items) if items else True
     check(has_ts, "timestamp_ms em todos os eventos")
 
-    # 4. Playback
+    # 4. Playback (X6: refs + meta no JSON; os bytes da janela estao em
+    # `timeline_items`)
     print("--- 4. Playback ---")
     pb = data.get("playback", {})
-    evs = pb.get("events", [])
-    has_b64 = all(e.get("data_b64") for e in evs) if evs else True
+    byte_items = [e for e in items if isinstance(e, dict) and e.get("type") == "bytes"]
+    has_b64 = all(e.get("data_b64") for e in byte_items) if byte_items else True
     check(pb.get("event_count", 0) > 0, f"playback: {pb.get('event_count', 0)} eventos")
-    check(has_b64, "data_b64 em todos os eventos")
+    check(has_b64, "data_b64 em todos os eventos bytes")
 
     # 5. Snapshots
     print("--- 5. Snapshots ---")
-    snaps = [e for e in tl if e.get("content_kind") == "terminal_snapshot"]
+    snaps = [e for e in items if isinstance(e, dict) and e.get("snapshot_compact")]
     has_text_sig = any(e.get("text_sig") for e in snaps)
     has_visual_sig = any(e.get("visual_sig") for e in snaps)
     if snaps:

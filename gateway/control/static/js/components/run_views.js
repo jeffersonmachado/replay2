@@ -1,4 +1,4 @@
-import { escapeHtml, formatAgo, formatCount, formatDate, statusLabel, statusToneClass } from "../core/dom.js";
+import { escapeHtml, failureTypeLabel, formatAgo, formatCount, formatDate, severityLabel, statusLabel, statusToneClass } from "../core/dom.js";
 
 // Extrai a origem sintética da run (params_json gravado pelo replay
 // sintético 1-clique: synthetic=true, source_capture_id, journey_id).
@@ -130,8 +130,8 @@ export function failureTableRow(f) {
   return `
     <tr class="r2ctl-row align-top">
       <td class="px-4 py-4"><a href="/runs/${escapeHtml(f.run_id)}" class="r2ctl-run-id">#${escapeHtml(f.run_id)}</a>${status}</td>
-      <td class="px-4 py-4 text-stone-200">${escapeHtml(f.failure_type || "—")}</td>
-      <td class="px-4 py-4"><span class="rounded-full ${sevTone} px-2 py-0.5 text-xs font-semibold">${escapeHtml(severity)}</span></td>
+      <td class="px-4 py-4 text-stone-200" title="${escapeHtml(f.failure_type || "")}">${escapeHtml(f.failure_type ? failureTypeLabel(f.failure_type) : "—")}</td>
+      <td class="px-4 py-4"><span class="rounded-full ${sevTone} px-2 py-0.5 text-xs font-semibold" title="${escapeHtml(severity)}">${escapeHtml(severityLabel(severity))}</span></td>
       <td class="px-4 py-4 font-mono text-xs text-stone-400" title="${sessionTitle}">${escapeHtml(session)}</td>
       <td class="px-4 py-4 text-stone-300">${escapeHtml(f.seq_global ?? f.seq_session ?? "—")}</td>
       <td class="px-4 py-4 text-xs text-stone-400">${escapeHtml(ts)}</td>

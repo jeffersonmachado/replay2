@@ -2,7 +2,7 @@
 // Consome /api/benchmarks*; nunca inventa números: estados vazios explícitos
 // e selo REAL / SIMULATION / INCONCLUSIVE sempre visível no topo.
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, html, qs, text } from "../core/dom.js";
+import { escapeHtml, html, qs, text, statusLabel } from "../core/dom.js";
 
 let selectedExperimentId = "";
 let pollTimer = null;
@@ -37,8 +37,13 @@ function seal(kind, note) {
   text("#bench_seal_text", note);
 }
 
-function verdictBadge(verdict) {
+function verdictLabel(verdict) {
   const translate = { PASS: "APROVADO", WARN: "ALERTA", FAIL: "REPROVADO", INCONCLUSIVE: "INCONCLUSIVO" };
+  const v = String(verdict || "INCONCLUSIVE").toUpperCase();
+  return translate[v] || v;
+}
+
+function verdictBadge(verdict) {
   const styles = {
     PASS: "bg-emerald-600/30 text-emerald-200",
     WARN: "bg-amber-600/30 text-amber-200",
@@ -46,7 +51,7 @@ function verdictBadge(verdict) {
     INCONCLUSIVE: "bg-stone-700/60 text-stone-300",
   };
   const v = String(verdict || "INCONCLUSIVE").toUpperCase();
-  const label = translate[v] || v;
+  const label = verdictLabel(verdict);
   return `<span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${styles[v] || styles.INCONCLUSIVE}">${escapeHtml(label)}</span>`;
 }
 
@@ -59,7 +64,7 @@ function statusBadge(status) {
     FAILED: "bg-red-600/30 text-red-200",
     CANCELLED: "bg-amber-600/30 text-amber-200",
   };
-  return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs ${styles[s] || "bg-stone-700/60 text-stone-300"}">${escapeHtml(s || "-")}</span>`;
+  return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs ${styles[s] || "bg-stone-700/60 text-stone-300"}" title="${escapeHtml(s || "-")}">${escapeHtml(statusLabel(s))}</span>`;
 }
 
 function stopPolling() {
@@ -201,8 +206,8 @@ function renderStats(comparison) {
   }
   html("#bdetail_stats", ids.map((id) => {
     const s = statsByEnv[id] || {};
-    const role = id === comparison.baseline_env ? "baseline" : (id === comparison.target_env ? "alvo" : "");
-    const cnt = role === "baseline" ? (counts.baseline || {}) : (role === "alvo" ? (counts.target || {}) : {});
+    const role = id === comparison.baseline_env ? "referência" : (id === comparison.target_env ? "alvo" : "");
+    const cnt = role === "referência" ? (counts.baseline || {}) : (role === "alvo" ? (counts.target || {}) : {});
     return `<div class="r2ctl-detail-surface rounded-xl p-3 text-sm">
       <div class="font-semibold text-stone-200">${escapeHtml(id)} ${role ? `<span class="text-xs text-stone-400">(${role})</span>` : ""}</div>
       <div class="text-stone-300 mt-1">
@@ -230,7 +235,7 @@ function renderDegradation(comparison) {
       <div class="text-stone-300 mt-1">
         ponto de degradação: <strong class="text-amber-300">${fmt(d.degradation_point, 0)}</strong><br>
         limite operacional seguro: ${fmt(d.safe_operational_limit, 0)} · máximo observado: ${fmt(d.maximum_observed_limit, 0)}<br>
-        gargalo dominante: <strong>${escapeHtml(d.dominant_bottleneck || "unknown")}</strong><br>
+        gargalo dominante: <strong>${escapeHtml(d.dominant_bottleneck || "indeterminado")}</strong><br>
         recuperação: ${d.recovery_seconds !== null && d.recovery_seconds !== undefined ? `${fmt(d.recovery_seconds)}s` : "não medida"}
       </div>
     </div>`;
@@ -415,7 +420,7 @@ async function runSimulation() {
       ).join(""));
       html("#bsim_comparisons", (data.comparisons || []).map((c) =>
         `<div class="r2ctl-card p-3 border-amber-700/40">
-          <span class="text-sm font-medium text-amber-300">${escapeHtml(c.verdict)} (SIMULAÇÃO)</span>
+          <span class="text-sm font-medium text-amber-300">${escapeHtml(verdictLabel(c.verdict))} (SIMULAÇÃO)</span>
           <span class="text-sm text-stone-300 ml-2">${escapeHtml(c.baseline)} vs ${escapeHtml(c.target)}</span>
           <div class="text-xs text-amber-200/70 mt-1">Sem recomendação de migração: simulação não sustenta decisão.</div>
         </div>`

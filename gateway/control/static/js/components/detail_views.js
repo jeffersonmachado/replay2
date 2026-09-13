@@ -1,4 +1,4 @@
-import { complianceLabel, entryModeLabel, escapeHtml, failureTypeLabel, formatCount, formatDate, modeLabel, statusLabel, statusToneClass } from "../core/dom.js";
+import { complianceLabel, entryModeLabel, escapeHtml, executionPolicyLabel, failureTypeLabel, formatCount, formatDate, modeLabel, statusLabel, statusToneClass } from "../core/dom.js";
 import { runSyntheticBadgeHtml } from "./run_views.js";
 
 export function runIdentityCard(run) {
@@ -62,12 +62,6 @@ export function exportLinks(runId) {
   `;
 }
 
-const EXECUTION_POLICY_LABELS = {
-  conservative: "conservadora (padrão)",
-  adaptive: "adaptativa (acelera com segurança)",
-  adaptive_shadow: "shadow (mede, não acelera)",
-};
-
 export function runAdaptiveMetrics(run) {
   if (!run) return null;
   let metrics = run.metrics;
@@ -97,7 +91,7 @@ export function adaptiveMetricsCard(run) {
   const adaptive = runAdaptiveMetrics(run);
   if (!adaptive) return "";
   const policy = String(adaptive.execution_policy || "");
-  const policyLabel = EXECUTION_POLICY_LABELS[policy] || policy;
+  const policyLabel = executionPolicyLabel(policy);
   const rows = [
     ["jornada total", _fmtMs(adaptive.journey_total_ms)],
     ["resposta ERP", _fmtMs(adaptive.erp_response_ms)],

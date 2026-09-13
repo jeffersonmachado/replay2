@@ -332,7 +332,7 @@ function renderGatewayMonitor(data) {
   text("#gw_metric_sessions", formatCount(summary.unique_sessions || 0));
   text("#gw_metric_checkpoints", formatCount(summary.checkpoints || 0));
   text("#gw_metric_attention", formatCount(summary.attention_events || 0));
-  text("#gw_monitor_status", data.error || `fonte: ${data.log_dir || "-"} • deterministic=${formatCount(summary.deterministic_inputs || 0)}`);
+  text("#gw_monitor_status", data.error || `fonte: ${data.log_dir || "-"} • teclas verificadas: ${formatCount(summary.deterministic_inputs || 0)}`);
   text("#gw_last_seen", formatAgo(summary.last_ts_ms));
   html("#gw_top_types", gatewayMetricRows((summary.top_types || []).map((item) => ({ label: item.type, value: item.count })), "Sem eventos para resumir."));
   const lastSignal = summary.last_event || {};
@@ -552,7 +552,7 @@ function renderServiceStatus(data) {
   const yes = (v) => v ? '<span class="text-emerald-300">sim</span>' : '<span class="text-rose-300">não</span>';
   const run = (v) => v ? '<span class="text-emerald-300">rodando</span>' : '<span class="text-rose-300">parado</span>';
   const svc = data.service || "?";
-  const ss = data.service_running ? "running" : (data.socket_running ? "socket" : "dead");
+  const ss = data.service_running ? "ativo" : (data.socket_running ? "aguardando conexão" : "parado");
   html("#gw_svc_sshd", `${run(data.running)} <span class="text-xs text-stone-500">(${svc} ${ss})</span>`);
   const daemonPresent = data.daemon_socket_present;
   html("#gw_svc_daemon", daemonPresent === null || daemonPresent === undefined

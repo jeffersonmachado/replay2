@@ -8,7 +8,7 @@ export function targetCard(item) {
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.name || item.env_id || "-")}</div>
           <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.host || "-")} • ${escapeHtml(item.platform || "-")} • ${escapeHtml(item.transport_hint || "-")}</div>
         </div>
-        <span class="r2ctl-status-pill r2ctl-status ${item.gateway_required ? "r2ctl-status-danger" : "r2ctl-status-brand"}">${item.gateway_required ? "somente gateway" : "acesso flexivel"}</span>
+        <span class="r2ctl-status-pill r2ctl-status ${item.gateway_required ? "r2ctl-status-danger" : "r2ctl-status-brand"}">${item.gateway_required ? "somente gateway" : "acesso flexível"}</span>
       </div>
     </div>
   `;
@@ -38,8 +38,8 @@ export function operationalScenarioCard(item, index) {
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div class="font-mono text-sm text-stone-100">${escapeHtml(item.name || "-")}</div>
-          <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.scenario_type || "replay")} • ${escapeHtml(item.target_user || "-")}@${escapeHtml(item.target_host || "-")} • runs=${formatCount((item.usage_summary || {}).total_runs || 0)}</div>
-          <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.description || "sem descricao")}</div>
+          <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.scenario_type === "stress" ? "estresse" : (item.scenario_type || "replay"))} • ${escapeHtml(item.target_user || "-")}@${escapeHtml(item.target_host || "-")} • execuções: ${formatCount((item.usage_summary || {}).total_runs || 0)}</div>
+          <div class="mt-1 text-xs text-stone-400">${escapeHtml(item.description || "sem descrição")}</div>
         </div>
         <div class="flex flex-wrap gap-2">
           <button class="r2ctl-btn-soft" data-edit-scenario="${escapeHtml(index)}">Editar</button>

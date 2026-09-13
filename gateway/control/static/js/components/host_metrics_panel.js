@@ -7,7 +7,7 @@
  * buildPolylinePoints, rebaseSamples) são testáveis sem DOM.
  */
 import { apiJson } from "../core/api.js";
-import { escapeHtml, text } from "../core/dom.js";
+import { escapeHtml, text, modeLabel, statusLabel } from "../core/dom.js";
 
 export const EXPORT_FORMAT = "dakota-host-metrics/v1";
 
@@ -18,7 +18,7 @@ const CHART_PAD = 8;
 const CHARTS = [
   { key: "cpu_pct", label: "CPU (%)", fixedMax: 100 },
   { key: "mem_pct", label: "Memória (%)", fixedMax: 100 },
-  { key: "load1", label: "Load (1 min)", fixedMax: null },
+  { key: "load1", label: "Fila de tarefas (1 min)", fixedMax: null },
   { key: "disk_read_kbs", label: "Disco — leitura (kB/s)", fixedMax: null, altKey: "disk_write_kbs", altLabel: "escrita" },
 ];
 
@@ -131,7 +131,7 @@ function renderStats(series) {
     <table class="mt-2 w-full text-xs text-stone-200">
       <thead><tr class="text-stone-400">
         <th class="px-3 py-1 text-left">série</th><th class="px-3 py-1 text-left">CPU%</th>
-        <th class="px-3 py-1 text-left">Mem%</th><th class="px-3 py-1 text-left">Load1</th>
+        <th class="px-3 py-1 text-left">Mem%</th><th class="px-3 py-1 text-left">Fila 1 min</th>
         <th class="px-3 py-1 text-left">Disco leitura kB/s</th><th class="px-3 py-1 text-left">Disco escrita kB/s</th>
       </tr></thead>
       <tbody>${rows}</tbody>
@@ -157,7 +157,7 @@ async function loadRunsIntoSelect() {
   const runs = result?.data?.runs || [];
   select.innerHTML = '<option value="">— janela manual —</option>' + runs.map((run) => {
     const when = run.created_at_ms ? new Date(run.created_at_ms).toLocaleString("pt-BR") : "-";
-    return `<option value="${run.id}">#${run.id} ${escapeHtml(run.status || "-")} • ${escapeHtml(run.mode || "-")} • ${escapeHtml(when)}</option>`;
+    return `<option value="${run.id}">#${run.id} ${escapeHtml(statusLabel(run.status))} • ${escapeHtml(modeLabel(run.mode))} • ${escapeHtml(when)}</option>`;
   }).join("");
 }
 

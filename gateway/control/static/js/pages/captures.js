@@ -1,5 +1,5 @@
 import { apiJson, jsonRequest } from "../core/api.js";
-import { escapeHtml, formatCount, html, text, statusLabel, statusToneClass } from "../core/dom.js";
+import { escapeHtml, formatCount, html, text, captureStatusLabel, executionPolicyLabel, statusLabel, statusToneClass } from "../core/dom.js";
 import { activatePageSections } from "../components/page_sections.js";
 import { initSkipFieldsSelect } from "../components/skip_fields_select.js";
 import { renderDeparaScreenHtml, countDeparaFields } from "../components/synthetic_depara.js";
@@ -37,7 +37,7 @@ function statusBadge(status) {
     interrupted: "text-amber-300",
     failed: "text-rose-300 font-semibold",
   };
-  return `<span class="${map[status] || "text-stone-400"}">${status || "-"}</span>`;
+  return `<span class="${map[status] || "text-stone-400"}" title="${escapeHtml(status || "-")}">${escapeHtml(captureStatusLabel(status))}</span>`;
 }
 
 function pickBestReplaySession(sessions, capture) {
@@ -94,7 +94,7 @@ function renderCaptureSessionCard(captureId, session, preferredSessionId) {
   const status = String(session?.status || "open");
   const isInteractive = bytesIn > 0 || detCount > 0;
   const chips = [];
-  if (isPreferred) chips.push('<span class="rounded-full bg-sky-900/40 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200">View padrão</span>');
+  if (isPreferred) chips.push('<span class="rounded-full bg-sky-900/40 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200">Padrão</span>');
   if (isInteractive) chips.push('<span class="rounded-full bg-emerald-900/40 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200">Interativa</span>');
   if (actor.toLowerCase() === "gateway") chips.push('<span class="rounded-full bg-stone-800 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-stone-300">Técnica</span>');
 
@@ -108,11 +108,11 @@ function renderCaptureSessionCard(captureId, session, preferredSessionId) {
             ${chips.join("")}
           </div>
           <div class="grid gap-2 text-xs text-stone-300 sm:grid-cols-2 xl:grid-cols-5">
-            <span>status: <span class="text-stone-100">${escapeHtml(status)}</span></span>
+            <span>status: <span class="text-stone-100" title="${escapeHtml(status)}">${escapeHtml(({ open: "aberta", closed: "fechada" })[status] || status)}</span></span>
             <span>eventos: <span class="text-stone-100">${formatCount(eventCount)}</span></span>
             <span>entrada: <span class="text-stone-100">${formatCount(bytesIn)} bytes</span></span>
             <span>saída: <span class="text-stone-100">${formatCount(bytesOut)} bytes</span></span>
-            <span>det: <span class="text-stone-100">${formatCount(detCount)}</span></span>
+            <span title="teclas com verificação de tela (deterministic_input)">teclas verificadas: <span class="text-stone-100">${formatCount(detCount)}</span></span>
           </div>
           <div class="mt-1 text-xs text-stone-400">
             <span>início: <span class="text-stone-300">${fmt(session.started_at_ms)}</span></span>
@@ -120,14 +120,14 @@ function renderCaptureSessionCard(captureId, session, preferredSessionId) {
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <a href="${buildReplayViewHref(captureId, sessionId)}" class="r2ctl-btn-soft text-xs">View</a>
+          <a href="${buildReplayViewHref(captureId, sessionId)}" class="r2ctl-btn-soft text-xs">Ver</a>
           <a href="/runs/new?${new URLSearchParams({
             log_dir: String(window._currentCaptureLogDir || ""),
             source_capture: String(captureId || ""),
             replay_session_id: sessionId,
             input_mode: detCount > 0 ? "deterministic" : "raw",
             on_deterministic_mismatch: "fail-fast",
-          }).toString()}" class="r2ctl-btn-soft text-xs">runs/new</a>
+          }).toString()}" class="r2ctl-btn-soft text-xs" title="cria uma execução de replay a partir desta sessão">nova execução</a>
         </div>
       </div>
     </div>
@@ -152,7 +152,7 @@ function renderCaptureCard(cap) {
         <div class="text-xs text-stone-400 space-x-2">
           <span>criada por <span class="text-stone-300">${escapeHtml(cap.created_by_username || "-")}</span></span>
           <span>·</span>
-          <span>env: <span class="text-stone-300 font-mono">${escapeHtml(envName)}</span></span>
+          <span>ambiente: <span class="text-stone-300 font-mono">${escapeHtml(envName)}</span></span>
           ${cap.connection_profile_name ? `<span>·</span><span>perfil: <span class="text-stone-300">${escapeHtml(cap.connection_profile_name)}</span></span>` : ""}
           <span>·</span>
           <span>sessões: <span class="text-stone-300">${sessionCount}</span></span>
@@ -268,11 +268,12 @@ async function loadCaptureDetail(captureId) {
   const detailSection = document.getElementById("captures-detail");
   if (detailSection) detailSection.classList.remove("hidden");
 
-  text("#cap_detail_id", `sessão #${cap.id} · uuid: ${cap.session_uuid || "-"}`);
+  text("#cap_detail_id", `sessão #${cap.id} · id: ${cap.session_uuid || "-"}`);
   const statusEl = document.getElementById("cap_detail_status");
   if (statusEl) {
     const colors = { active: "text-emerald-300", finished: "text-stone-300", interrupted: "text-amber-300", failed: "text-rose-300" };
-    statusEl.textContent = cap.status || "-";
+    statusEl.textContent = captureStatusLabel(cap.status);
+    statusEl.title = cap.status || "";
     statusEl.className = `mt-2 text-lg font-semibold ${colors[cap.status] || "text-stone-50"}`;
   }
   text("#cap_detail_by", cap.created_by_username || "-");
@@ -531,7 +532,7 @@ async function syntheticReplay(captureId) {
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>run: <a class="font-mono text-emerald-50 underline" href="/runs/${escapeHtml(String(data.run_id))}">#${escapeHtml(String(data.run_id))}</a></span>
         <span>alvo: <span class="font-mono text-emerald-50">${escapeHtml(`${data.target_user || ""}@${data.target_host || ""}`)}</span></span>
-        <span>execução: <span class="font-mono text-emerald-50">${escapeHtml(executionPolicy)}</span></span>
+        <span>execução: <span class="font-mono text-emerald-50" title="${escapeHtml(executionPolicy)}">${escapeHtml(executionPolicyLabel(executionPolicy))}</span></span>
         ${kept.length ? `<span class="md:col-span-2">mantidos (chave de consulta): <span class="font-mono text-emerald-50">${escapeHtml(kept.join(", "))}</span></span>` : ""}
         ${entryPoint ? `<span class="md:col-span-2 text-amber-200/90">entrada automática: ${escapeHtml(entryPoint.summary || "")}</span>` : ""}
         <span class="md:col-span-2">trilha: <span class="font-mono text-emerald-50 break-all">${escapeHtml(data.trail_dir || "-")}</span></span>
@@ -645,7 +646,7 @@ async function synthesizeCapture(captureId) {  const btn = document.getElementBy
       <div class="grid gap-2 text-xs md:grid-cols-2">
         <span>jornada: <span class="font-mono text-emerald-50">${escapeHtml(data.journey_id || "-")}</span></span>
         <span>dados: <span class="font-mono text-emerald-50">${data.variation === "equal" ? "iguais (mesmos dados em todas)" : "sintetizados (diferentes por sessão)"}</span></span>
-        <span>validas: <span class="font-mono text-emerald-50">${formatCount(validation.valid_sessions || 0)}/${formatCount(validation.total_sessions || data.generated_sessions || 0)}</span></span>
+        <span>válidas: <span class="font-mono text-emerald-50">${formatCount(validation.valid_sessions || 0)}/${formatCount(validation.total_sessions || data.generated_sessions || 0)}</span></span>
         <span class="md:col-span-2">chave desta captura: <span class="font-mono text-emerald-50">${keyFields.length ? escapeHtml(keyFields.join(", ")) : "nenhuma detectada"}</span> (mantida com o valor original no replay)</span>
         <span class="md:col-span-2">template: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.template || "-")}</span></span>
         <span class="md:col-span-2">dataset: <span class="font-mono text-emerald-50 break-all">${escapeHtml(artifacts.dataset || "-")}</span></span>

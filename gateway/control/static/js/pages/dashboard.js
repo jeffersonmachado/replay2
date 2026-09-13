@@ -1,5 +1,5 @@
 import { apiJson } from "../core/api.js";
-import { escapeHtml, formatAgo, formatCount, html, statusLabel, statusToneClass, text } from "../core/dom.js";
+import { escapeHtml, formatAgo, formatCount, html, captureStatusLabel, statusLabel, statusToneClass, text } from "../core/dom.js";
 import { buildQuery } from "../components/filters.js";
 import { runLinkCard, runSummaryCards } from "../components/run_views.js";
 import { statList } from "../components/tables.js";
@@ -24,7 +24,7 @@ async function loadCaptures() {
               <div class="text-xs text-stone-400">${escapeHtml(cap.notes || "sem notas")}</div>
             </div>
             <div class="shrink-0 text-right">
-              <div class="text-xs ${statusCls} font-semibold">${escapeHtml(cap.status)}</div>
+              <div class="text-xs ${statusCls} font-semibold" title="${escapeHtml(cap.status || "-")}">${escapeHtml(captureStatusLabel(cap.status))}</div>
               <div class="text-xs text-stone-500">${dateStr}</div>
             </div>
           </div>`;

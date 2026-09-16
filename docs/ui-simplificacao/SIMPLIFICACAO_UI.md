@@ -96,7 +96,23 @@ Status de execução: `running/failed/success/queued/paused/cancelled` →
 | `deterministic=N` | teclas verificadas: N |
 | `det: N` | teclas verificadas: N |
 
-### 3.5 Inglês eliminado das telas
+### 3.5 Tipos de replay explicados
+
+Onde o usuário escolhe entre os dois tipos de replay (nova execução e painel
+de replay da sessão), os nomes internos viraram uma frase que diz o que cada
+um faz:
+
+| Antes | Depois |
+|---|---|
+| replay bruto por bytes | Simples — repete as teclas sem conferir as telas (bruto) |
+| replay determinístico por tela | Verificado — confere a tela antes de cada tecla (determinístico) |
+| determinístico divergiu: falhar | Se a tela divergir da gravação: falhar na hora |
+| determinístico divergiu: pular ação | Se a tela divergir da gravação: pular a ação |
+| determinístico divergiu: enviar mesmo assim | Se a tela divergir da gravação: enviar mesmo assim |
+| Criar replay bruto | Criar replay simples (termo técnico no tooltip) |
+| Criar replay determinístico | Criar replay verificado (termo técnico no tooltip) |
+
+### 3.6 Inglês eliminado das telas
 
 | Antes | Depois |
 |---|---|
@@ -119,7 +135,7 @@ Status de execução: `running/failed/success/queued/paused/cancelled` →
 | Journeys de Negócio | Jornadas de negócio |
 | SSH Daemon / Capture Daemon | Servidor SSH / Serviço de captura |
 
-### 3.6 Termos técnicos com explicação
+### 3.7 Termos técnicos com explicação
 
 Campos que precisam manter o nome técnico (porque são referência para o
 suporte) ganharam rótulo explicado, com o código entre parênteses:
@@ -136,7 +152,7 @@ suporte) ganharam rótulo explicado, com o código entre parênteses:
 | compliance off/warn/strict | conformidade desligada / aviso / rigorosa |
 | jitter em ms | variação aleatória em ms (jitter) |
 
-### 3.7 Português com acentuação correta
+### 3.8 Português com acentuação correta
 
 Dezenas de textos corrigidos em todas as telas: Histórico, Comparação,
 Sessões, Políticas, Cenários, Regressões, Tendências, Automação, Usuários,
@@ -197,7 +213,10 @@ com segurança)", "overhead Replay2", "economia por batching", "barreiras",
 Formulário que antes era uma lista de chaves de API (`log_dir`,
 `seq_global`, `session_id`) agora tem rótulos explicados: "diretório de log
 (log_dir)", "sessão (session_id)", "conformidade desligada", botão
-**Criar execução**.
+**Criar execução**. O tipo de replay virou "Simples — repete as teclas sem
+conferir as telas (bruto)" / "Verificado — confere a tela antes de cada
+tecla (determinístico)", e a política de divergência virou "Se a tela
+divergir da gravação: ...".
 
 ![Nova execução](prints/07-nova-execucao.png)
 
@@ -260,7 +279,7 @@ REPROVADO.
 
 ## 5. Como foi feito
 
-- **10 levas de mudança**, cada uma um Pull Request revisado e com CI verde
+- **11 levas de mudança**, cada uma um Pull Request revisado e com CI verde
   (PRs #14 a #23).
 - **TDD em todas**: primeiro o teste que falha (RED), depois a correção,
   depois a suíte completa verde. Nenhum teste foi desabilitado ou
@@ -270,7 +289,7 @@ REPROVADO.
   garantem que nenhum texto cru volte a aparecer.
 - **Varredura sistemática**: inventário completo de jargão em todos os
   templates e arquivos JS antes de cada leva; os próprios prints deste
-  documento serviram para flagrar os últimos restos (levas 8–10).
+  documento serviram para flagrar os últimos restos (levas 8–11).
 
 ## 6. Evidências
 
@@ -282,7 +301,7 @@ REPROVADO.
 | CI (3.10/3.11/3.12, lint, coverage) | verde em todos os PRs |
 | Novos testes criados | dom_labels (+), pages_lay_labels (18), templates_lay_text (16), ui_nav_labels (4), failure_table_row (+1) |
 | Versão com as levas 1–6 | v0.9.10 (deployada em AIX 10.5.8.25 e Linux 10.5.8.24) |
-| Levas 7–10 (menu, statusbar, falhas, dashboard) | master, próxima versão |
+| Levas 7–11 (menu, statusbar, falhas, dashboard, tipos de replay) | master, próxima versão |
 
 ## 7. O que ficou de fora (de propósito)
 

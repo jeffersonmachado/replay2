@@ -62,3 +62,9 @@ test('failureTableRow sem run_status não mostra status ao lado do link', () => 
   const html = failureTableRow({ ...BASE, run_status: null });
   assert.doesNotMatch(html, />#27<\/a><span/);
 });
+
+test('failureTableRow mostra status da run em rótulo leigo com código no title', () => {
+  const html = failureTableRow({ ...BASE, run_status: 'failed' });
+  assert.match(html, /falhou/);
+  assert.match(html, /title="failed"/);
+});

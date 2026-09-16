@@ -85,13 +85,13 @@ class UiRoutesTests(unittest.TestCase):
     def test_authenticated_routes_return_sidebar_and_title(self):
         expected_titles = {
             "/": "Painel Operacional",
-            "/runs": "Execucoes",
+            "/runs": "Execuções",
             "/gateway": "Gateway",
             "/captures": "Capturas",
             "/captures/new": "Capturas",
-            "/catalog": "Catalogo",
+            "/catalog": "Catálogo",
             "/observability": "Observabilidade",
-            "/admin": "Administracao",
+            "/admin": "Administração",
         }
         for path, title in expected_titles.items():
             with self.subTest(path=path):

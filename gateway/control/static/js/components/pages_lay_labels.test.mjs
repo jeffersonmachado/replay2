@@ -22,6 +22,8 @@ const gateway = read('gateway.js');
 const admin = read('admin.js');
 const catalogViews = readFileSync(join(here, 'catalog_views.js'), 'utf8');
 const hostMetrics = readFileSync(join(here, 'host_metrics_panel.js'), 'utf8');
+const sessionJs = readFileSync(join(here, '..', 'core', 'session.js'), 'utf8');
+const statusbar = readFileSync(join(here, '..', '..', '..', 'templates', 'partials', 'statusbar.html'), 'utf8');
 
 test('captures.js: status da captura usa rótulo leigo, não o código cru', () => {
   assert.match(captures, /captureStatusLabel\(/);
@@ -81,4 +83,16 @@ test('catalog_views.js: cenário usa termos leigos e português acentuado', () =
 test('host_metrics_panel.js: select de run traduz status e modo', () => {
   assert.match(hostMetrics, /statusLabel\(/);
   assert.match(hostMetrics, /modeLabel\(/);
+});
+
+test('statusbar: botão global em português leigo', () => {
+  assert.match(statusbar, />Nova execução</);
+  assert.doesNotMatch(statusbar, />Nova run</);
+});
+
+test('session.js: chip de usuário sem "usuario=/perfil=" crus', () => {
+  assert.doesNotMatch(sessionJs, /usuario=\$\{/);
+  assert.doesNotMatch(sessionJs, /perfil=\$\{/);
+  assert.match(sessionJs, /roleLabel\(/);
+  assert.match(sessionJs, /indisponível/);
 });

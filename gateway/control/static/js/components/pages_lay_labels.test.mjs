@@ -96,3 +96,16 @@ test('session.js: chip de usuário sem "usuario=/perfil=" crus', () => {
   assert.match(sessionJs, /roleLabel\(/);
   assert.match(sessionJs, /indisponível/);
 });
+
+test('run_views.js: status da run na linha de falha usa statusLabel', () => {
+  const runViews = readFileSync(join(here, 'run_views.js'), 'utf8');
+  assert.match(runViews, /statusLabel\(f\.run_status\)/);
+});
+
+test('detail_views.js: painel "falhas por tipo" usa rótulo leigo', () => {
+  const detailViews = readFileSync(join(here, 'detail_views.js'), 'utf8');
+  // failureTypeList deve rotular o código técnico (ex.: screen_divergence)
+  const fn = detailViews.match(/export function failureTypeList[\s\S]*?\n}/);
+  assert.ok(fn, 'failureTypeList encontrada');
+  assert.match(fn[0], /failureTypeLabel\(/);
+});

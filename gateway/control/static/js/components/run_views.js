@@ -126,7 +126,7 @@ export function failureTableRow(f) {
   const ts = f.ts_ms ? formatDate(f.ts_ms) : "—";
   const session = f.session_id ? `${String(f.session_id).slice(0, 8)}…` : "—";
   const sessionTitle = escapeHtml(f.session_id || "");
-  const status = f.run_status ? `<span class="ml-1 text-xs text-stone-500">${escapeHtml(f.run_status)}</span>` : "";
+  const status = f.run_status ? `<span class="ml-1 text-xs text-stone-500" title="${escapeHtml(f.run_status)}">${escapeHtml(statusLabel(f.run_status))}</span>` : "";
   return `
     <tr class="r2ctl-row align-top">
       <td class="px-4 py-4"><a href="/runs/${escapeHtml(f.run_id)}" class="r2ctl-run-id">#${escapeHtml(f.run_id)}</a>${status}</td>

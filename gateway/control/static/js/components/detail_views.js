@@ -43,7 +43,7 @@ export function failureTypeList(entries) {
         .map(
           ([name, count]) => `
             <div class="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/40 px-3 py-2">
-              <span class="font-mono text-xs text-stone-300">${escapeHtml(name)}</span>
+              <span class="text-xs text-stone-200">${escapeHtml(failureTypeLabel(name))} <span class="font-mono text-stone-500">${escapeHtml(name)}</span></span>
               <span class="text-sm font-semibold text-stone-100">${formatCount(count)}</span>
             </div>
           `,

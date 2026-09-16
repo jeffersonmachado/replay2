@@ -1,5 +1,5 @@
 import { apiJson } from "./api.js";
-import { text } from "./dom.js";
+import { text, roleLabel } from "./dom.js";
 import { connectWs } from "./ws.js";
 
 const GATEWAY_TONE_CLASSES = ["r2ctl-status-neutral", "r2ctl-status-ok", "r2ctl-status-warn", "r2ctl-status-danger"];
@@ -15,7 +15,7 @@ export async function logout() {
 export async function loadSessionChrome() {
   const me = await apiJson("/api/me");
   if (me?.data?.username) {
-    text("#current_user_chip", `usuario=${me.data.username} perfil=${me.data.role}`);
+    text("#current_user_chip", `${me.data.username} · perfil: ${roleLabel(me.data.role)}`);
   }
   try {
     const health = await apiJson("/health");
@@ -57,7 +57,7 @@ async function loadGatewayStatusChrome() {
   const result = await apiJson("/api/gateway/status");
   if (!result?.data) {
     setGatewayTone("r2ctl-status-danger");
-    text("#global_gateway_text", "status indisponivel");
+    text("#global_gateway_text", "status indisponível");
     return;
   }
 

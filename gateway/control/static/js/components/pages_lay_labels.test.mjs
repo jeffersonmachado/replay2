@@ -109,3 +109,10 @@ test('detail_views.js: painel "falhas por tipo" usa rótulo leigo', () => {
   assert.ok(fn, 'failureTypeList encontrada');
   assert.match(fn[0], /failureTypeLabel\(/);
 });
+
+test('dashboard.js: resumo sem "compliance"/"runs" crus', () => {
+  assert.match(dashboard, /Conformidade bloqueada/);
+  assert.match(dashboard, /execuções carregadas/);
+  assert.doesNotMatch(dashboard, /Compliance bloqueado/);
+  assert.doesNotMatch(dashboard, /runs carregadas/);
+});

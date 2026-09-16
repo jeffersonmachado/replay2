@@ -46,7 +46,7 @@ async function loadRuns() {
     "#dashboard_runs_summary",
     runSummaryCards([
       { label: "Sucesso", value: runs.filter((run) => ["success", "completed", "done"].includes(String(run.status || "").toLowerCase())).length },
-      { label: "Compliance bloqueado", value: runs.filter((run) => ["rejected", "blocked"].includes(String(run.compliance_status || "").toLowerCase())).length },
+      { label: "Conformidade bloqueada", value: runs.filter((run) => ["rejected", "blocked"].includes(String(run.compliance_status || "").toLowerCase())).length },
       { label: "Em observação", value: runs.filter((run) => ["warn", "warning"].includes(String(run.compliance_status || "").toLowerCase())).length },
       { label: "Com gateway", value: runs.filter((run) => Boolean(run.via_gateway)).length },
     ]),
@@ -55,9 +55,9 @@ async function loadRuns() {
     "#dashboard_recent_runs",
     runs.length
       ? runs.slice(0, 6).map(runLinkCard).join("")
-      : '<div class="text-sm text-stone-400">Nenhuma run recente.</div>',
+      : '<div class="text-sm text-stone-400">Nenhuma execução recente.</div>',
   );
-  text("#dashboard_runs_status", `${runs.length} runs carregadas`);
+  text("#dashboard_runs_status", `${runs.length} execuções carregadas`);
   return runs;
 }
 

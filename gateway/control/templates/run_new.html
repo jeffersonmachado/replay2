@@ -39,14 +39,14 @@
       <input id="replay_from_checkpoint_sig" placeholder="assinatura do ponto de verificação" class="r2ctl-input" />
     </div>
     <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <select id="input_mode" title="Modo de input" class="r2ctl-input">
-        <option value="raw">replay bruto por bytes</option>
-        <option value="deterministic">replay determinístico por tela</option>
+      <select id="input_mode" title="Tipo de replay" class="r2ctl-input">
+        <option value="raw">Simples — repete as teclas sem conferir as telas (bruto)</option>
+        <option value="deterministic">Verificado — confere a tela antes de cada tecla (determinístico)</option>
       </select>
-      <select id="on_deterministic_mismatch" title="Ao divergir no modo determinístico" class="r2ctl-input">
-        <option value="fail-fast">determinístico divergiu: falhar</option>
-        <option value="skip">determinístico divergiu: pular ação</option>
-        <option value="send-anyway">determinístico divergiu: enviar mesmo assim</option>
+      <select id="on_deterministic_mismatch" title="Se a tela divergir da gravação (replay verificado)" class="r2ctl-input">
+        <option value="fail-fast">Se a tela divergir da gravação: falhar na hora</option>
+        <option value="skip">Se a tela divergir da gravação: pular a ação</option>
+        <option value="send-anyway">Se a tela divergir da gravação: enviar mesmo assim</option>
       </select>
       <select id="match_mode" title="Modo de comparação" class="r2ctl-input">
         <option value="strict">estrita</option>

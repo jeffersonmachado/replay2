@@ -91,7 +91,7 @@ class ControlUiRoutesTests(unittest.TestCase):
     def test_run_detail_route_and_js_assets_are_available(self):
         status, body, _headers = self._request("GET", "/runs/123")
         self.assertEqual(status, 200)
-        self.assertIn("Detalhe da Run", body)
+        self.assertIn("Detalhe da Execução", body)
         self.assertIn("/assets/js/pages/run_detail.js", body)
 
         for path in (

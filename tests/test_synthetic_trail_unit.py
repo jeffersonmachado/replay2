@@ -215,6 +215,58 @@ def test_tecla_de_controle_quebra_o_run(tmp_path):
     assert not result["applied"] and len(result["warnings"]) == 1
 
 
+def _fixture_auto_avanco_events():
+    """Grade de largura fixa com auto-avanço (captura 13: comb+Tam).
+
+    O operador digitou 7 teclas: '00001' preenche o comb (5 colunas) e o ERP
+    auto-avança SEM ENTER para o Tam, que recebe '35'. O parametrizer funde
+    as 7 teclas num input só (o salto de cursor de 2 colunas fica dentro da
+    tolerância de máscara) e a substituição chega como
+    ``('0000135', '00001', 'comb')`` — o valor novo é prefixo do original.
+    """
+    return [
+        _ev(1, "session_start", logname="ferblo"),
+        _det(2, "3"),
+        _det(3, "\r"),
+        # comb+Tam: 7 teclas, auto-avanço após a 5ª
+        *[_det(4 + i, c) for i, c in enumerate("0000135")],
+        _det(11, "\r"),
+        _ev(12, "session_end"),
+    ]
+
+
+def test_substituicao_teclas_auto_avanco_preserva_sufixo(tmp_path):
+    """'0000135'→'00001' (comb, auto-avanço): as teclas excedentes pertencem
+    ao campo seguinte (Tam) — não podem virar evento vazio (regressão R1:
+    a trilha sintética da captura 13 perdia o Tam e desalinhava o replay)."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_auto_avanco_events())
+    result = build_synthetic_trail(
+        src, [("0000135", "00001", "comb")], tmp_path / "out", hmac_key=HMAC_KEY)
+    events = _read_trail(result["out"])
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    run = keys[2:9]
+    assert run == ["0", "0", "0", "0", "1", "3", "5"]
+    assert "" not in run
+    assert result["applied"] and not result["warnings"]
+    verify_log(str(tmp_path / "out"), HMAC_KEY)
+
+
+def test_substituicao_teclas_mais_curta_nao_prefixo_esvazia(tmp_path):
+    """Decimal de grade com valor mais curto que NÃO é prefixo do original
+    ('229,9'→'45,3'): o run inteiro era um único campo de largura variável —
+    o excedente fica vazio (comportamento histórico mantido)."""
+    src = tmp_path / "audit-test.jsonl"
+    _write_trail(src, _fixture_grade_events())
+    result = build_synthetic_trail(
+        src, [("229,9", "45,3")], tmp_path / "out", hmac_key=HMAC_KEY)
+    events = _read_trail(result["out"])
+    keys = [det_key(ev) for ev in events if ev["type"] == "deterministic_input"]
+    run = keys[keys.index("\t") + 1:keys.index("\r", 2)]
+    assert run == ["4", "5", ",", "3", ""]
+    assert result["applied"] and not result["warnings"]
+
+
 def test_seq_renumerado_sem_gaps(tmp_path):
     src = tmp_path / "audit-test.jsonl"
     _write_trail(src, _fixture_events())

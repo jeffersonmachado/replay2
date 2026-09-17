@@ -43,6 +43,7 @@ from .action_classifier import ActionClass, BARRIER_CLASSES, classify_bytes
 from .adaptive_scheduler import (
     POLICY_ADAPTIVE,
     POLICY_ADAPTIVE_SHADOW,
+    POLICY_CONSERVATIVE,
     ShadowTracker,
 )
 from .execution_telemetry import TelemetryBucket
@@ -230,6 +231,27 @@ def replay_strict_global_controlled(
             tel.begin_session(time.monotonic() * 1000.0)
             _telemetry[sid] = tel
         return _telemetry[sid]
+
+    # Shadow mode (§19) no strict-global: a cadência aqui é dirigida por
+    # checkpoint (não há pacing por delta de ts_ms a economizar), então o
+    # shadow observa sempre com paced_sleep_ms=0 — o valor da métrica é a
+    # cobertura/segurança do batching (total_actions, batch_candidates e
+    # false_safe_decisions, o critério de promoção do §20), não economia de
+    # tempo. Checkpoints TAMBÉM são passados ao observe (paridade com o
+    # concurrent e com o shadow_eval offline): são fronteiras duras de batch
+    # e precisam quebrar a run candidata.
+    policy = str(getattr(adaptive, "policy", "") or POLICY_CONSERVATIVE)
+    shadows: dict[str, ShadowTracker] = {}
+
+    def sess_shadow(sid: str):
+        if adaptive is None or policy != POLICY_ADAPTIVE_SHADOW:
+            return None
+        if sid not in shadows:
+            shadows[sid] = ShadowTracker(
+                synthetic_trail=bool(getattr(adaptive, "synthetic_trail", False)),
+                evidence_seqs=adaptive.evidence_for(sid),
+            )
+        return shadows[sid]
     # Entrada automática no sistema (trilha com preâmbulo de shell cortado —
     # ver synthetic_trail.detect_session_entry): executada uma vez por sessão,
     # logo após a conexão, antes do primeiro checkpoint.
@@ -419,6 +441,11 @@ def replay_strict_global_controlled(
                 continue
 
             if _is_replay_input_event(ev, input_mode=input_mode) and sid:
+                sh = sess_shadow(sid)
+                if sh is not None:
+                    # Observação pura (§19): strict-global não paga pacing por
+                    # ts_ms — o sleep efetivamente pago é sempre 0.
+                    sh.observe(ev, paced_sleep_ms=0)
                 expected_sig = str(ev.get("screen_sig") or "") if input_mode == "deterministic" else ""
                 expected_snapshot = _expected_snapshot_from_event(ev)
                 if input_mode == "deterministic" and _event_requires_deterministic_comparison(ev, params, session_config=session_configs.get(sid), replay_config=cfg):
@@ -430,6 +457,8 @@ def replay_strict_global_controlled(
                     except ReplayError as exc:
                         if input_mode != "deterministic":
                             raise
+                        if sh is not None:
+                            sh.note_divergence(seq_global)
                         ctx = getattr(exc, "checkpoint_context", None)
                         if ctx is not None:
                             # O wait_checkpoint já fez compare + telas +
@@ -497,10 +526,18 @@ def replay_strict_global_controlled(
                 on_progress(seq_global, expected_sig or None)
                 drain_output(0.0)
             elif typ == "checkpoint" and sid:
+                sh = sess_shadow(sid)
+                if sh is not None:
+                    # Checkpoint é fronteira dura de batch: quebra a run
+                    # candidata no shadow (o concurrent não o faz — ver
+                    # comentário em sess_shadow).
+                    sh.observe(ev, paced_sleep_ms=0)
                 if _event_requires_deterministic_comparison(ev, params, session_config=session_configs.get(sid), replay_config=cfg):
                     try:
                         wait_checkpoint(sid, ev, seq_global, int(ev.get("seq_session") or 0))
                     except ReplayError:
+                        if sh is not None:
+                            sh.note_divergence(seq_global)
                         # Checkpoint avulso (sem deterministic_input associado):
                         # a divergência já foi registrada pelo wait_checkpoint.
                         # Em send-anyway a run segue — o trim de entrada pode
@@ -517,7 +554,12 @@ def replay_strict_global_controlled(
             should_pause_or_cancel()
             drain_output(0.05)
     finally:
-        for tel in _telemetry.values():
+        for sid, tel in _telemetry.items():
+            sh = shadows.get(sid)
+            if sh is not None:
+                # Relatório shadow da sessão (§19) — agregado em
+                # metrics_json["adaptive"]["shadow"] pelo RunTelemetry.
+                tel.attach_shadow(sh.report())
             tel.end_session(time.monotonic() * 1000.0)
         try:
             sel.close()
@@ -1189,6 +1231,14 @@ def replay_parallel_sessions_concurrent_controlled(
                         on_progress(seq_global, expected_sig or None)
                     elif typ == "checkpoint":
                         flush_pending()
+                        if shadow is not None:
+                            # Checkpoint é fronteira dura de batch também no
+                            # shadow online (paridade com o strict-global e
+                            # com o shadow_eval offline): sem este observe a
+                            # run candidata atravessava o checkpoint no
+                            # relatório, inflando batch_candidates/
+                            # potential_saved_ms contra a regra de fronteira.
+                            shadow.observe(ev, paced_sleep_ms=0)
                         if _event_requires_deterministic_comparison(ev, load_params.__dict__, session_config=state.config, replay_config=cfg):
                             matched, match, observed = timed_checkpoint_wait(ev)
                             if not matched:

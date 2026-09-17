@@ -224,11 +224,15 @@ replay2/
   ou trilha sintética) e `adaptive_shadow` (executa conservador e registra o
   que o adaptativo FARIA + economia prevista; critério de promoção:
   `false_safe_decisions = 0`). O shadow online existe no executor concurrent
-  E no strict-global — neste, como a cadência é dirigida por checkpoint (sem
-  pacing por ts_ms a economizar), o observe usa sempre `paced_sleep_ms=0` e
-  os checkpoints também quebram a run candidata: o valor da métrica é a
-  cobertura/segurança do batching (`total_actions`/`batch_candidates`/
-  `false_safe_decisions`), não a economia de tempo (sempre 0). `shadow_eval.py` +
+  E no strict-global, e em AMBOS os checkpoints são passados ao
+  `ShadowTracker.observe` (quebra da run candidata — fronteira dura de batch,
+  alinhando o online ao `shadow_eval.py` offline; sem isso o relatório do
+  concurrent inflava `batch_candidates`/`potential_saved_ms` atravessando
+  checkpoints). No strict-global, como a cadência é dirigida por checkpoint
+  (sem pacing por ts_ms a economizar), o observe usa sempre
+  `paced_sleep_ms=0`: o valor da métrica é a cobertura/segurança do batching
+  (`total_actions`/`batch_candidates`/`false_safe_decisions`), não a
+  economia de tempo (sempre 0). `shadow_eval.py` +
   `scripts/shadow_eval_adaptive_replay.py` rodam essa avaliação OFFLINE
   sobre os audit-*.jsonl das capturas (sem executor, sem rede), verificando
   equivalência de bytes e inviolabilidade do checkpoint em dados reais →
@@ -395,7 +399,15 @@ replay2/
   ENTER/ESC/TAB quebram o run): o valor novo é distribuído 1 caractere por
   evento, o último evento carrega o restante quando o valor é mais longo
   (input multi-caractere é válido no replay) e os excedentes ficam vazios
-  quando é mais curto; campos-âncora (chave de
+  quando é mais curto — EXCETO quando o valor novo é prefixo do run
+  original: aí o sufixo nunca fez parte do campo (auto-avanço de grade de
+  largura fixa fundido pelo parametrizer — o salto de cursor coube na
+  tolerância de máscara) e os eventos excedentes preservam a tecla original
+  do operador (oráculo da captura 13, R1: comb '0000135'→'00001' apagava o
+  Tam '35' e desalinhava o replay; limitação documentada no docstring de
+  `synthetic_trail._apply_substitutions` — valor sintético de campo com
+  auto-avanço que não seja prefixo do original ainda esvazia o sufixo);
+  campos-âncora (chave de
   consulta: compõe índice da entidade — parseado do fonte ou lido dos
   arquivos de índice Recital `i<TABELA>.00N` (`index_file_reader.py`: a
   expressão da chave fica em texto claro no primeiro bloco, ex. `rede +
@@ -537,6 +549,12 @@ replay2/
   (`substitution_pair_echo_present`) — eco só de identificador gerado pela
   aplicação (nº do pedido, presente em toda reexecução) não basta, pois
   mascarava divergência real (grade travada com "Codigo nao cadastrado"). A
+  máscara de voláteis (`dakota_terminal/volatile.py`, segunda chance da
+  comparação) cobre também o rótulo de plataforma da linha de status do
+  Recital (`IBM Aix (Common)` × `Linux x86`, case-insensitive, com o
+  preenchimento até o `|`) — além do Kb livres — porque a mesma captura
+  reexecutada em servidor de outra plataforma divergia só nesse trecho
+  (oráculo da captura 13, R3: runs AIX × Linux). A
   falha de checkpoint de um `deterministic_input` é registrada UMA vez só
   (o `wait_checkpoint` do strict-global recebe `record_failure=False`; o
   registro definitivo com a ação skip/send-anyway é o do

@@ -14,6 +14,7 @@ from ..replay_compare import (
     expected_snapshot_from_event,
     observed_snapshot_from_session,
     substitution_echo_line_indices,
+    substitution_pair_echo_present,
     wait_for_signature_match,
 )
 from ..replay_failures import build_failure_record, classify_checkpoint_failure
@@ -230,14 +231,17 @@ def synthetic_swap_override(
     já veio flagado da comparação ou quando as telas da evidência (as mesmas
     exibidas na UI) contêm eco do de→para — o snapshot da comparação é do
     instante do timeout e pode não conter o eco que aparece na tela gravada.
-    Sem eco, retorna ``None`` e o chamador mantém a classificação original.
+    O eco precisa ser de um PAR do de→para (``substitution_pair_echo_present``,
+    mesmo portão do ``apply_synthetic_substitution_fallback``): eco só de
+    identificador gerado não reclassifica. Sem eco, retorna ``None`` e o
+    chamador mantém a classificação original.
     """
     match = dict(match or {})
     if not match.get("synthetic_substitution"):
         pairs = _substitution_pairs_from_params(params)
         if pairs and expected_screen and observed_screen:
             echo_lines = substitution_echo_line_indices(expected_screen, observed_screen, pairs)
-            if echo_lines:
+            if echo_lines and substitution_pair_echo_present(expected_screen, observed_screen, pairs):
                 match["synthetic_substitution"] = True
                 match["synthetic_echo_lines"] = echo_lines
     if not match.get("synthetic_substitution"):

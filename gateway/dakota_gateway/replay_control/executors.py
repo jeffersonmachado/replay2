@@ -548,6 +548,12 @@ def replay_parallel_sessions_controlled(
     A ordem é preservada DENTRO de cada sessão; entre sessões não há
     ordenação global (diferente do strict-global). A primeira falha (ou um
     cancelamento) interrompe as demais sessões e propaga para o runner.
+
+    Este executor NÃO recebe o motor adaptativo (``adaptive``): não há pacing
+    nem batching aqui — a cadência já é dirigida por checkpoint/estado.
+    ``execution_policy`` != conservative neste caminho é registrada pelo
+    runner como aviso estruturado (``policy_effective``/``policy_warning`` em
+    ``metrics_json["adaptive"]`` + evento "warning"), nunca aplicada.
     """
     input_mode = _replay_input_mode(params)
     index, session_starts = index_session_events(cfg.log_dir, params)
@@ -838,7 +844,13 @@ def replay_parallel_sessions_concurrent_controlled(
       ``adaptive_shadow`` (executa conservador e registra o que o adaptativo
       FARIA, com economia prevista — §19). Batching nunca mistura sessões:
       o buffer é local ao worker. Pause/cancel são checados por evento e
-      antes de cada write, inclusive dentro de batches.
+      antes de cada write, inclusive dentro de batches. O batch é atômico
+      (tudo-ou-nada): os bytes acumulam em ``pending`` e saem num único
+      write do ``flush_pending`` — pause bloqueia antes desse write e o
+      resume completa o batch intacto; cancel descarta o batch pendente sem
+      write parcial; no stop global (fail-fast de outra sessão) o batch em
+      voo é concluído antes da parada, e eventos ainda não processados
+      nunca são enviados.
     """
 
     input_mode = _replay_input_mode(load_params.__dict__)
@@ -1016,11 +1028,20 @@ def replay_parallel_sessions_concurrent_controlled(
                     if _is_replay_input_event(ev, input_mode=input_mode):
                         ts = int(ev.get("ts_ms") or 0)
                         scaled = 0
+                        jitter = 0
                         if last_in_ts is not None and load_params.speed > 0:
                             delta = max(0, ts - last_in_ts)
                             scaled = int(delta / float(load_params.speed))
                             if load_params.jitter_ms > 0:
-                                scaled += random.randint(0, load_params.jitter_ms)
+                                # jitter_ms é configuração explícita do
+                                # operador (variação de carga) — fica fora do
+                                # ``scaled`` para que o skip de convergência
+                                # (abaixo) nunca o zere: o skip remove só a
+                                # cadência gravada (delta de ts_ms), que é
+                                # artificial. Efeito colateral intencional:
+                                # com jitter>0, boundaries de batch têm
+                                # scaled>0 e só colapsam com evidência.
+                                jitter = random.randint(0, load_params.jitter_ms)
                         data = _decode_replay_input(ev)
                         is_wait_marker = str(ev.get("key_kind") or "") == "wait"
                         if (
@@ -1038,6 +1059,7 @@ def replay_parallel_sessions_concurrent_controlled(
                                 sess_tel.record_convergence_pacing_skip(float(scaled))
                             scaled = 0
                         converged[0] = False
+                        scaled += jitter
                         requires_cmp = (
                             input_mode == "deterministic"
                             and _event_requires_deterministic_comparison(

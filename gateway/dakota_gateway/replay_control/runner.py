@@ -190,6 +190,15 @@ class _RunControlState:
                 continue
             return
 
+    def check_now(self) -> None:
+        """Releitura forçada (sem o TTL do cache) + regras do ``check()``.
+
+        Usada no fim da run: um cancel recente pode estar dentro da janela
+        do cache e passar despercebido pelo ``check()`` comum.
+        """
+        self._poll()
+        self.check()
+
 
 class Runner:
     """
@@ -443,6 +452,10 @@ class Runner:
             metrics["adaptive"] = {
                 "execution_policy": execution_policy,
             }
+            # Campos extras de auditoria da política (ex.: aviso quando a
+            # política pedida não se aplica ao executor escolhido) — mesclados
+            # a cada write_metrics, senão o rebuild do dict os apagaria.
+            adaptive_metrics_extra: dict = {}
 
             def write_metrics(throttle_ms: int = 500):
                 # minimal throttling by timestamp in metrics dict (store last write)
@@ -455,6 +468,7 @@ class Runner:
                     metrics["adaptive"] = {
                         "execution_policy": execution_policy,
                         **run_telemetry.snapshot(),
+                        **adaptive_metrics_extra,
                     }
                     payload = json.dumps(metrics, ensure_ascii=False)
                 with db_lock:
@@ -550,6 +564,31 @@ class Runner:
                         adaptive=adaptive_rt,
                     )
                 else:
+                    if execution_policy != POLICY_CONSERVATIVE:
+                        # O executor parallel-sessions simples não recebe o
+                        # AdaptiveRuntime — a política pedida seria ignorada
+                        # em silêncio com as métricas dizendo "adaptive".
+                        # A run segue conservadora (comportamento seguro: a
+                        # cadência ali já é dirigida por checkpoint, sem
+                        # pacing/batching a otimizar) e o aviso fica
+                        # registrado de forma estruturada nas métricas e nos
+                        # eventos da run.
+                        policy_warning = (
+                            f"execution_policy={execution_policy} não se aplica ao "
+                            "executor parallel-sessions simples (concurrency<=1): "
+                            "executando conservador; use concurrency>1 ou "
+                            "strict-global para o motor adaptativo"
+                        )
+                        adaptive_metrics_extra.update({
+                            "policy_effective": POLICY_CONSERVATIVE,
+                            "policy_warning": policy_warning,
+                        })
+                        add_run_event(con, run_id, "warning", policy_warning, {
+                            "execution_policy": execution_policy,
+                            "mode": str(mode or ""),
+                            "executor": "parallel-sessions",
+                        })
+                        write_metrics(throttle_ms=0)
                     replay_parallel_sessions_controlled(
                         cfg,
                         params=params,
@@ -557,6 +596,15 @@ class Runner:
                         on_progress=on_progress,
                         on_failure=on_failure,
                     )
+
+            # Re-cheque final do controle, sem o TTL do cache: uma corrida no
+            # modo continue podia deixar o cancel ser visto só pelo worker
+            # (tratado como falha de sessão, sem stop_all) e a run terminava
+            # "success" sobrescrevendo o "cancelled" do operador. O re-cheque
+            # fica no runner — e não no worker — porque cobre todos os
+            # executores e todos os caminhos de saída (worker except, futures
+            # cancelados, stop_all não sinalizado) num ponto único.
+            control.check_now()
 
             # set success (seq_end da passagem única de metadados; fallback no manifest)
             update_progress(con, run_id, last_seq_global=int(capture_meta.get("seq_end") or 0) or compute_seq_end(run["log_dir"], params))

@@ -188,7 +188,11 @@ replay2/
   grandes), a ordem é preservada apenas DENTRO de cada sessão, e o
   pause/cancel do runner usa `_RunControlState` (status cacheado em memória,
   SQLite relido no máximo a cada `poll_interval_s`=1s, polling contínuo só
-  enquanto pausado) em vez de consulta ao banco por evento. Desde a v0.9.8 o
+  enquanto pausado) em vez de consulta ao banco por evento, MAIS um re-cheque
+  final sem TTL (`check_now()`) antes de marcar a run como `success` — uma
+  corrida do modo continue podia deixar o cancel ser visto só pelo worker
+  (falha de sessão, sem stop_all) e a run terminava `success` sobrescrevendo
+  o `cancelled` do operador. Desde a v0.9.8 o
   pacote inclui o **motor adaptativo determinístico** (offline, sem IA):
   `action_classifier.py` (classe semântica determinística de cada ação —
   printable/enter/tab/esc/function_key/navigation/field_edit/explicit_wait/
@@ -219,7 +223,12 @@ replay2/
   batch; boundary com pacing>0 só colapsa com evidência de type-ahead seguro
   ou trilha sintética) e `adaptive_shadow` (executa conservador e registra o
   que o adaptativo FARIA + economia prevista; critério de promoção:
-  `false_safe_decisions = 0`). `shadow_eval.py` +
+  `false_safe_decisions = 0`). O shadow online existe no executor concurrent
+  E no strict-global — neste, como a cadência é dirigida por checkpoint (sem
+  pacing por ts_ms a economizar), o observe usa sempre `paced_sleep_ms=0` e
+  os checkpoints também quebram a run candidata: o valor da métrica é a
+  cobertura/segurança do batching (`total_actions`/`batch_candidates`/
+  `false_safe_decisions`), não a economia de tempo (sempre 0). `shadow_eval.py` +
   `scripts/shadow_eval_adaptive_replay.py` rodam essa avaliação OFFLINE
   sobre os audit-*.jsonl das capturas (sem executor, sem rede), verificando
   equivalência de bytes e inviolabilidade do checkpoint em dados reais →
@@ -230,7 +239,12 @@ replay2/
   detalhe da captura), pela API (`execution_policy` no body de
   `/api/captures/{id}/synthetic-replay` e do X5) e pela CLI
   (`runs create --execution-policy`); valores inválidos normalizam para
-  `conservative`. Desde a v0.9.9: (a) runs sintéticas ligam por default o
+  `conservative`. A política é aplicada pelo strict-global (telemetria +
+  shadow) e pelo executor concurrent (`concurrency>1`); no executor parallel-sessions
+  simples (`concurrency<=1` — sem pacing/batching, cadência dirigida por
+  checkpoint) ela não se aplica e o runner registra aviso estruturado
+  (`policy_effective`/`policy_warning` em `metrics_json["adaptive"]` +
+  evento `warning`) em vez de ignorá-la em silêncio. Desde a v0.9.9: (a) runs sintéticas ligam por default o
   fast path da carência de mismatch — divergência estável já explicada pelo
   de→para (`synthetic_substitution` no match) dispensa os 500ms de carência
   em CADA checkpoint (~51s/run na captura 13); `synthetic_swap_fast_exit=0`
@@ -238,7 +252,10 @@ replay2/
   na política adaptive quando o wait anterior convergiu (match ou swap) —
   estado conhecido e estável, cadência seria artificial (métricas
   `convergence_pacing_skip_count`/`convergence_pacing_saved_ms`); WAIT
-  explícito nunca é pulado; (c) `LoadTestParams` carrega o contexto
+  explícito nunca é pulado, e `jitter_ms` configurado também nunca é pulado
+  (é configuração explícita do operador — o skip remove só o delta de ts_ms;
+  efeito colateral: com jitter>0 os boundaries de batch têm scaled>0 e só
+  colapsam com evidência); (c) `LoadTestParams` carrega o contexto
   sintético (`synthetic`/`synthetic_substitutions`/`synthetic_swap_fast_exit`)
   via `load_test_params_from_dict` — sem isso o swap e o fast path ficavam
   mortos no executor concurrent; (d) na telemetria, checkpoint wait com
@@ -273,7 +290,14 @@ replay2/
   `diff-quickstart`) e o subcomando top-level `benchmark` (benchmark real AIX ×
   Linux: `create`, `preflight`, `run`, `status`, `compare`, `report`, `import`
   — este último adota no banco experimentos presentes em
-  `artifacts/benchmarks/`, mesma rotina do boot do control plane);
+  `artifacts/benchmarks/`, mesma rotina do boot do control plane; desde a
+  v0.9.11 o `create` aceita `--journey-set/--dataset/--application/
+  --think-time-profile <path>` e CALCULA os hashes de proveniência dos
+  artefatos — `benchmark/provenance.py`, mesmo esquema de hash de conjunto
+  do evidence-manifest — gravando `provenance.json` no diretório do
+  experimento; hash digitado divergindo do calculado é recusado, e
+  placeholder óbvio falha o create com mensagem legível. Runbook do
+  experimento oficial reproduzível: `docs/benchmark-oficial-v8.md`);
 - `source_analyzer/` — P2-A Discovery: extratores SQL/ISAM/DBF/Recital, telas,
   menus, CRUD, relacionamentos, catálogo de programas/entidades, auditoria;
 - `synthetic/` — P2-A Synthetic: planejador de dataset (grafo de dependências),
@@ -507,7 +531,12 @@ replay2/
   só conta como eco quando presente nas DUAS linhas (só na esperada = campo
   ausente na observada: divergência estrutural, não troca — regressão da
   run 40, em que a linha da grade do item casava com a linha de menu
-  "0. Finalizacao"). A
+  "0. Finalizacao"). Desde o oráculo da captura 13 (runs 94-96): a máscara
+  dos pares é case-insensitive (o Recital exibe em maiúsculas o valor
+  digitado em minúsculas) e a classificação exige eco de um PAR do de→para
+  (`substitution_pair_echo_present`) — eco só de identificador gerado pela
+  aplicação (nº do pedido, presente em toda reexecução) não basta, pois
+  mascarava divergência real (grade travada com "Codigo nao cadastrado"). A
   falha de checkpoint de um `deterministic_input` é registrada UMA vez só
   (o `wait_checkpoint` do strict-global recebe `record_failure=False`; o
   registro definitivo com a ação skip/send-anyway é o do

@@ -1117,9 +1117,28 @@ def _handle_benchmark(ns) -> int:
     if ns.benchmark_cmd == "create":
         with open(ns.contract, encoding="utf-8") as fh:
             dados = json.load(fh)
-        contract = create_contract(**dados)
+        # Caminho oficial (v8): hashes de proveniência CALCULADOS dos
+        # artefatos. Sem os flags, o JSON com strings segue aceito
+        # (retrocompatível), mas placeholder óbvio é recusado aqui com
+        # mensagem legível (antes a ContractViolation propagava).
+        from .benchmark.provenance import (
+            aplicar_hashes_proveniencia, calcular_hashes_proveniencia,
+            escrever_proveniencia)
+        try:
+            calculados = calcular_hashes_proveniencia(
+                journey_set=ns.journey_set or None,
+                dataset=ns.dataset or None,
+                application=ns.application or None,
+                think_time_profile=ns.think_time_profile or None)
+            dados = aplicar_hashes_proveniencia(dados, calculados)
+            contract = create_contract(**dados)
+        except (ContractViolation, TypeError, ValueError) as exc:
+            print(f"Erro na criação do experimento: {exc}", file=sys.stderr)
+            return 2
         experiment_dir = Path(ns.artifacts_dir) / contract.experiment_id
         manifesto = contract.write_manifest(experiment_dir)
+        if calculados:
+            escrever_proveniencia(experiment_dir, calculados)
         con = _connect(ns.db or _default_db_path())
         _init_db(con)
         try:
@@ -1789,6 +1808,19 @@ def main(argv: list[str] | None = None) -> int:
                                  help="JSON com os campos do contrato (§6)")
     ap_bmark_create.add_argument("--artifacts-dir", default="artifacts/benchmarks")
     ap_bmark_create.add_argument("--db", default="", help="Caminho do banco SQLite")
+    ap_bmark_create.add_argument(
+        "--journey-set", default="", metavar="PATH",
+        help="Arquivo/diretório das jornadas — o sha256 é CALCULADO "
+             "(caminho oficial; string no JSON só no fluxo legado)")
+    ap_bmark_create.add_argument(
+        "--dataset", default="", metavar="PATH",
+        help="Arquivo da massa de dados — sha256 calculado do conteúdo")
+    ap_bmark_create.add_argument(
+        "--application", default="", metavar="PATH",
+        help="Arquivo/diretório da aplicação sob teste — sha256 calculado")
+    ap_bmark_create.add_argument(
+        "--think-time-profile", default="", metavar="PATH",
+        help="JSON do perfil de think time — sha256 calculado do conteúdo")
 
     ap_bmark_import = ap_bmark_sub.add_parser(
         "import", help="Adota no banco experimentos presentes nos artefatos")

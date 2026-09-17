@@ -57,15 +57,47 @@ bancos `replay.db` dos servidores). Falhas por run: AIX 94–98, Linux 103
 **abaixo do tempo humano nos dois ambientes** (AIX −26% a −30%; Linux −64%).
 Isso é evidência de *aptidão do Replay2*, **não** de capacidade AIX × Linux.
 
-## 4. Versões 0.9.10 e 0.9.11 — sem nova medição, por construção
+## 4. Versões 0.9.10 e 0.9.11 — engine e medições
 
 `git diff v0.9.9..v0.9.11 -- gateway/dakota_gateway/replay_control/
 replay_compare.py replay.py` → **zero alterações de engine**. As versões
 0.9.10 e 0.9.11 contêm exclusivamente simplificação de UI (templates, JS de
 apresentação, testes de rótulos) e documentação. Portanto a evidência de
 desempenho da v0.9.9 **vale para a 0.9.11 por identidade do engine** —
-verificável com o comando acima. Nenhuma medição nova foi feita nessas
-versões; qualquer número novo será registrado aqui com sua própria linha.
+verificável com o comando acima.
+
+### 4.1 Paridade de políticas na 0.9.11 (medida em 2026-09-17, homologação)
+
+Estudo novo na 0.9.11 (deployada nos dois servidores): mesma jornada
+(captura 13 AIX = captura 51 Linux, mesmo UUID de sessão), seed 42,
+strict-global, 1 sessão, uma run por política. Fonte: bancos `replay.db` dos
+servidores + `/tmp/adaptive-policy-comparison-<host>.json` (fonte operacional;
+a exportação verificável foi feita na 0.9.12: evidence bundles das runs 96/99/
+100 AIX e 29 Linux, verificados VALID pelo `runs verify-evidence` — hashes em
+`docs/engenharia-0.9.11-relatorio.md` §10.3).
+
+| Política | AIX (MIG24) | Linux (recital24) |
+|---|---|---|
+| conservative | run 97 — 95,6 s, 95 falhas | run 24 — 158,5 s *, 103 falhas |
+| adaptive_shadow | run 98 — 90,0 s, 96 falhas | run 25 — 157,1 s *, 103 falhas |
+| adaptive | run 99 — 90,1 s, 96 falhas | run 26 — 156,3 s *, 103 falhas |
+
+\* As runs Linux 24–26 usaram entry_preamble com âncora do prompt do AIX
+(`(ferblo)MIG24:` — a captura foi gravada no AIX), estourando ~20 s de timeout
+no passo shell a cada run (sync_wait ~82 s vs ~42 s nas runs 22/23). A
+**paridade entre políticas** permanece justa (mesmo preâmbulo nas 3), mas esses
+tempos absolutos **não são comparáveis** aos 45–46 s das runs 22/23 — a
+diferença é configuração de entrada, não engine. Correção operacional aplicada
+ao cache da captura 51 (âncora `recital24`) e trio re-executado na 0.9.11:
+**conservative 47,2 s (run 27) / adaptive_shadow 46,1 s (run 28) / adaptive
+45,6 s (run 29)**, 103 falhas cada com distribuição idêntica (20 low / 18
+medium / 65 swap), hash de massa `7c3a46e8a677` e `verify_ok=1` nas 3 — a
+paridade se confirma com o preâmbulo correto.
+
+Equivalência comprovada entre políticas (os 3 runs de cada ambiente): hash de
+`synthetic_applied` idêntico (mesma massa), `last_seq_global_applied` idêntico,
+`verify_ok=1`, distribuição de falhas idêntica (±1 medium em seq 379, já
+classificado pelo oráculo como cascata da dessincronia anterior).
 
 ## 5. Benchmark oficial de capacidade (v7) — NÃO autoriza decisão
 

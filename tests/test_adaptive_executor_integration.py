@@ -243,7 +243,16 @@ class AdaptiveBatchingTests(unittest := __import__("unittest").TestCase):
         self.assertEqual(joined, b"12\r34\t56")
 
     def test_shadow_executa_conservador_e_preve_economia(self):
-        """§19: shadow não altera execução, mas registra decisões/economia."""
+        """§19: shadow não altera execução, mas registra decisões/economia.
+
+        Escopo: run única de imprimíveis SEM fronteira de checkpoint — os
+        números (4 ações, 1 candidata, 150ms previstos) são idênticos antes
+        e depois da correção que passou a alimentar o ShadowTracker com
+        eventos checkpoint no concurrent. A regra "checkpoint quebra a run
+        candidata" é travada por test_shadow_checkpoint_quebra_run_candidata
+        (sem ela, este teste sozinho não impediria uma candidata de
+        atravessar checkpoint no relatório online).
+        """
         _write_capture(self._tmp(), {"s0": _field_events("ABCD", delta=50)})
         tel = RunTelemetry()
         self._run_policy(POLICY_ADAPTIVE_SHADOW, telemetry=tel, synthetic=True)
@@ -257,6 +266,31 @@ class AdaptiveBatchingTests(unittest := __import__("unittest").TestCase):
         self.assertEqual(shadow["safe_candidates"], 1)
         self.assertEqual(shadow["potential_saved_ms"], 150)
         self.assertEqual(shadow["false_safe_decisions"], 0)
+
+    def test_shadow_checkpoint_quebra_run_candidata(self):
+        """§16.8/§19: checkpoint é fronteira dura de batch também no shadow
+        ONLINE do concurrent — A,B,checkpoint,C-D são 2 runs candidatas,
+        nunca 1 atravessando o checkpoint (alinhamento com o shadow_eval
+        offline e com o strict-global). Antes da correção o executor não
+        passava checkpoints ao ShadowTracker.observe e o relatório contava
+        UMA candidata [A,B,C,D] com saved=200 — número inflado contra a
+        regra de fronteira."""
+        events = (
+            _field_events("AB", ts0=1000, delta=50)
+            + [{"type": "checkpoint", "ts_ms": 1100}]
+            + _field_events("CD", ts0=1150, delta=50)
+        )
+        _write_capture(self._tmp(), {"s0": events})
+        tel = RunTelemetry()
+        self._run_policy(POLICY_ADAPTIVE_SHADOW, telemetry=tel, synthetic=True)
+        shadow = tel.snapshot()["shadow"]
+        self.assertEqual(shadow["total_actions"], 4, shadow)
+        self.assertEqual(shadow["batch_candidates"], 2, shadow)
+        self.assertEqual(shadow["safe_candidates"], 2, shadow)
+        # economia prevista: 50ms (B) + 50ms (D) — o delta de 100ms de C
+        # fica DO LADO DE FORA da candidata (cruza o checkpoint)
+        self.assertEqual(shadow["potential_saved_ms"], 100, shadow)
+        self.assertEqual(shadow["checkpoint_crossing_attempts"], 0, shadow)
 
     def test_cancel_dentro_de_batch_para_a_sessao(self):
         """§16.23: cancelamento cooperativo continua funcionando."""

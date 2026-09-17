@@ -1,6 +1,6 @@
 # Simplificação da Interface — Replay2 para o usuário leigo
 
-**Produto:** Dakota Replay2 · **Versão base:** 0.9.10 · **Data:** setembro/2026
+**Produto:** Dakota Replay2 · **Versão base:** 0.9.11 · **Data:** setembro/2026
 **Escopo:** todas as telas do painel de controle (Control Plane)
 
 ---
@@ -295,13 +295,12 @@ REPROVADO.
 
 | Item | Resultado |
 |---|---|
-| PRs mergeados | #14, #15, #16, #17, #18, #19, #20, #21, #22, #23 |
+| PRs mergeados | #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #26 |
 | Suíte JS (node --test) | 22/22 suítes verdes |
 | Testes Python de rotas UI | verdes (gateway/tests: 181 passed) |
 | CI (3.10/3.11/3.12, lint, coverage) | verde em todos os PRs |
-| Novos testes criados | dom_labels (+), pages_lay_labels (18), templates_lay_text (16), ui_nav_labels (4), failure_table_row (+1) |
-| Versão com as levas 1–6 | v0.9.10 (deployada em AIX 10.5.8.25 e Linux 10.5.8.24) |
-| Levas 7–11 (menu, statusbar, falhas, dashboard, tipos de replay) | master, próxima versão |
+| Novos testes criados | dom_labels (+), pages_lay_labels (18), templates_lay_text (16), ui_nav_labels (4), failure_table_row (+1), ui_replay_mode_labels (7) |
+| Versão com todas as levas (1–11) | **v0.9.11** — aceitação completa aprovada, deployada em AIX 10.5.8.25 e Linux 10.5.8.24 (health OK nos dois) |
 
 ## 7. O que ficou de fora (de propósito)
 

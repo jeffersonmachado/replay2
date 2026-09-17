@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import tarfile
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -14,6 +16,7 @@ from control.services.session_replay_service import (
     prepare_session_replay_data as _prepare_session_replay_data,
     resolve_seek_offset as _resolve_seek_offset,
 )
+from control.services.run_evidence_service import export_run_evidence
 from control.services.run_service import (
     apply_run_action,
     create_run_request_payload,
@@ -297,6 +300,53 @@ def handle_run_get_route(handler, parsed_path) -> bool:
             return True
         status = _replay_status_code(replay_data)
         write_json(handler, status, {**replay_data, "run_id": run_id, "log_dir": session_dir})
+        return True
+
+    # GET /api/runs/{id}/evidence-bundle — pacote de evidência verificável da
+    # run (dados brutos + trilhas observadas + manifesto com sha256), servido
+    # como tar.gz. O verificador independente roda via CLI:
+    # `dakota-gateway runs verify-evidence --bundle <pacote>`.
+    if path.startswith("/api/runs/") and path.endswith("/evidence-bundle"):
+        user = handler._require()
+        if not user:
+            return True
+        parts = path.split("/")
+        if len(parts) < 5:
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        try:
+            run_id = int(parts[3])
+        except (ValueError, IndexError):
+            handler.send_response(404)
+            handler.end_headers()
+            return True
+        with tempfile.TemporaryDirectory(prefix="run-evidence-") as tmp:
+            bundle_dir = os.path.join(tmp, f"run-{run_id}-evidence")
+            con = handler._db()
+            try:
+                try:
+                    export_run_evidence(
+                        con,
+                        run_id,
+                        hmac_key=getattr(handler.server, "hmac_key", b"") or b"",
+                        dest_dir=bundle_dir,
+                    )
+                except ValueError:
+                    handler.send_response(404)
+                    handler.end_headers()
+                    return True
+            finally:
+                handler._db_release(con)
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/gzip")
+            handler.send_header(
+                "Content-Disposition",
+                f'attachment; filename="run-{run_id}-evidence.tar.gz"',
+            )
+            handler.end_headers()
+            with tarfile.open(fileobj=handler.wfile, mode="w:gz") as tar:
+                tar.add(bundle_dir, arcname=os.path.basename(bundle_dir))
         return True
 
     return False

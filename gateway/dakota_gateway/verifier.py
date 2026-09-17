@@ -82,7 +82,7 @@ def _as_int(value, *, field: str, where: str) -> int:
         raise VerificationError(f"{where}: {field} inválido: {value!r}") from e
 
 
-def verify_log(log_dir: str, hmac_key: bytes) -> None:
+def verify_log(log_dir: str, hmac_key: bytes, *, allow_no_hmac: bool = False) -> dict:
     """
     Verifies (em UMA passagem de streaming por arquivo):
     - seq_global monotonic without gaps (across all files)
@@ -91,9 +91,22 @@ def verify_log(log_dir: str, hmac_key: bytes) -> None:
     - seq_session monotonic per session without gaps (best effort)
     - manifests (*.manifest.json), quando presentes — conferidos com as
       estatísticas acumuladas na mesma passagem (sem reler o JSONL)
+
+    Retorna um resumo estruturado {"files": [...], "events": N, "hmac": ...}
+    (chamadores antigos simplesmente ignoram o retorno).
+
+    ``allow_no_hmac=True`` permite rodar SEM a chave HMAC (hmac_key vazia):
+    hash-chain e sequências são verificados normalmente e o campo ``hmac`` do
+    resumo volta "not_verified" — usado pelo verificador independente de
+    pacotes de evidência (evidence_bundle), onde a chave pode não estar
+    disponível. Sem esse flag explícito, chave vazia aborta (fail-closed).
     """
+    hmac_checked = bool(hmac_key)
+    if not hmac_checked and not allow_no_hmac:
+        raise VerificationError("hmac_key ausente (use allow_no_hmac=True para verificar só hash-chain/sequências)")
     prev_hash = ""
     expected_seq_global = 1
+    event_count = 0
     per_session_next = {}
     stats_por_arquivo: dict[str, _ArquivoStats] = {}
 
@@ -101,7 +114,7 @@ def verify_log(log_dir: str, hmac_key: bytes) -> None:
         estado = {"ln_no": 0}
 
         def _checa_linha(line: str, stats: _ArquivoStats, *, _f=f, _estado=estado) -> None:
-            nonlocal prev_hash, expected_seq_global
+            nonlocal prev_hash, expected_seq_global, event_count
             _estado["ln_no"] += 1
             ln_no = _estado["ln_no"]
             if not line:
@@ -128,13 +141,15 @@ def verify_log(log_dir: str, hmac_key: bytes) -> None:
 
             payload = payload_for_event(ev).encode("utf-8")
             want_hash = sha256_hex(payload)
-            want_hmac = hmac_sha256_hex(hmac_key, payload)
             if not hmac.compare_digest(ev.hash or "", want_hash):
                 raise VerificationError(f"{where}: hash mismatch")
-            if not hmac.compare_digest(ev.hmac or "", want_hmac):
-                raise VerificationError(f"{where}: hmac mismatch")
+            if hmac_checked:
+                want_hmac = hmac_sha256_hex(hmac_key, payload)
+                if not hmac.compare_digest(ev.hmac or "", want_hmac):
+                    raise VerificationError(f"{where}: hmac mismatch")
 
             prev_hash = ev.hash
+            event_count += 1
             stats.registra_evento(seq_global, ev.hash or "")
 
             # per-session sequence (best effort: divergência realinha a
@@ -148,6 +163,20 @@ def verify_log(log_dir: str, hmac_key: bytes) -> None:
         stats_por_arquivo[f.name] = _varrer_arquivo(f, _checa_linha)
 
     verify_manifests(log_dir, stats_por_arquivo=stats_por_arquivo)
+    return {
+        "files": [
+            {
+                "name": name,
+                "bytes": stats.nbytes,
+                "sha256": stats.sha.hexdigest(),
+                "seq_start": stats.seq_start,
+                "seq_end": stats.seq_end,
+            }
+            for name, stats in sorted(stats_por_arquivo.items())
+        ],
+        "events": event_count,
+        "hmac": "verified" if hmac_checked else "not_verified",
+    }
 
 
 def _stats_tolerantes(jsonl: Path) -> _ArquivoStats:

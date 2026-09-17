@@ -1834,6 +1834,17 @@ def main(argv: list[str] | None = None) -> int:
         if name in ("retry",):
             p2.add_argument("--created-by", required=True, help="username")
 
+    ap_runs_verify_evidence = ap_runs_sub.add_parser(
+        "verify-evidence",
+        help="Verifica pacote de evidência exportado de uma run (diretório ou tar.gz)",
+    )
+    ap_runs_verify_evidence.add_argument("--bundle", required=True,
+                                         help="Diretório do pacote ou arquivo .tar.gz")
+    ap_runs_verify_evidence.add_argument(
+        "--hmac-key-file", default="",
+        help="Opcional: sem a chave, hash-chain/sequências são verificados e o HMAC é marcado not_verified",
+    )
+
     ns = ap.parse_args(argv)
 
     if ns.cmd in {"start", "verify", "replay", "capture-session", "capture-daemon", "capture-resolve"}:
@@ -1880,6 +1891,16 @@ def main(argv: list[str] | None = None) -> int:
             con.close()
 
     if ns.cmd == "runs":
+        # verify-evidence é offline: confere apenas o conteúdo do pacote,
+        # sem abrir o banco (pode rodar na máquina de terceiros).
+        if ns.runs_cmd == "verify-evidence":
+            from .evidence_bundle import verify_evidence_bundle
+
+            key = _read_key(ns.hmac_key_file) if str(ns.hmac_key_file or "").strip() else None
+            result = verify_evidence_bundle(ns.bundle, hmac_key=key)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "VALID" else 2
+
         from .state_db import connect as _connect, default_db_path as _default_db_path, init_db as _init_db, query_one as _q1
         from .replay_control import Runner as _Runner, create_run as _create_run, pause_run as _pause, cancel_run as _cancel, retry_run as _retry, set_run_compliance as _set_run_compliance
 

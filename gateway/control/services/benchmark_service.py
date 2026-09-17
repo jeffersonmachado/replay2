@@ -517,13 +517,32 @@ def metrics_payload(con, experiment_id: str, *, environment_id: str = "",
     }
 
 
+def _payload_comparacao_pre_fase4(payload: dict) -> bool:
+    """True quando o payload persistido é anterior à FASE 4.
+
+    Marcadores do schema atual: ``comparison.provenance_problems`` e
+    ``comparison.collector_coverage``. Payload sem eles foi calculado sem os
+    gates de proveniência/cobertura de coletor — caso real: o v7 histórico
+    ficou ``WARN`` no banco mesmo com hashes de proveniência placeholder.
+    """
+    comp = payload.get("comparison")
+    if not isinstance(comp, dict):
+        return True
+    return ("provenance_problems" not in comp
+            or "collector_coverage" not in comp)
+
+
 def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None:
     """Comparação absoluta + normalizada + degradação + decisão.
 
-    Usa o payload persistido pela execução quando existe; caso contrário
-    reconstrói o resultado a partir dos artefatos (sem persistir). Sem runs
-    reais: ``verdict=INCONCLUSIVE``, ``recommendation=None`` e comparação
-    nula — nunca números inventados.
+    Usa o payload persistido pela execução quando existe e é do schema atual;
+    payload pré-FASE 4 (stale, sem os gates de proveniência/cobertura) é
+    recalculado a partir dos artefatos quando há manifesto + runs em disco —
+    e o recálculo corrige ``benchmark_experiments``/``benchmark_comparisons``
+    para que a lista e o boot não reintroduzam o veredito antigo. Sem dados
+    para recalcular, cai no persistido (não quebra experimento sem
+    manifesto). Sem runs reais: ``verdict=INCONCLUSIVE``,
+    ``recommendation=None`` e comparação nula — nunca números inventados.
     """
     exp = bp.get_experiment(con, experiment_id)
     if not exp:
@@ -533,13 +552,8 @@ def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None
     modelos = _load_env_models(experiment_dir)
     ambientes = {eid: m.to_dict() for eid, m in modelos.items()}
 
-    row = con.execute(
-        "SELECT payload_json FROM benchmark_comparisons"
-        " WHERE experiment_id=? ORDER BY id DESC LIMIT 1",
-        (experiment_id,),
-    ).fetchone()
-    if row:
-        payload = json.loads(row["payload_json"])
+    def _persistido_com_contexto(payload: dict) -> dict:
+        payload = dict(payload)
         payload.update({
             "ok": True,
             "experiment_id": experiment_id,
@@ -549,9 +563,22 @@ def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None
         })
         return payload
 
+    row = con.execute(
+        "SELECT payload_json FROM benchmark_comparisons"
+        " WHERE experiment_id=? ORDER BY id DESC LIMIT 1",
+        (experiment_id,),
+    ).fetchone()
+    persistido = json.loads(row["payload_json"]) if row else None
+
     manifesto = experiment_dir / "experiment-manifest.json"
     runs = bp.list_runs(con, experiment_id)
-    if not manifesto.is_file() or not runs:
+    pode_recalcular = manifesto.is_file() and bool(runs)
+
+    if persistido is not None and (
+            not pode_recalcular or not _payload_comparacao_pre_fase4(persistido)):
+        return _persistido_com_contexto(persistido)
+
+    if not pode_recalcular:
         return {
             "ok": True,
             "experiment_id": experiment_id,
@@ -565,8 +592,16 @@ def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None
             "result_type": "INCONCLUSIVE",
         }
 
-    contract = load_contract(manifesto)
-    result = _rebuild_result(experiment_dir, contract)
+    try:
+        contract = load_contract(manifesto)
+        result = _rebuild_result(experiment_dir, contract)
+    except Exception:
+        if persistido is not None:
+            log.warning(
+                "recálculo da comparação de %s falhou; servindo o payload "
+                "persistido", experiment_id, exc_info=True)
+            return _persistido_com_contexto(persistido)
+        raise
     if not result.runs:
         return {
             "ok": True,
@@ -583,6 +618,24 @@ def comparison_payload(con, experiment_id: str, *, artifacts_dir) -> dict | None
     comparison = build_comparison(result, modelos or None, contract=contract)
     capacity = build_capacity(result)
     decision = build_decision(result, comparison)
+    # Self-healing: o recálculo só ocorreu porque o persistido era stale
+    # (pré-FASE 4); grava o payload novo e corrige o veredito do experimento
+    # quando diverge, para que a lista e o boot não reintroduzam o veredito
+    # antigo. Experimento RUNNING nunca é tocado (decisão em andamento).
+    if persistido is not None and exp["status"] != STATUS_RUNNING and (
+            persistido.get("verdict") != decision.verdict
+            or persistido.get("reasons") != decision.reasons
+            or _payload_comparacao_pre_fase4(persistido)):
+        bp.save_comparison(con, experiment_id, {
+            "verdict": decision.verdict,
+            "recommendation": decision.recommendation,
+            "reasons": decision.reasons,
+            "comparison": comparison,
+        })
+        bp.update_experiment_status(
+            con, experiment_id, status=result.status,
+            verdict=decision.verdict,
+            reason=result.reason or "; ".join(decision.reasons))
     return {
         "ok": True,
         "experiment_id": experiment_id,

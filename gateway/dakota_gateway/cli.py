@@ -1309,6 +1309,23 @@ def _handle_benchmark(ns) -> int:
         capacity = build_capacity(result)
         decision = build_decision(result, comparison)
         if ns.benchmark_cmd == "report":
+            # Regrava o veredito FINAL da decisão no execution-result.json
+            # ANTES dos artefatos (mesmo motivo do caminho 'run': o
+            # evidence-manifest deve cobrir a versão definitiva e a
+            # importação no boot do control plane lê o veredito daqui —
+            # sem isso, um report recalculado não impedia o boot de
+            # reintroduzir o veredito antigo).
+            result.verdict = decision.verdict
+            reason_final = result.reason or "; ".join(decision.reasons)
+            exp_result_path = experiment_dir / "execution-result.json"
+            if exp_result_path.is_file():
+                dados_result = json.loads(
+                    exp_result_path.read_text(encoding="utf-8"))
+                dados_result["verdict"] = decision.verdict
+                dados_result["reason"] = reason_final
+                exp_result_path.write_text(
+                    json.dumps(dados_result, indent=2, ensure_ascii=False),
+                    encoding="utf-8")
             write_experiment_artifacts(experiment_dir, result, comparison,
                                        capacity, decision)
         con = _connect(ns.db or _default_db_path())
@@ -1783,7 +1800,7 @@ def main(argv: list[str] | None = None) -> int:
         ("run", "Executa o experimento pareado completo"),
         ("status", "Mostra status/verdict do experimento no banco"),
         ("compare", "Recalcula comparação/decisão a partir dos artefatos"),
-        ("report", "Regera report.md/report.json/aggregates + evidence-manifest"),
+        ("report", "Regera execution-result/report.md/report.json/aggregates + evidence-manifest"),
     ]:
         p = ap_bmark_sub.add_parser(nome, help=ajuda)
         p.add_argument("--db", default="", help="Caminho do banco SQLite")

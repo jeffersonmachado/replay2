@@ -260,13 +260,20 @@ def _substitution_masked_lines(
     observed_text: str,
     pairs: list[tuple[str, str]],
 ) -> tuple[list[str], list[str], set]:
-    """Telas mascaradas (volátil + pares longos) prontas para diff por linha."""
+    """Telas mascaradas (volátil + pares longos) prontas para diff por linha.
+
+    A máscara dos pares é case-insensitive: campos uppercased do Recital
+    exibem o valor digitado em maiúsculas (o usuário digitou 'g2511', a grade
+    mostra 'G2511') e a máscara exata deixava o lado esperado sem placeholder
+    (medido na run 94, captura 13: a linha da grade nunca era reconhecida
+    como eco, e a classificação dependia só do nº do pedido gerado).
+    """
     exp = mask_volatile_screen_text(expected_text)
     obs = mask_volatile_screen_text(observed_text)
     long_pairs, short_pairs = _split_pairs(pairs)
     for orig, synth in long_pairs:
-        exp = exp.replace(orig, SUBSTITUTION_PLACEHOLDER)
-        obs = obs.replace(synth, SUBSTITUTION_PLACEHOLDER)
+        exp = re.sub(re.escape(orig), SUBSTITUTION_PLACEHOLDER, exp, flags=re.IGNORECASE)
+        obs = re.sub(re.escape(synth), SUBSTITUTION_PLACEHOLDER, obs, flags=re.IGNORECASE)
     return exp.splitlines(), obs.splitlines(), short_pairs
 
 
@@ -298,6 +305,52 @@ def substitution_echo_line_indices(
         if line_exp == line_obs or _line_has_substitution_echo(line_exp, line_obs, short_pairs):
             indices.append(idx)
     return indices
+
+
+def substitution_pair_echo_present(
+    expected_text: str,
+    observed_text: str,
+    substitutions: list | tuple | None,
+) -> bool:
+    """True quando alguma linha divergente contém eco de um PAR do de→para.
+
+    Diferente de ``substitution_echo_line_indices`` (que também reconhece eco
+    de identificador gerado pela aplicação, ex.: nº do pedido), aqui só conta
+    eco do próprio de→para: placeholder de par longo presente nas DUAS linhas,
+    linha igualada pela máscara de pares, ou trecho casando par curto (exato
+    ou numérico). É o portão da classificação ``synthetic_data_swap``: sem
+    eco de par, a divergência não é explicada pela troca — um nº de pedido
+    novo aparece em TODA tela de uma reexecução, inclusive quando a sessão
+    divergiu de verdade (oráculo da captura 13: o eco do pedido mascarou a
+    grade travada com "Codigo nao cadastrado" nas runs 94-96).
+    """
+    pairs = _normalized_pairs(substitutions)
+    if not pairs:
+        return False
+    vol_exp_lines = mask_volatile_screen_text(expected_text).splitlines()
+    vol_obs_lines = mask_volatile_screen_text(observed_text).splitlines()
+    exp_lines, obs_lines, short_pairs = _substitution_masked_lines(expected_text, observed_text, pairs)
+    for idx in range(max(len(exp_lines), len(obs_lines))):
+        line_exp = exp_lines[idx] if idx < len(exp_lines) else ""
+        line_obs = obs_lines[idx] if idx < len(obs_lines) else ""
+        vol_exp = vol_exp_lines[idx] if idx < len(vol_exp_lines) else ""
+        vol_obs = vol_obs_lines[idx] if idx < len(vol_obs_lines) else ""
+        if vol_exp == vol_obs:
+            continue
+        if line_exp == line_obs:
+            # Linha divergente só pelo volátil/de→para e igualada pela
+            # máscara de pares: troca pura.
+            return True
+        ph_exp = SUBSTITUTION_PLACEHOLDER in line_exp
+        ph_obs = SUBSTITUTION_PLACEHOLDER in line_obs
+        if ph_exp and ph_obs:
+            return True
+        if not ph_exp and not ph_obs:
+            if _chunks_have_short_pair_echo(line_exp, line_obs, short_pairs):
+                return True
+            if _numeric_tokens_echo(line_exp, line_obs, short_pairs):
+                return True
+    return False
 
 
 def substitution_explained_diff(
@@ -436,10 +489,15 @@ def apply_synthetic_substitution_fallback(
     falha ser classificada como ``synthetic_data_swap`` — telas de checkpoint
     carregam também dados gerados pela aplicação (datas, totais, decodes),
     então exigir a tela inteira explicada não classificaria nada (análise da
-    run 28: 0/226 telas 100% explicadas, 78/226 com eco presente).
-    O checkpoint NÃO é dado como coincidente (``matched`` permanece False):
-    a troca é apontada na run com classificação própria. O resultado traz
-    ``synthetic_echo_lines`` com os índices das linhas de eco para a UI.
+    run 28: 0/226 telas 100% explicadas, 78/226 com eco presente). Desde o
+    oráculo da captura 13 o eco precisa ser de um PAR do de→para
+    (``substitution_pair_echo_present``): eco só de identificador gerado
+    (nº do pedido) não basta — ele aparece em qualquer reexecução, inclusive
+    numa sessão que divergiu de verdade, e mascarou a rejeição do item
+    ("Codigo nao cadastrado") nas runs 94-96. O checkpoint NÃO é dado como
+    coincidente (``matched`` permanece False): a troca é apontada na run com
+    classificação própria. O resultado traz ``synthetic_echo_lines`` com os
+    índices das linhas de eco para a UI.
     """
     if match.get("matched") or not expected_event:
         return match
@@ -451,6 +509,8 @@ def apply_synthetic_substitution_fallback(
         return match
     echo_lines = substitution_echo_line_indices(expected_text, observed_text, substitutions)
     if not echo_lines:
+        return match
+    if not substitution_pair_echo_present(expected_text, observed_text, substitutions):
         return match
     flagged = dict(match)
     flagged["synthetic_substitution"] = True

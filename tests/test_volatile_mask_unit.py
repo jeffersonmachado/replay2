@@ -7,6 +7,11 @@ from dakota_gateway.replay_compare import apply_volatile_mask_fallback
 STATUS_LINE = "PEDIDO DE VENDA                                       792,000 Kb livres"
 STATUS_LINE_OTHER = "PEDIDO DE VENDA                                       268,000 Kb livres"
 
+# Linha de status do Recital nos dois ambientes (captura 13, runs 94-96 AIX ×
+# 20-23 Linux): mesmo fluxo, rótulo de plataforma e memória livre diferentes.
+STATUS_LINE_AIX = "     IBM Aix (Common)    |    OVER    |    792,000 Kb livres    |       ok"
+STATUS_LINE_LINUX = "     Linux x86           |    OVER    |    024,930 Kb livres    |       ok"
+
 
 def test_mask_substitui_kb_livres():
     """Valores de memória livre viram placeholder; o resto da tela não muda."""
@@ -32,6 +37,27 @@ def test_mask_aceita_ponto_como_separador():
     assert mask_volatile_screen_text("x 792.000 Kb livres y") == f"x {VOLATILE_PLACEHOLDER} y"
 
 
+def test_mask_rotulo_plataforma():
+    """O rótulo de plataforma da linha de status é volátil: muda com o
+    ambiente do servidor (AIX × Linux), não com o fluxo da aplicação.
+    O preenchimento em branco até o '|' também é absorvido."""
+    for label in ("IBM Aix (Common)", "Linux x86", "IBM AIX (COMMON)", "Linux X86"):
+        masked = mask_volatile_screen_text(f"     {label}    |    OVER")
+        assert masked == f"     {VOLATILE_PLACEHOLDER}|    OVER"
+
+
+def test_mask_iguais_apos_mascara_plataforma():
+    """Captura 13: a mesma tela no AIX (esperada) e no Linux (observada) só
+    difere no rótulo de plataforma e no Kb livres — casam após a máscara."""
+    assert mask_volatile_screen_text(STATUS_LINE_AIX) == mask_volatile_screen_text(STATUS_LINE_LINUX)
+
+
+def test_mask_nao_toca_rotulo_fora_da_linha_de_status():
+    """Sem o separador '|' da linha de status, o texto não é mascarado."""
+    text = "Servidor Linux x86 homologado"
+    assert mask_volatile_screen_text(text) == text
+
+
 def _evento(screen_sample: str) -> dict:
     return {"type": "checkpoint", "screen_sample": screen_sample}
 
@@ -46,6 +72,32 @@ def test_fallback_marca_match_quando_so_volatil_diverge():
     )
     assert result["matched"] is True
     assert result["volatile_mask_applied"] is True
+
+
+def test_fallback_cobre_rotulo_plataforma():
+    """Captura 13: checkpoint cuja única divergência é plataforma + Kb livres
+    casa via segunda chance (esperada AIX × observada Linux)."""
+    match = {"matched": False, "expected_sig": "aaa", "observed_sig": "bbb"}
+    result = apply_volatile_mask_fallback(
+        match,
+        expected_event=_evento(STATUS_LINE_AIX),
+        observed_snapshot={"screen_text": STATUS_LINE_LINUX},
+    )
+    assert result["matched"] is True
+    assert result["volatile_mask_applied"] is True
+
+
+def test_fallback_nao_cobre_divergencia_real_alem_da_plataforma():
+    """Mesmo com plataforma e Kb livres mascarados, divergência real em outro
+    trecho da tela continua sem match."""
+    match = {"matched": False, "expected_sig": "aaa", "observed_sig": "bbb"}
+    result = apply_volatile_mask_fallback(
+        match,
+        expected_event=_evento(STATUS_LINE_AIX),
+        observed_snapshot={"screen_text": STATUS_LINE_LINUX + "\nTELA DIFERENTE"},
+    )
+    assert result["matched"] is False
+    assert "volatile_mask_applied" not in result
 
 
 def test_fallback_nao_cobre_divergencia_real():

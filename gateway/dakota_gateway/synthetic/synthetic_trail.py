@@ -479,7 +479,10 @@ def _apply_substitutions(
         # captura 13). O valor novo é distribuído pelos eventos do run: 1
         # caractere por evento; se for mais longo que o run, o último evento
         # carrega o restante (input multi-caractere é válido no replay); se
-        # mais curto, os excedentes ficam vazios (nada é enviado).
+        # mais curto, os excedentes ficam vazios (nada é enviado) — EXCETO
+        # quando o valor novo é prefixo do run original: aí o sufixo nunca
+        # fez parte do campo (auto-avanço de grade de largura fixa, fundido
+        # pelo parametrizer) e as teclas originais do operador são preservadas.
         if len(original) > 1:
             run: list[int] = []
             found: list[int] | None = None
@@ -499,11 +502,31 @@ def _apply_substitutions(
                     run = []
             if found:
                 last = len(found) - 1
+                # Auto-avanço de grade de largura fixa (captura 13: comb
+                # '0000135'→'00001'): o parametrizer fundiu o campo com as
+                # teclas do campo seguinte (o ERP avançou sem ENTER e o salto
+                # de cursor coube na tolerância de máscara). Quando o valor
+                # novo é prefixo do run original, o sufixo pertence ao campo
+                # seguinte e os eventos excedentes preservam a tecla original
+                # do operador — esvaziá-los apagava o Tam ('35') e desalinhava
+                # o replay. Valor mais curto que NÃO é prefixo indica campo
+                # único de largura variável: excedentes ficam vazios
+                # (comportamento histórico, ex.: 'g2511'→'ab').
+                # Limitação conhecida: se o valor sintético de um campo com
+                # auto-avanço não for prefixo do original, o sufixo ainda é
+                # esvaziado — a correção plena exige a largura da PICTURE no
+                # mapeamento (não disponível na trilha).
+                keep_suffix = (
+                    0 < len(value) < len(original) and original.startswith(value)
+                )
+                orig_keys = [det_key(events[pos]) for pos in found]
                 for pos_i, pos in enumerate(found):
-                    if pos_i < last:
-                        chunk = value[pos_i] if pos_i < len(value) else ""
+                    if pos_i < len(value):
+                        chunk = value[pos_i] if pos_i < last else value[pos_i:]
+                    elif keep_suffix:
+                        chunk = orig_keys[pos_i]
                     else:
-                        chunk = value[pos_i:] if pos_i < len(value) else ""
+                        chunk = ""
                     events[pos]["key_b64"] = b64(chunk.encode("utf-8"))
                     events[pos]["key_text"] = chunk
                 cursor = found[-1]

@@ -1,6 +1,8 @@
 # Oráculo funcional — Captura 13 (jornada 3.6.1 Pedido E-Commerce)
 
 Data da análise: 2026-09-17. Responsável: engenharia (análise assistida).
+Atualização 2026-09-17 (2ª rodada): **R1 e R3 corrigidos** com TDD
+(ver §5 e §7); R2 segue lacuna documentada de plataforma.
 Escopo: runs sintéticas da jornada de inclusão de pedido de venda — AIX
 (10.5.8.25, runs 94/95/96, captura 13, strict-global, policy adaptive) e Linux
 (10.5.8.24, runs 20/21/22/23, captura 51, mesma jornada — trilha sintética
@@ -49,7 +51,8 @@ Todas as 7 runs terminaram `status=success` (modo send-anyway), com a sessão
 encerrada no shell (`exit` → `Connection to 127.0.0.1 closed.`). No Linux o
 "0 convergiram limpos" é dominado por ruído ambiental: a barra de status do
 Recital ("IBM Aix (Common)" na captura × "Linux x86" no destino) difere em
-TODAS as telas e a máscara volátil cobre só o "Kb livres" — ver §5, R3.
+TODAS as telas e a máscara volátil cobria só o "Kb livres" — ver §5, R3
+(corrigido na 2ª rodada).
 
 ## 3. Tabela de grupos de falha — AIX (runs 94/95/96)
 
@@ -88,20 +91,43 @@ TODAS as telas e a máscara volátil cobre só o "Kb livres" — ver §5, R3.
 
 ## 5. Achados e recomendações
 
-- **R1 (síntese, causa-raiz AIX)**: o `capture_parametrizer`/de→para tratou
-  "0000135" como um campo só (comb), mas na grade o valor atravessa o
-  auto-avanço comb(5)→Tam("35"). Trocar por "00001" apagou o Tam e o lookup
-  do produto falhou ("Codigo nao cadastrado"). Recomendação: ao substituir
-  valores que cruzam fronteira de campo por auto-avanço, preservar o sufixo
-  do campo seguinte ou escolher valores de mesmo comprimento.
-- **R2 (plataforma, Linux)**: Recital error(118) "Cannot lock record - errno 9"
+- **R1 (síntese, causa-raiz AIX — CORRIGIDO na 2ª rodada)**: o
+  `capture_parametrizer`/de→para tratou "0000135" como um campo só (comb),
+  mas na grade o valor atravessa o auto-avanço comb(5)→Tam("35") — o salto
+  de cursor de 2 colunas coube na tolerância de máscara do parametrizer
+  (fusão mantida: endurecê-la quebraria máscaras legítimas). Na trilha
+  sintética, `synthetic_trail._apply_substitutions` distribuía o valor novo
+  mais curto ("00001", 5 chars) pelos 7 eventos do run e **esvaziava os 2
+  eventos excedentes** — apagando o Tam e fazendo o lookup do produto falhar
+  ("Codigo nao cadastrado"). Correção em
+  `gateway/dakota_gateway/synthetic/synthetic_trail.py`: quando o valor novo
+  é mais curto **e prefixo** do run original, os eventos excedentes
+  preservam a tecla original do operador (o sufixo pertence ao campo
+  seguinte); valor mais curto que não é prefixo (campo único de largura
+  variável, ex.: 'g2511'→'ab') mantém o comportamento histórico. Limitação
+  conhecida (documentada no docstring): valor sintético de campo com
+  auto-avanço que NÃO seja prefixo do original ainda esvazia o sufixo — a
+  correção plena exige a largura da PICTURE no mapeamento, indisponível na
+  trilha. Antes/depois real (trilha regenerada localmente da captura 13 com
+  o mesmo de→para das runs 94-96): seqs 185/188/191/194/197/203/206
+  `'0','0','0','0','1','',''` → `'0','0','0','0','1','3','5'` — as 7 teclas
+  do comb/Tam preservadas, ENTER no seq 209, cadeia íntegra no verify.
+- **R2 (plataforma, Linux — lacuna documentada, fora do escopo desta
+  correção)**: Recital error(118) "Cannot lock record - errno 9"
   na finalização do pedido (est361.dbo:877 → pest360atualizacabecalho →
   gapblank) — divergência real do destino Linux, 4/4 runs, com dados válidos.
   Investigar lock de registro no Recital 24 Linux.
-- **R3 (comparação)**: a máscara volátil não cobre o rótulo de plataforma da
-  barra de status ("IBM Aix (Common)" × "Linux x86") — em replay
-  cross-platform nenhum checkpoint converge limpo (Linux: 0/103). Candidato a
-  entrar em `mask_volatile_screen_text`.
+- **R3 (comparação — CORRIGIDO na 2ª rodada)**: a máscara volátil não cobria
+  o rótulo de plataforma da barra de status ("IBM Aix (Common)" ×
+  "Linux x86") — em replay cross-platform nenhum checkpoint convergia limpo
+  (Linux: 0/103). Correção em `gateway/dakota_terminal/volatile.py`: novo
+  padrão case-insensitive `(IBM Aix \(Common\)|Linux x86)\s*(?=\|)` — o
+  separador `|` ancora a máscara à linha de status (não toca o texto em
+  outro contexto) e o preenchimento em branco até o separador é absorvido.
+  Validado com os bytes reais do checkpoint seq 89 da captura: tela AIX ×
+  simulada Linux ficam idênticas mascaradas; divergência real em outro
+  trecho continua sem match. Assinaturas gravadas na trilha não mudam (a
+  máscara é só a segunda chance da comparação).
 - **R4 (classificação — CORRIGIDO nesta entrega)**: a classificação
   `synthetic_data_swap` aceitava UMA linha de eco qualquer, e o eco de
   identificador gerado (nº do pedido — presente em toda reexecução) bastava.
@@ -145,9 +171,12 @@ pelas evidências acima):
   divergência funcional real do destino, corretamente classificada medium
   nos seqs 349–392.
 
-Critério de aprovação futuro: repetir a jornada com R1 corrigido (comb/tam)
-no AIX até o pagamento confirmado ("Confirma a inclusao do registro? → Sim"
-com pedido novo valorizado), e no Linux somente após resolver R2.
+Critério de aprovação futuro: repetir a jornada no AIX (R1 já corrigido —
+comb/Tam preservados na trilha sintética) até o pagamento confirmado
+("Confirma a inclusao do registro? → Sim" com pedido novo valorizado), e no
+Linux somente após resolver R2. Com R3 corrigido, os checkpoints da run
+Linux deixam de divergir pelo rótulo de plataforma (ruído ambiental) e a
+contagem de convergência passa a refletir só diferenças funcionais.
 
 ## 7. Testes de regressão
 
@@ -160,3 +189,22 @@ motivaram a correção R4. Suítes relacionadas:
 `tests/test_synthetic_data_swap_unit.py`,
 `tests/test_checkpoint_failure_classification_unit.py`,
 `tests/test_input_echo_stale_unit.py` — verde (57 testes).
+
+2ª rodada (R1/R3):
+
+- R1: `tests/test_synthetic_trail_unit.py` —
+  `test_substituicao_teclas_auto_avanco_preserva_sufixo` (RED no código
+  anterior: run '0000135'→'00001' virava `['0','0','0','0','1','','']`;
+  exige `['0','0','0','0','1','3','5']` + verify da cadeia) e
+  `test_substituicao_teclas_mais_curta_nao_prefixo_esvazia` (controle do
+  ramo variável: '229,9'→'45,3' mantém excedente vazio). O teste
+  pré-existente `test_substituicao_teclas_valor_mais_curto` ('g2511'→'ab')
+  NÃO foi alterado e segue verde — o comportamento de campo único de
+  largura variável é preservado.
+- R3: `tests/test_volatile_mask_unit.py` — 5 casos novos (3 RED no código
+  anterior: rótulo de plataforma, igualdade AIX×Linux mascarada e fallback
+  de comparação; 2 negativos já verdes: texto fora da linha de status não é
+  mascarado e divergência real além da plataforma não casa).
+- Regressão dirigida final:
+  `python3 -m pytest tests/ -q -k "parametriz or synthetic_trail or swap or
+  volatile or screen or synthetic"` → **497 passed**.

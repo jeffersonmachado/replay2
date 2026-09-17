@@ -98,6 +98,12 @@ As capturas aparecem em **Capturas → Lista**:
 Cada linha mostra status (`concluída`, `interrompida`), quem capturou,
 quando, e quantas teclas verificadas a sessão tem.
 
+Em **Gateway → Sessões** você pode pesquisar as sessões que passaram pelo
+gateway por usuário, período ou texto livre — útil para localizar a sessão
+exata que virou captura:
+
+![Sessões do gateway](prints/24-gateway-sessoes.png)
+
 ---
 
 ## 6. Fluxo 2 — Assistir ao que foi gravado
@@ -159,6 +165,11 @@ início manual).
 
 ### 7.3 Acompanhando
 
+Em **Execuções → Fila** você vê as execuções ativas e pendentes, com filtros
+por status, conformidade e origem (todas / sintéticas / reais):
+
+![Fila de execuções](prints/20-execucoes-fila.png)
+
 Em **Execuções → Histórico** você vê todas as execuções, com status,
 destino, progresso e conformidade:
 
@@ -166,6 +177,14 @@ destino, progresso e conformidade:
 
 É possível **pausar**, **retomar**, **cancelar** ou **repetir** uma
 execução diretamente pela lista.
+
+### 7.4 Conformidade
+
+Em **Execuções → Conformidade** aparecem apenas execuções com violação de
+conformidade (sessões que não passaram pelo gateway auditável). O cenário
+esperado em operação normal é a lista vazia:
+
+![Conformidade das execuções](prints/21-execucoes-conformidade.png)
 
 ---
 
@@ -238,6 +257,15 @@ lado a lado, já posicionadas no ponto da divergência:
 
 ![Comparar sessões](prints/18-comparar-sessoes.png)
 
+### Comparando duas execuções entre si
+
+Na mesma aba **Comparação**, informe o ID da execução base e o ID da
+execução comparada e clique em **Comparar** — o sistema mostra falhas
+novas, recorrentes e resolvidas entre as duas (útil para saber se uma nova
+rodada melhorou ou piorou):
+
+![Comparação entre execuções](prints/22-execucoes-comparacao.png)
+
 ---
 
 ## 10. Executando com carga (várias sessões)
@@ -263,6 +291,16 @@ responder — quem responde antes, termina antes.
 ---
 
 ## 11. Observabilidade
+
+A **Visão Geral** mostra o resumo analítico da operação: eventos, sessões,
+execuções abertas, falhas e os tipos de evento mais frequentes do gateway:
+
+![Observabilidade — visão geral](prints/23-observabilidade-visao.png)
+
+Em **Observabilidade → Tendências**, o sistema aponta a evolução por
+ambiente e os fluxos mais sensíveis (os que mais acumulam falhas):
+
+![Tendências](prints/25-observabilidade-tendencias.png)
 
 Em **Observabilidade → Recursos**, gráficos de CPU, memória, fila de
 tarefas e disco **do próprio servidor** — úteis para correlacionar lentidão
@@ -310,7 +348,90 @@ administradores veem este menu.
 
 ---
 
-## 15. Cores e o que elas significam
+## 15. Exemplos completos, passo a passo
+
+### Exemplo A — Validar uma captura no sistema novo (replay verificado)
+
+**Cenário:** o operador incluiu um pedido no sistema antigo e a sessão foi
+capturada pelo gateway. Queremos provar que o sistema novo se comporta
+igual.
+
+1. Abra **Capturas → Lista** e clique na captura do dia;
+2. No detalhe, confira o campo **teclas verificadas** — se for maior que
+   zero, a captura pode ser reexecutada no modo verificado;
+3. Clique na sessão para abrir o **replay da sessão** e assista alguns
+   segundos do playback, para confirmar que a gravação está íntegra;
+4. Clique em **Criar replay verificado** — o sistema abre a nova execução
+   já preenchida. Revise e clique em **Criar execução**;
+5. Acompanhe em **Execuções → Fila**. Ao terminar:
+   - status **sucesso** → o sistema novo respondeu igual à gravação em
+     todos os pontos de verificação;
+   - status **falhou** → abra o detalhe da execução e veja a primeira
+     falha: a tela esperada × a observada aparecem lado a lado na aba
+     **Comparação**.
+
+### Exemplo B — Gerar 10 sessões de teste com dados novos (replay sintético)
+
+**Cenário:** queremos testar a inclusão de pedidos no sistema novo com
+volume, sem depender de dados repetidos.
+
+1. Abra o detalhe da captura de referência (Exemplo A);
+2. No painel **Dados sintéticos**, deixe a pasta dos fontes como está,
+   informe **Nº de sessões: 10**, **Dados: Sintetizado** e **Execução:
+   Conservadora (padrão)**;
+3. Clique em **Gerar** e confira o **de→para por tela**: cada valor
+   original e o valor sintético que o substituirá (ex.: `cliente 1042 →
+   2387`). Campos marcados como "mantidos" são chaves que precisam existir
+   no cadastro — o sistema não os altera;
+4. Clique em **Replay sintético**. O sistema cria uma execução com 10
+   sessões, cada uma com dados diferentes;
+5. Acompanhe na **Fila**. No detalhe da execução, o painel **Motor de
+   execução** mostra quanto tempo foi do ERP e quanto foi overhead do
+   Replay2 — em uma execução saudável, o tempo do ERP domina.
+
+### Exemplo C — Teste de estresse com 20 sessões paralelas
+
+**Cenário:** medir se o sistema novo aguenta o pico do fim do mês.
+
+1. Em **Execuções → Nova execução**, escolha a captura de referência;
+2. Configure: modo **paralelo por sessão**, **concorrência: 20**,
+   **aceleração: 2×** e tipo de replay **simples** (carga não precisa
+   conferir telas);
+3. Clique em **Criar execução** e acompanhe em **Observabilidade →
+   Recursos** os gráficos de CPU e memória do servidor durante o teste;
+4. Ao final, compare o tempo total e o throughput (sessões/minuto) no
+   detalhe da execução.
+
+### Exemplo D — Investigar uma falha
+
+**Cenário:** a execução verificada falhou em "tela diferente do esperado".
+
+1. Abra **Execuções → Falhas** e clique no tipo de falha para ver as
+   ocorrências;
+2. Abra a execução e localize a falha — ela indica o ponto exato da
+   gravação (a sequência do evento);
+3. Clique para **comparar**: a sessão capturada (esperada) e a observada
+   abrem lado a lado, já posicionadas na divergência;
+4. Se a diferença for só de dados (a captura tinha valores antigos), isso é
+   esperado em replay sintético e aparece classificado como **troca de
+   dados sintéticos** (severidade baixa). Se a tela for estruturalmente
+   diferente (opção de menu sumiu, mensagem de erro), registre a evidência
+   para a equipe de migração.
+
+### Exemplo E — Comparar duas rodadas (antes × depois de um ajuste)
+
+1. Rode a execução verificada **antes** do ajuste no sistema novo
+   (execução nº X);
+2. Depois do ajuste, repita a execução (botão **repetir**) — execução nº Y;
+3. Em **Execuções → Comparação**, informe X como base e Y como comparada e
+   clique em **Comparar**;
+4. O resultado mostra falhas **novas**, **recorrentes** e **resolvidas** —
+   a meta de um ajuste bom é: zero novas, recorrentes estáveis ou caindo,
+   resolvidas subindo.
+
+---
+
+## 16. Cores e o que elas significam
 
 | Cor | Significado |
 |---|---|
@@ -322,7 +443,7 @@ administradores veem este menu.
 
 ---
 
-## 16. Perguntas frequentes
+## 17. Perguntas frequentes
 
 **O replay sintético pode gravar dados errados no sistema novo?**
 O replay executa operações reais no ambiente de destino — por isso ele deve
@@ -351,7 +472,7 @@ prova de segurança — sem abrir mão de nenhuma verificação.
 
 ---
 
-## 17. O que o sistema garante (segurança e auditoria)
+## 18. O que o sistema garante (segurança e auditoria)
 
 - Toda captura e toda trilha sintética é assinada digitalmente (cadeia de
   hash + HMAC): qualquer alteração no arquivo é detectável;

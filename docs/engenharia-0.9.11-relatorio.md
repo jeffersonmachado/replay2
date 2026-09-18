@@ -15,7 +15,7 @@ onde a prova não existe, o veredito é `INCONCLUSIVE` ou `BLOQUEADO POR AMBIENT
 | 1 | Baseline (commit, versão, hash, testes) | VERIFICADO | §2 |
 | 2 | Oráculo funcional da captura 13 (runs 94–96 AIX, 20–23 Linux) | VERIFICADO | §3, `docs/captura13-oraculo.md` |
 | 3 | Benchmark v7 apresenta INCONCLUSIVE sem reescrever histórico | VERIFICADO | §4, PR #32 |
-| 4 | Benchmark oficial reproduzível (contrato + hashes reais) | VERIFICADO (preparação); execução BLOQUEADA POR AMBIENTE | §5, PR #37, `docs/benchmark-oficial-v8.md` |
+| 4 | Benchmark oficial reproduzível (contrato + hashes reais) | VERIFICADO — executado na 0.9.12, veredito FAIL (bloqueios ambientais, §8 do runbook) | §5, PR #37, `docs/benchmark-oficial-v8.md` |
 | 5 | Pacote de evidência verificável das runs reais | VERIFICADO (implementação); export real das runs pós-deploy | §6, PR #34 |
 | 6 | Paridade conservative / adaptive_shadow / adaptive | VERIFICADO (AIX + Linux) | §7 |
 | 7 | Revisão de riscos do executor | VERIFICADO — 2 bugs reais corrigidos | §8, PRs #36/#38 |
@@ -90,7 +90,7 @@ confirmado (§10); Linux — bloqueada por R2.
 - Doc: `docs/benchmark-v7-veredito.md`. **O v7 não autoriza recomendação
   AIX × Linux.**
 
-## 5. Benchmark oficial reproduzível (item 4) — preparado; execução bloqueada
+## 5. Benchmark oficial reproduzível (item 4) — preparado E executado; veredito FAIL sem recomendação
 
 - `benchmark/provenance.py`: hashes sha256 REAIS calculados dos artefatos
   (arquivo streaming 1 MiB; conjunto no esquema do evidence-manifest);
@@ -103,8 +103,25 @@ confirmado (§10); Linux — bloqueada por R2.
   captura 13/51, seed 42, 80x24, níveis [1,5,10,20], warmup 30/medição 120/
   cooldown 30 s, 2 iterações, stop conditions, sonda de recuperação 60 s, gate
   de clock 1000 ms; pré-requisitos NTP + coletor de rede).
-- **BLOQUEADO POR AMBIENTE:** a execução do v8 (escada de concorrência nos
-  servidores) exige janela operacional; comandos exatos no runbook §execução.
+- **EXECUTADO em 2026-09-17 (0.9.12)** — tentativa 1 abortada por queda de VPN
+  (`environment_unreachable_mid_run`, comprovado: timeout SSH porta 22 nos dois
+  hosts durante a janela; VPN estável 6/6 antes da tentativa 2). Tentativa 2
+  COMPLETED com veredito **FAIL**, sem recomendação. Quatro bloqueios
+  ambientais, todos documentados com evidência no runbook §8:
+  (1) divergência funcional em 21 passos — bases de dados AIX×Linux
+  dessincronizadas + drift da massa desde a captura (PORTA 1 reprova por
+  ambiente, não por plataforma); (2) escada parada em concorrência 1 por
+  `host_cpu_pct=100` no AIX — carga estranha de 6 usuários interativos
+  (load ~9), `saturacao_comprovada`; (3) offset de clock medido acima do gate
+  (1209/2116 ms — inclui latência do SSH de medição; hosts a ~1 s entre si,
+  estação fora de NTP); (4) cobertura parcial (rede só em pacotes no AIX,
+  paginação ausente no Linux) → gargalo não declarável.
+- O que ficou provado na ferramenta: proveniência calculada, coleta real de
+  host_metrics (51/3224 amostras), janela de rede nos dois hosts, correção de
+  skew auditável, parada classificada por evidência, recovery probe medido
+  (AIX 11,28 s; Linux 3,71 s) e evidence-manifest cobrindo o resultado final.
+- Para a tentativa conclusiva (v8b): bases alinhadas, janela exclusiva no
+  MIG24, estação em NTP, novo `experiment_id` — runbook §8.
 
 ## 6. Pacote de evidência verificável (item 5)
 
@@ -348,8 +365,10 @@ verificado localmente: **VALID**, gaps [] (`hmac: not_verified`, idem §10.3).
   **Linux: BLOQUEADO POR AMBIENTE/ERP** — R2 (`Recital error(118) Cannot lock
   record` na finalização, 4/4 runs) é falha do destino, fora do replay2 (§3).
 - **Decisão de capacidade AIX × Linux:** **INCONCLUSIVE** — v7 histórico não
-  autoriza recomendação; v8 preparado com contrato reproduzível, aguardando
-  janela operacional (`docs/benchmark-oficial-v8.md`).
+  autoriza recomendação; v8 **executado** com veredito FAIL (divergência
+  funcional por bases dessincronizadas + escada parada por CPU saturada de
+  carga estranha no AIX), sem recomendação — as causas e o caminho da
+  tentativa conclusiva estão em `docs/benchmark-oficial-v8.md` §8.
 
 ## 13. Arquivos alterados (por PR)
 

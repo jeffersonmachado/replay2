@@ -116,6 +116,27 @@ Contrato de regressão: `tests/benchmark/test_provenance_hashes.py`
 (TestRegressaoV7). **O v7 não autoriza recomendação AIX × Linux.** Dados
 brutos preservados em `artifacts/benchmarks/cap13-aix-linux-oficial-v7/`.
 
+### 5.1 Tentativa oficial v8 (0.9.12, 2026-09-17) — FAIL, sem recomendação
+
+O experimento `cap13-aix-linux-oficial-v8` (contrato reproduzível, 4 hashes de
+proveniência reais e distintos) foi **executado** nos servidores de
+homologação. Tentativa 1 abortada por queda de VPN (transporte SSH
+indisponível nos dois hosts). Tentativa 2 COMPLETED com veredito **FAIL**:
+
+- divergência funcional em 21 passos — bases AIX×Linux dessincronizadas e
+  drift da massa desde a captura (PORTA 1 reprova por ambiente);
+- escada parada em concorrência 1 — CPU 100% sustentada no AIX por carga
+  estranha (6 usuários interativos), `saturacao_comprovada`;
+- offsets de clock medidos acima do gate (incluem latência do SSH de medição);
+- cobertura parcial (rede só em pacotes no AIX; paginação ausente no Linux).
+
+Números do único nível executado (concorrência 1, com as ressalvas acima —
+**não usar para decisão**): AIX 0,60 ops/s (p95 2331 ms), Linux 0,48 ops/s
+(p95 1561 ms). Detalhes e caminho da tentativa conclusiva (v8b):
+`docs/benchmark-oficial-v8.md` §8. Artefatos:
+`artifacts/benchmarks/cap13-aix-linux-oficial-v8/` (evidence-manifest cobrindo
+o `execution-result.json` final).
+
 ## 6. Evidências offline (locais, sem rede)
 
 | Artefato | Versão | Conteúdo |

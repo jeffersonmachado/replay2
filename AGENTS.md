@@ -995,6 +995,27 @@ Unitários (Py+JS+Tcl) → tests/ + gateway/tests/ + static/js/*.test.mjs + test
 
 **Sempre usar o script de deploy/instalador. NUNCA fazer deploy manual com `scp`/`ssh` soltos.**
 
+### Acesso SSH: por CHAVE, sem senha
+
+Os dois hosts estão configurados por chave SSH na estação (verificado com
+`ssh -o BatchMode=yes`): nenhum deploy precisa de senha.
+
+| Alvo | Host | Usuário | Chave | Como referenciar |
+|---|---|---|---|---|
+| Linux | `10.5.8.24` (`recital24`) | `root` | `~/.ssh/dakota_linux24` | `ssh -i ~/.ssh/dakota_linux24 root@10.5.8.24` |
+| AIX (MIG24) | `10.5.8.25` (`MIG_REC24`) | `root` | `~/.ssh/dakota_mig24_root` | alias `dakota-mig24-root` (`~/.ssh/config`) |
+| AIX (MIG24) | `10.5.8.25` | `results` | `~/.ssh/dakota_mig24` | alias `dakota-mig24` (`~/.ssh/config`) |
+
+O `scripts/deploy.sh` do `remoto_dakota` **já prefere a chave**: no alvo Linux
+ele testa `ssh -i "$LINUX_KEY" -o BatchMode=yes ... true` antes de qualquer
+coisa (chave configurável por `DAKOTA_LINUX_KEY`, host/porta por
+`DAKOTA_LINUX_HOST`/`DAKOTA_LINUX_PORT`); no alvo AIX usa `ssh -p <porta>` e o
+`~/.ssh/config` resolve usuário/chave dos aliases. `SSH_PASSWORD` + `sshpass`
+são apenas **fallback legado** para o Linux (host sem a chave instalada) — não é
+o caminho esperado.
+
+Chaves e `~/.ssh/config` são locais (`0600`) e nunca versionados.
+
 ### Deploy no MIG24 (AIX 10.5.8.25):
 ```bash
 cd /home/jmachado/projetos/dakota/remoto_dakota
@@ -1015,17 +1036,21 @@ lê as chaves dos índices Recital — sem ela, os irmãos de `source_dir` com
 índices são descobertos automaticamente. O arquivo é do servidor (não vem no
 tarball, como `.local-secrets/`) e sobrevive a deploys.
 
-Manualmente (sem o deploy.sh), o fluxo equivalente é:
+Manualmente (sem o deploy.sh), o fluxo equivalente é (a chave vem do alias
+`dakota-mig24-root` do `~/.ssh/config`):
 ```bash
 cd /home/jmachado/projetos/dakota/replay2
 bash scripts/build-selfinstall.sh
-scp dist/dakota-replay2-<VERSAO>-<ts>.run root@10.5.8.25:/tmp/
-ssh root@10.5.8.25 "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakota/replay2 && rm -f /tmp/dakota-replay2-<VERSAO>-<ts>.run"
+scp dist/dakota-replay2-<VERSAO>-<ts>.run dakota-mig24-root:/tmp/
+ssh dakota-mig24-root "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakota/replay2 && rm -f /tmp/dakota-replay2-<VERSAO>-<ts>.run"
 ```
 
 ### Deploy no Linux (10.5.8.24):
 ```bash
-SSH_PASSWORD="$SSH_PASSWORD" bash scripts/deploy.sh --target linux
+cd /home/jmachado/projetos/dakota/remoto_dakota
+bash scripts/deploy.sh --target linux
+# a chave ~/.ssh/dakota_linux24 é usada automaticamente (DAKOTA_LINUX_KEY)
+# fallback legado, só se o host não tiver a chave: SSH_PASSWORD='...' bash scripts/deploy.sh --target linux
 ```
 O deploy Linux usa o mesmo **self-installing archive** (`.run`) do AIX
 (homologado na 0.8.9; o stub destaca stdin/stdout/stderr dos `su` de
@@ -1038,7 +1063,7 @@ serviço, sincronização, chown, restart e health check.
 ```bash
 cd replay2
 for f in gateway/control/services/arquivo.py gateway/control/templates/algum.html; do
-  scp -o StrictHostKeyChecking=accept-new "$f" root@10.5.8.25:/opt/dakota/replay2/"$f"
+  scp -o StrictHostKeyChecking=accept-new "$f" dakota-mig24-root:/opt/dakota/replay2/"$f"
 done
 ssh dakota-mig24-root "chown -R results:cpd /opt/dakota/replay2/gateway/ && pkill -f server.py; sleep 2; cd /opt/dakota/replay2/gateway && su results -c '...'"
 ```

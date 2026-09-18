@@ -2,7 +2,10 @@
 
 > Servidor: `10.5.8.25` (MIG_REC24)
 > Data: 2026-06-26
-> Acesso: `results@10.5.8.25` (SSH, uid=2933, grupo=cpd)
+> Acesso: `results@10.5.8.25` (SSH, uid=2933, grupo=cpd) — **por chave, sem
+> senha**: `~/.ssh/dakota_mig24` (alias `dakota-mig24` em `~/.ssh/config`);
+> `root` usa `~/.ssh/dakota_mig24_root` via alias `dakota-mig24-root`.
+> Deploy: `bash scripts/deploy.sh --target aix` (ver AGENTS.md §8.5).
 
 ---
 

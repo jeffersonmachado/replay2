@@ -227,10 +227,11 @@ def _clock_skew_por_env(result: ExperimentResult, env_ids: list[str],
                         gate_ms: int) -> dict[str, dict]:
     """Clock skew orquestrador×host por ambiente (FASE 3).
 
-    O offset é medido na coleta (script remoto registra ``clock_offset_ms``
-    e desloca a janela — correção comprovável). ``measured=False`` com
-    amostras de host válidas significa correção NÃO comprovável — a decisão
-    vira INCONCLUSIVE (``build_decision``).
+    O offset é medido na coleta (a sentinela do script remoto registra
+    ``clock_offset_ms`` — compensado pelo RTT do SSH quando ``remote_now_ms``
+    está presente — e desloca a janela; correção comprovável).
+    ``measured=False`` com amostras de host válidas significa correção NÃO
+    comprovável — a decisão vira INCONCLUSIVE (``build_decision``).
     """
     skew: dict[str, dict] = {}
     for env_id in env_ids:

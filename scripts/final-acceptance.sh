@@ -10,6 +10,12 @@ if [ -x .venv/bin/python3 ]; then
   export PATH
 fi
 
+# Marca que ESTE processo é o pipeline de aceitação: o build do passo 11
+# (build-tarball.sh) desliga o auto-aceite quando enxerga este marcador — sem
+# ele, um aceite reprovado no meio do pipeline dispararia o pipeline inteiro de
+# novo (~20 min) em vez de falhar fail-closed.
+export DAKOTA_ACCEPTANCE_PIPELINE=1
+
 RELEASE_RUN_ID="release-$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c "import hashlib,os,time;print(hashlib.sha256((os.urandom(16)+str(time.time()).encode())).hexdigest()[:8])")"
 STARTED_AT=$(date -Iseconds)
 echo "=== FINAL ACCEPTANCE $RELEASE_RUN_ID ==="

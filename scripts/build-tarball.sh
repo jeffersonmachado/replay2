@@ -10,7 +10,13 @@ die() { printf '%s\n' "Erro: $*" >&2; exit 1; }
 # --with-benchmarks <id|none>  (default: auto = experimento oficial mais
 #   recente com experiment-manifest.json válido). Históricos de benchmark
 #   NUNCA entram automaticamente no pacote de runtime (FASE 11).
+# --acceptance <auto|never>  (default: auto; env DAKOTA_ACCEPTANCE). No modo
+#   release o aceite é OBRIGATÓRIO: com `auto`, um aceite ausente/desatualizado
+#   faz o próprio build rodar scripts/final-acceptance.sh e continuar (ver o
+#   bloco do aceite, abaixo); `never` preserva o fail-closed clássico (só a
+#   mensagem de erro).
 WITH_BENCHMARKS="auto"
+ACCEPTANCE_MODE="${DAKOTA_ACCEPTANCE:-auto}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-benchmarks)
@@ -18,12 +24,22 @@ while [ $# -gt 0 ]; do
       WITH_BENCHMARKS="$2"; shift 2 ;;
     --with-benchmarks=*)
       WITH_BENCHMARKS="${1#*=}"; shift ;;
+    --acceptance)
+      [ $# -ge 2 ] || die "--acceptance requer <auto|never>"
+      ACCEPTANCE_MODE="$2"; shift 2 ;;
+    --acceptance=*)
+      ACCEPTANCE_MODE="${1#*=}"; shift ;;
     -h|--help)
-      info "uso: build-tarball.sh [--with-benchmarks <id|none>]"
+      info "uso: build-tarball.sh [--with-benchmarks <id|none>] [--acceptance <auto|never>]"
       exit 0 ;;
-    *) die "argumento desconhecido: $1 (uso: build-tarball.sh [--with-benchmarks <id|none>])" ;;
+    *) die "argumento desconhecido: $1 (uso: build-tarball.sh [--with-benchmarks <id|none>] [--acceptance <auto|never>])" ;;
   esac
 done
+case "$ACCEPTANCE_MODE" in
+  0|never|off|no|false) ACCEPTANCE_MODE="never" ;;
+  ''|1|auto|on|yes|true) ACCEPTANCE_MODE="auto" ;;
+  *) die "valor inválido para --acceptance/DAKOTA_ACCEPTANCE: $ACCEPTANCE_MODE (use auto|never)" ;;
+esac
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -58,11 +74,76 @@ if [ "$RELEASE_MODE" = "1" ]; then
   command -v python3 >/dev/null 2>&1 || die "python3 não encontrado (necessário para validar o aceite)"
   TREE_HASH="$(python3 "$ROOT_DIR/scripts/tree_hash.py")" || die "falha ao calcular o hash da árvore"
   info "Hash da árvore (aceite): $TREE_HASH"
-  python3 "$ROOT_DIR/scripts/build_validate.py" check-acceptance \
-    --root "$ROOT_DIR" --tree-hash "$TREE_HASH" \
-    || die "o aceite em artifacts/ NÃO pertence a esta árvore/versão.
+
+  # ── Aceite OBRIGATÓRIO no modo release ────────────────────────────────────
+  # O aceite é vinculado ao hash exato da árvore (FASE 2 — incidente 0.8.85:
+  # pacote carregou aceite de outra árvore). Antes, o build apenas ABORTAVA
+  # mandando o operador rodar o pipeline na mão; agora ele RODA o pipeline e
+  # continua — o aceite é obrigatório, então o caminho obrigatório é executado
+  # automaticamente. Guardas:
+  #   (a) DAKOTA_ACCEPTANCE_PIPELINE=1 (exportada por final-acceptance.sh)
+  #       desliga o auto-aceite DENTRO do pipeline: lá o aceite já está sendo
+  #       gerado e o pipeline chama este build no passo 11 — sem a guarda,
+  #       qualquer aceite reprovado dispararia o pipeline de novo (recursão);
+  #   (b) lock em dist/ (excluído do hash da árvore) impede dois builds
+  #       paralelos — os deploys AIX/Linux rodam build-tarball.sh lado a lado —
+  #       de rodarem o pipeline ao mesmo tempo, o que corromperia artifacts/;
+  #   (c) --acceptance never / DAKOTA_ACCEPTANCE=never preserva o fail-closed;
+  #   (d) árvores mínimas de teste (sem scripts/final-acceptance.sh) falham com
+  #       a mensagem clássica, sem tentar rodar nada.
+  check_acceptance() {
+    python3 "$ROOT_DIR/scripts/build_validate.py" check-acceptance \
+      --root "$ROOT_DIR" --tree-hash "$TREE_HASH" 2>&1
+  }
+  if ! ACCEPTANCE_OUT="$(check_acceptance)"; then
+    printf '%s\n' "$ACCEPTANCE_OUT" >&2
+    if [ "$ACCEPTANCE_MODE" != "auto" ]; then
+      die "aceite inválido para esta árvore/versão e o auto-aceite está DESLIGADO
+(--acceptance never / DAKOTA_ACCEPTANCE=never).
 Rode primeiro:  bash scripts/final-acceptance.sh
 (reaproveitar final-acceptance-results.json antigo é proibido)"
+    fi
+    if [ -n "${DAKOTA_ACCEPTANCE_PIPELINE:-}" ]; then
+      die "aceite inválido DENTRO do pipeline de aceitação (a árvore mudou depois
+que o pipeline gravou o hash 'before' — ver passo 8 de final-acceptance.sh).
+Isso é fail-closed de propósito: o auto-aceite fica desligado dentro do
+pipeline para não recursar. Regere o aceite do zero:  bash scripts/final-acceptance.sh"
+    fi
+    if [ ! -f "$ROOT_DIR/scripts/final-acceptance.sh" ]; then
+      die "o aceite em artifacts/ NÃO pertence a esta árvore/versão e
+scripts/final-acceptance.sh não existe nesta árvore — não há como regerar o
+aceite automaticamente (o erro acima diz o que está divergente)."
+    fi
+    info ""
+    info "Aceite obrigatório ausente/desatualizado → rodando o pipeline automaticamente."
+    info "(o build continua sozinho depois; desligue com --acceptance never)"
+    ACCEPTANCE_LOCK_DIR="$ROOT_DIR/dist/.acceptance-run.lock"
+    mkdir -p "$ROOT_DIR/dist"
+    if ( mkdir "$ACCEPTANCE_LOCK_DIR" 2>/dev/null || exit 9
+         trap 'rmdir "$ACCEPTANCE_LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+         DAKOTA_ACCEPTANCE_PIPELINE=1 bash "$ROOT_DIR/scripts/final-acceptance.sh" ); then
+      info "Pipeline de aceitação concluído — revalidando o vínculo com a árvore."
+    else
+      ACCEPTANCE_RC=$?
+      if [ "$ACCEPTANCE_RC" = "9" ]; then
+        die "lock do aceite em uso: $ACCEPTANCE_LOCK_DIR
+Outro build/aceite está rodando (os deploys AIX e Linux rodam build-tarball.sh
+em paralelo e o pipeline reescreve artifacts/). Aguarde — se não houver nenhum
+pipeline ativo, remova o diretório de lock e repita."
+      fi
+      die "pipeline de aceitação automático falhou (rc=$ACCEPTANCE_RC) — o build não
+continua sem aceite válido. Logs: artifacts/acceptance-logs/current/"
+    fi
+    TREE_HASH="$(python3 "$ROOT_DIR/scripts/tree_hash.py")" \
+      || die "falha ao recalcular o hash da árvore depois do aceite"
+    if ! ACCEPTANCE_OUT="$(check_acceptance)"; then
+      printf '%s\n' "$ACCEPTANCE_OUT" >&2
+      die "o pipeline terminou mas o aceite não valida a árvore (hash $TREE_HASH)."
+    fi
+    printf '%s\n' "$ACCEPTANCE_OUT"
+    info "Hash da árvore (aceite): $TREE_HASH"
+  fi
+
   BENCH_ID="$(python3 "$ROOT_DIR/scripts/build_validate.py" select-benchmark \
     --root "$ROOT_DIR" --with-benchmarks "$WITH_BENCHMARKS")" \
     || die "falha ao selecionar a evidência de benchmark"

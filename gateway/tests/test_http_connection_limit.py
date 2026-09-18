@@ -159,19 +159,34 @@ class HttpConnectionLimitTests(unittest.TestCase):
             cookie = set_cookie.split(";", 1)[0]
             self.assertIn("dakota_session=", cookie)
 
-            ws_sock = socket.create_connection(("127.0.0.1", port), timeout=5)
-            try:
-                handshake = (
-                    "GET /ws/gateway-status HTTP/1.1\r\n"
-                    "Host: 127.0.0.1\r\n"
-                    "Upgrade: websocket\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                    "Sec-WebSocket-Version: 13\r\n"
-                    f"Cookie: {cookie}\r\n\r\n"
-                )
+            ws_sock = None
+            status = None
+            handshake = (
+                "GET /ws/gateway-status HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                f"Cookie: {cookie}\r\n\r\n"
+            )
+            # A conexão curta do login é fechada de forma ASSÍNCRONA pelo
+            # servidor: com cota 1, o handshake WS pode chegar antes de o slot
+            # voltar e receber 503 (flake observado no gate da release de
+            # 2026-09-18, com o servidor sob carga). O contrato testado aqui é
+            # o do upgrade (101 + slot devolvido), não a latência do close —
+            # então re-tenta com limite de tempo em vez de correr.
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                ws_sock = socket.create_connection(("127.0.0.1", port), timeout=5)
                 ws_sock.sendall(handshake.encode("latin-1"))
                 status = _read_status_line(ws_sock)
+                if status == 101:
+                    break
+                ws_sock.close()
+                ws_sock = None
+                time.sleep(0.1)
+            try:
                 self.assertEqual(status, 101, "handshake WebSocket deveria retornar 101")
                 time.sleep(0.4)  # handler WS devolve o slot após o upgrade
 
@@ -188,7 +203,8 @@ class HttpConnectionLimitTests(unittest.TestCase):
                 finally:
                     conn.close()
             finally:
-                ws_sock.close()
+                if ws_sock is not None:
+                    ws_sock.close()
         finally:
             server.shutdown()
             server.server_close()

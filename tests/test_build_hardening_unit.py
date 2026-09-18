@@ -171,7 +171,15 @@ def _make_release_artifacts(root: Path, version: str = FAKE_VERSION,
 
 def _run_build(root: Path, *args: str,
                env_extra: dict | None = None) -> subprocess.CompletedProcess:
-    env = dict(os.environ, **PINNED_ENV, **(env_extra or {}))
+    # DAKOTA_ACCEPTANCE_PIPELINE é exportada por scripts/final-acceptance.sh e
+    # fica no ambiente de TODA a suíte (que roda dentro do pipeline): sem
+    # removê-la aqui, os testes abaixo rodam o build como se fossem o pipeline
+    # e o auto-aceite aparece desligado. Mesmo padrão de `env -u
+    # DAKOTA_PROCESS_RUN_ID` usado pelo pipeline ao chamar as suítes.
+    env = dict(os.environ)
+    env.pop("DAKOTA_ACCEPTANCE_PIPELINE", None)
+    env.update(PINNED_ENV)
+    env.update(env_extra or {})
     return subprocess.run(
         ["sh", BUILD_SCRIPT, *args],
         cwd=root, env=env, capture_output=True, text=True, timeout=180,
@@ -265,6 +273,120 @@ def test_build_fails_when_full_suite_not_recorded(tmp_path):
     r = _run_build(root)
     assert r.returncode != 0, "build aceitou aceite sem suíte completa"
     assert "test_all_passed" in (r.stdout + r.stderr)
+
+
+# ── Auto-aceite: o build executa o pipeline quando o aceite está inválido ───
+
+def _stub_pipeline(root: Path, marker: Path | None = None) -> None:
+    """Escreve um `scripts/final-acceptance.sh` mínimo na árvore fake.
+
+    O stub (1) exige o marcador DAKOTA_ACCEPTANCE_PIPELINE (contrato que impede
+    recursão), (2) opcionalmente grava um marker FORA da árvore — para provar
+    que foi executado — e (3) regrava o aceite para a árvore ATUAL, como o
+    pipeline real faria ao final. Não constrói tarball (o build cuida disso).
+    """
+    stub = root / "scripts" / "final-acceptance.sh"
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    grava_marker = (
+        f'printf "x" >> "{marker}"\n' if marker is not None else ""
+    )
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'cd "$(dirname "$0")/.."\n'
+        '[ -n "${DAKOTA_ACCEPTANCE_PIPELINE:-}" ] '
+        '|| { echo "marcador do pipeline ausente"; exit 3; }\n'
+        + grava_marker
+        + "python3 - \"$(python3 scripts/tree_hash.py)\" <<'PYEOF'\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "p = Path('artifacts/final-acceptance-results.json')\n"
+        "d = json.loads(p.read_text(encoding='utf-8'))\n"
+        "d['source_tree_sha256_before'] = sys.argv[1]\n"
+        "d['source_tree_sha256_after'] = sys.argv[1]\n"
+        "p.write_text(json.dumps(d, indent=2), encoding='utf-8')\n"
+        "PYEOF\n"
+        'echo "stub final-acceptance ok"\n',
+        encoding="utf-8",
+    )
+
+
+def _add_late_change(root: Path) -> None:
+    """Muda a árvore DEPOIS do aceite (torna o aceite inválido)."""
+    with (root / "lib" / "engine.tcl").open("a", encoding="utf-8") as fh:
+        fh.write("# alteracao pos-aceite\n")
+
+
+def test_build_runs_acceptance_automatically_when_stale(tmp_path):
+    """Aceite obrigatório fora da árvore + pipeline presente → o build EXECUTA
+    o pipeline, revalida o aceite e continua (antes só mostrava mensagem de
+    erro mandando o operador rodar na mão)."""
+    root = _make_fake_root(tmp_path / "tree")
+    _make_release_artifacts(root)
+    _add_late_change(root)
+    marker = tmp_path / "pipeline-executou.txt"
+    _stub_pipeline(root, marker)
+
+    r = _run_build(root)
+
+    out = r.stdout + r.stderr
+    assert marker.is_file(), "o build não executou o pipeline de aceitação"
+    assert r.returncode == 0, f"build falhou: {out[-800:]}"
+    assert "automaticamente" in out, out[-400:]
+    assert _only_tarball(root).is_file()
+
+
+def test_build_acceptance_never_keeps_fail_closed(tmp_path):
+    """`--acceptance never` mantém o comportamento antigo: aborta sem rodar o
+    pipeline (fail-closed explícito)."""
+    root = _make_fake_root(tmp_path / "tree")
+    _make_release_artifacts(root)
+    _add_late_change(root)
+    marker = tmp_path / "pipeline-executou.txt"
+    _stub_pipeline(root, marker)
+
+    r = _run_build(root, "--acceptance", "never")
+
+    assert r.returncode != 0
+    assert not marker.exists(), "auto-aceite desligado não pode rodar o pipeline"
+    assert "final-acceptance.sh" in (r.stdout + r.stderr)
+
+
+def test_build_does_not_recurse_inside_acceptance_pipeline(tmp_path):
+    """Dentro do pipeline (DAKOTA_ACCEPTANCE_PIPELINE=1) o build NUNCA chama o
+    pipeline de novo — falha fail-closed (o pipeline é quem gera o aceite)."""
+    root = _make_fake_root(tmp_path / "tree")
+    _make_release_artifacts(root)
+    _add_late_change(root)
+    marker = tmp_path / "pipeline-executou.txt"
+    _stub_pipeline(root, marker)
+
+    r = _run_build(root, env_extra={"DAKOTA_ACCEPTANCE_PIPELINE": "1"})
+
+    out = r.stdout + r.stderr
+    assert r.returncode != 0
+    assert not marker.exists(), (
+        "recursão: o build rodou o pipeline de aceitação dentro do próprio "
+        "pipeline (guardar DAKOTA_ACCEPTANCE_PIPELINE falhou)"
+    )
+    assert "fail-closed" in out
+
+
+def test_build_acceptance_lock_blocks_parallel_pipeline(tmp_path):
+    """Lock de dist/ ocupado (outro build rodando o aceite) → aborta com
+    mensagem clara em vez de dois pipelines reescreverem artifacts/ juntos."""
+    root = _make_fake_root(tmp_path / "tree")
+    _make_release_artifacts(root)
+    _add_late_change(root)
+    _stub_pipeline(root)
+    (root / "dist" / ".acceptance-run.lock").mkdir(parents=True)
+
+    r = _run_build(root)
+
+    out = r.stdout + r.stderr
+    assert r.returncode != 0
+    assert "lock" in out.lower()
+    assert "acceptance-run.lock" in out
 
 
 def test_verify_tarball_detects_tree_divergence(tmp_path):

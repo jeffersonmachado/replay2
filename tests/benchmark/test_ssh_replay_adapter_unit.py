@@ -612,9 +612,15 @@ class TestSSHReplayAdapterClockSkew(unittest.TestCase):
 
     def test_script_desloca_janela_pelo_offset_medido(self) -> None:
         """Executa o script REAL gerado pelo adaptador (python3 local contra
-        sqlite temporário) com ``local_now`` adulterado para simular um host
+        sqlite temporário) com ``remote_now`` adulterado para simular um host
         com relógio 150 s ADIANTADO: a janela efetiva deve deslocar +150 s e
-        selecionar as amostras que a janela nominal perderia."""
+        selecionar as amostras que a janela nominal perderia.
+
+        O ponto de injeção é o ``remote_now`` do script remoto (o relógio do
+        HOST), não o ``__LOCAL_NOW_MS__`` embutido pelo coletor: no formato
+        atual a sentinela devolve esse ``remote_now`` e o offset registrado é
+        compensado pelo RTT da chamada (``remote_now - ponto médio local``),
+        então adulterar o timestamp local só mudaria o offset bruto."""
         import re
         import sqlite3
         import subprocess
@@ -638,10 +644,10 @@ class TestSSHReplayAdapterClockSkew(unittest.TestCase):
             def runner(argv, input_text, timeout):
                 capturado["script"] = input_text
                 # simula host 150 s ADIANTADO: remote_now = local + 150 s
-                local_now_falso = int(time.time() * 1000) - 150_000
+                remote_now_falso = int(time.time() * 1000) + 150_000
                 script = re.sub(
-                    r"(offset = int\(time\.time\(\) \* 1000\) - )(\d+)",
-                    lambda m: m.group(1) + str(local_now_falso),
+                    r"(remote_now = )int\(time\.time\(\) \* 1000\)",
+                    lambda m: m.group(1) + str(remote_now_falso),
                     input_text)
                 res = subprocess.run(
                     ["python3", "-"], input=script, capture_output=True,

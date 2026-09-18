@@ -1,6 +1,9 @@
 # Benchmark Oficial v8 — AIX × Linux (cap13) — Runbook do Operador
 
-**Status:** preparado na v0.9.11 (2026-09-17), pendente de execução.
+**Status:** EXECUTADO em 2026-09-17 (0.9.12) — veredito **FAIL** (sem
+recomendação). Bloqueios ambientais identificados na seção 8; uma nova
+tentativa conclusiva exige corrigi-los e usar um NOVO `experiment_id`
+(ex.: `...-v8b`).
 **Público:** operador sem conhecimento do código. Siga as seções em ordem.
 
 Este documento define o experimento oficial v8, que substitui o v7
@@ -266,3 +269,46 @@ coleta e repita; não edite artefatos à mão.
 | Divergência funcional (visual, erro/timeout adicional) | **FAIL** |
 | Escada interrompida por stop_condition | no máximo WARN (parada classificada pela evidência) |
 | IC95 fora de 10 % da média / normalização incompleta | no máximo WARN |
+
+---
+
+## 8. Resultado da execução de 2026-09-17 (0.9.12)
+
+Executado com VPN estável (tentativa 1 abortada por queda de VPN —
+`environment_unreachable_mid_run`, transporte SSH indisponível para os dois
+hosts durante toda a janela; tentativa 2 com conectividade 6/6). Contrato e
+proveniência OK (4 hashes reais distintos). Veredito: **FAIL**, sem
+recomendação. Causas, todas ambientais:
+
+1. **Divergência funcional (PORTA 1)** — 21 passos divergentes entre baseline
+   (AIX) e alvo (Linux). Causa raiz documentada: as bases de dados dos dois
+   servidores estão **dessincronizadas** (mesmo CPF com endereço/situação
+   diferentes) e a massa driftou desde a captura original — telas
+   dependentes de dado nunca serão iguais entre os ambientes. Nos primeiros
+   passos (ev-3/ev-18) o AIX exibiu tela vazia — sessão lenta pela CPU
+   saturada (item 2). **Sem bases alinhadas, a PORTA 1 sempre reprova.**
+2. **Parada da escada em concorrência 1** — `host_cpu_pct=100` sustentado no
+   AIX (limite 95), classificado `saturacao_comprovada`. O AIX já operava com
+   carga estranha (6 usuários interativos, load ~9 antes do experimento) — a
+   medição é real, mas reflete o ambiente compartilhado, não a carga do
+   benchmark. Exige **janela exclusiva** no MIG24.
+3. **Clock offset medido acima do gate** (AIX 1209 ms, Linux 2116 ms) — o
+   offset é medido via exec SSH e inclui a latência de transporte; os relógios
+   dos hosts estavam a ~1 s entre si e o Linux está em NTP (chrony). A
+   estação orquestradora é o elo fora de NTP. Sincronizar a estação e/ou
+   medir o offset com compensação de RTT antes da próxima tentativa.
+4. **Cobertura de coletores** — rede no AIX só por pacotes (`netstat -i`, sem
+   bytes) e paginação ausente no Linux: os grupos ficam marcados ausentes e o
+   gargalo não é declarável (por desenho).
+
+O que a execução provou sobre a ferramenta: preflight, proveniência calculada,
+coleta de host_metrics (51 amostras AIX / 3224 Linux), janela de rede nos dois
+hosts, correção de clock skew com offset auditável, parada por stop_condition
+classificada pela evidência, recovery probe medido (AIX 11,28 s; Linux 3,71 s)
+e `evidence-manifest.sha256` cobrindo o `execution-result.json` final (45
+arquivos). O veredito FAIL é o resultado **correto** para as evidências
+coletadas — o mecanismo recusou concluir onde a prova não existe.
+
+**Para a tentativa conclusiva (v8b):** alinhar as bases de dados dos dois
+servidores (mesma massa), janela exclusiva sem usuários interativos no AIX,
+estação em NTP, e novo `experiment_id`.

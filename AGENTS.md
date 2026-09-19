@@ -797,6 +797,13 @@ Smoke remoto (requer acesso SSH ao host): `scripts/smoke-test-capture.sh` e
 geometria, encoding, timeline e playback contra o servidor (default
 `10.5.8.24:8080`).
 
+Atenção ao `dist/` em release: `scripts/smoke-test.sh` roda `build-tarball.sh`
+entre os 11 checks locais e deixa um tarball extra (sem manifest/`.sha256`, que
+só o pipeline de aceitação gera), e o auto-aceite do build também produz o
+tarball do pipeline antes do seu. Como `remoto_dakota/scripts/deploy.sh` pega o
+mais recente (`ls -t`), apague os extras (ou regenere o `.sha256`) para o par
+`<ts>.tar.gz` + `<ts>.run` empacotado seguir sendo o validado pelo aceite.
+
 Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
 `test-p2.sh`, `test-best-effort.sh`, `validate_acceptance_results.py`,
 `process_tree.py` (runner com detecção de processos vazados, usado pelo
@@ -806,8 +813,11 @@ Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
 
 ```bash
 bash scripts/final-acceptance.sh   # pipeline de aceitação completo (fases 01–08);
-                                   #   gera artifacts/ exigidos pelo build
+                                   #   gera artifacts/, o tarball + manifest +
+                                   #   .sha256 em dist/ e valida a árvore extraída
 ./scripts/build-tarball.sh         # gera dist/dakota-replay2-<VERSION>-<ts>.tar.gz
+                                   #   --with-benchmarks <id|none> (default auto)
+                                   #   --acceptance <auto|never> (default auto)
 bash scripts/build-selfinstall.sh  # gera dist/...run — self-installing archive
                                    #   (stub selfinstall-stub.sh + tarball); no
                                    #   servidor: `sh <pkg>.run` instala ou
@@ -817,8 +827,18 @@ make tailwind                      # rebuilda gateway/control/static/tailwind.cs
 bash scripts/bump.sh [patch|minor|major]   # incrementa VERSION
 ```
 
-**Importante:** `build-tarball.sh` **falha** se os artefatos de aceitação em
-`artifacts/` não existirem — rode `scripts/final-acceptance.sh` antes. Com
+**Importante:** o aceite em `artifacts/` é **obrigatório** no modo release e
+vinculado ao hash da árvore — qualquer edição em `scripts/`, `tests/`,
+`gateway/` ou `README.md` invalida o aceite anterior. Desde a 0.9.12 isso **não
+é mais só uma mensagem de erro**: com `--acceptance auto` (default; env
+`DAKOTA_ACCEPTANCE`) o próprio build roda `final-acceptance.sh`, recalcula o
+hash, revalida e continua (respeitando `--with-benchmarks`, que o pipeline não
+conhece). Guardas: dentro do pipeline o build enxerga
+`DAKOTA_ACCEPTANCE_PIPELINE=1` (exportada por `final-acceptance.sh`) e **falha
+fail-closed em vez de recursar**; um lock em `dist/.acceptance-run.lock` impede
+que os builds paralelos dos deploys AIX/Linux rodem dois pipelines sobre
+`artifacts/` ao mesmo tempo; `--acceptance never` (ou
+`DAKOTA_ACCEPTANCE=never`) restaura o comportamento antigo. Com
 `artifacts/` presente (modo release), o build também **exige que o aceite
 seja da MESMA árvore e da MESMA VERSION** (`build_validate.py
 check-acceptance`: hash `source_tree_sha256_before/after` do results JSON ==

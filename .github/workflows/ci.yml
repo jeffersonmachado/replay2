@@ -126,16 +126,13 @@ jobs:
         # o Selenium Manager procura o binário no caminho padrão do Google
         # Chrome e o job falhava com "no chrome binary at
         # /opt/google/chrome/chrome" (tests/test_web_ui_selenium.py não lê
-        # CHROME_BIN — usa webdriver.Chrome() puro, headless). Instala o pacote
-        # oficial, que entrega exatamente esse caminho.
+        # CHROME_BIN — usa webdriver.Chrome() puro, headless). Instala o .deb
+        # oficial (sem keyring/gpg: no runner o `gpg --dearmor` abortava com
+        # "cannot open '/dev/tty'"; o apt resolve as dependências do .deb).
         sudo apt-get update
-        sudo apt-get install -y wget gnupg
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
-          | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
-          | sudo tee /etc/apt/sources.list.d/google-chrome.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        wget -q -O /tmp/google-chrome.deb \
+          https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt-get install -y /tmp/google-chrome.deb
         google-chrome --version
         python -m pip install --upgrade pip
         pip install selenium

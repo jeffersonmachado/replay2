@@ -21,7 +21,11 @@ Este documento define o experimento oficial v8, que substitui o v7
    (amostras `net_rx_kbs`/`net_tx_kbs` ou janela `net_window` por run).
 3. **Clock dentro do gate** — no v7 o AIX estava ~171 s atrasado (gate:
    1000 ms). Antes de executar, sincronize os relógios (NTP) dos dois
-   servidores e da estação orquestradora.
+   servidores e da estação orquestradora. Desde 0.9.12 o offset registrado é
+   **compensado pelo RTT** da chamada de coleta (`remote_now − ponto médio
+   local`, estimador estilo NTP): latência de VPN não infla mais o valor do
+   gate — o bruto fica em `clock_offset_raw_ms` e o RTT em `clock_rtt_ms` no
+   `execution-result.json` de cada run.
 
 Regra de ouro: **qualquer evidência essencial ausente → INCONCLUSIVE, sem
 recomendação de plataforma/capacidade.** Não existe "PASS por insistência":
@@ -162,7 +166,10 @@ cat artifacts/benchmarks/cap13-aix-linux-oficial-v8/provenance.json
 
 1. **Relógio sincronizado** nos dois servidores e na estação
    (`chronyc tracking` / `ntpq -p`; divergência > 1 s reprova o gate de
-   clock skew). No v7 o AIX estava 171 s atrasado.
+   clock skew). No v7 o AIX estava 171 s atrasado. O gate usa o offset
+   **compensado de RTT** (0.9.12): se `max_abs_offset_ms` reprovar, confira
+   `clock_offset_raw_ms` e `clock_rtt_ms` da run antes de condenar os
+   relógios — bruto alto com compensado baixo é transporte (VPN), não skew.
 2. **Coletor de rede ativo** nos dois hosts (o sampler de host_metrics deve
    reportar `net_rx_kbs`/`net_tx_kbs`; confira o painel
    `/observability/resources` de cada control plane).
@@ -295,8 +302,13 @@ recomendação. Causas, todas ambientais:
 3. **Clock offset medido acima do gate** (AIX 1209 ms, Linux 2116 ms) — o
    offset é medido via exec SSH e inclui a latência de transporte; os relógios
    dos hosts estavam a ~1 s entre si e o Linux está em NTP (chrony). A
-   estação orquestradora é o elo fora de NTP. Sincronizar a estação e/ou
-   medir o offset com compensação de RTT antes da próxima tentativa.
+   estação orquestradora é o elo fora de NTP. **Corrigido em 0.9.12**
+   (`gateway/dakota_gateway/benchmark/adapters.py`): a sentinela do script
+   remoto passou a devolver `remote_now_ms` e o offset registrado é
+   `remote_now − ponto médio local`, com bruto (`clock_offset_raw_ms`) e RTT
+   (`clock_rtt_ms`) preservados como evidência — sem isso o gate de 1000 ms
+   reprovava relógios sincronizados. A estação continua devendo entrar em
+   NTP, mas o gate deixou de ser falso positivo por transporte.
 4. **Cobertura de coletores** — rede no AIX só por pacotes (`netstat -i`, sem
    bytes) e paginação ausente no Linux: os grupos ficam marcados ausentes e o
    gargalo não é declarável (por desenho).
@@ -311,4 +323,7 @@ coletadas — o mecanismo recusou concluir onde a prova não existe.
 
 **Para a tentativa conclusiva (v8b):** alinhar as bases de dados dos dois
 servidores (mesma massa), janela exclusiva sem usuários interativos no AIX,
-estação em NTP, e novo `experiment_id`.
+estação em NTP, e novo `experiment_id`. Do item 3 (clock offset acima do
+gate) nada mais depende de trabalho de código: a compensação de RTT entrou em
+0.9.12 — basta conferir no resultado da run que `clock_rtt_ms` foi registrado
+(evidência de que a compensação estava ativa).

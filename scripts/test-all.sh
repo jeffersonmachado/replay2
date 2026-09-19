@@ -128,7 +128,12 @@ fi
 # TIMEOUT genérico por margem, não por travamento; process_tree confirmou
 # 0 leaks/escaped). 900 s = 2× a medição sob carga. Só dispara em hang real.
 run_suite python-full "${DAKOTA_TEST_ALL_PYTHON_TIMEOUT:-900}" env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q tests/ || true
-run_suite gateway-tests 120 env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q gateway/tests/ || true
+# Orçamento próprio do gateway/tests/: a suíte mede ~112-119 s (199 testes) e o
+# teto genérico de 120 s deixava margem de ~1% — em 2026-09-18 o gate da ÁRVORE
+# EXTRAÍDA reprovou a release com a suíte APROVADA (199 passed em 118,9 s) e
+# status timed_out, só pelo overhead do wrapper sobre o teto. 300 s = 2,5x a
+# medição; só dispara em hang real. Override: DAKOTA_TEST_ALL_GATEWAY_TIMEOUT.
+run_suite gateway-tests "${DAKOTA_TEST_ALL_GATEWAY_TIMEOUT:-300}" env -u DAKOTA_PROCESS_RUN_ID python -m pytest -q gateway/tests/ || true
 
 # Tcl
 run_suite tcl-tests 30 env -u DAKOTA_PROCESS_RUN_ID tclsh tests/all.tcl || true

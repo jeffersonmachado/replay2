@@ -942,13 +942,19 @@ class SSHReplayAdapter:
         ``self.host_metrics_status`` como ``{"available": False, "reason":
         <última falha>, "attempts": N}`` e a lista devolvida é vazia —
         NUNCA zero fingindo medição. Sucesso registra ``{"available": True,
-        "attempts": N, "clock_offset_ms": <offset medido>}``.
+        "attempts": N, "clock_offset_ms": <offset compensado>,
+        "clock_offset_raw_ms": <offset bruto>, "clock_rtt_ms": <rtt>}``.
 
         CLOCK SKEW (caso real MIG24: AIX ~171 s atrasado): a janela
         ``from_ms``/``to_ms`` usa o relógio do orquestrador, mas o sampler
         remoto grava ``ts_ms`` com o relógio do host. O script remoto mede o
         offset no momento da query e desloca a janela — ver o comentário de
-        ``_REMOTE_HOST_METRICS_SCRIPT``.
+        ``_REMOTE_HOST_METRICS_SCRIPT``. O offset BRUTO inclui a latência do
+        transporte SSH (caso v8: VPN inflava ~1-2 s e reprovava o gate de
+        1000 ms com os relógios sincronizados); quando a sentinela traz
+        ``remote_now_ms``, o offset registrado em ``clock_offset_ms`` é
+        compensado pelo RTT medido da chamada (estimador de ponto médio,
+        estilo NTP). Sentinela legada sem ``remote_now_ms`` registra o bruto.
         """
         db_path = self.env.replay2_db_path or "/opt/dakota/replay2/gateway/state/replay.db"
         script = (_REMOTE_HOST_METRICS_SCRIPT
@@ -968,7 +974,9 @@ class SSHReplayAdapter:
                 time.sleep(_HOST_METRICS_BACKOFF_S[
                     min(tentativa - 1, len(_HOST_METRICS_BACKOFF_S) - 1)])
             try:
+                t0_ms = int(time.time() * 1000)
                 res = self._ssh_runner(argv, script, 30.0)
+                t1_ms = int(time.time() * 1000)
             except Exception as exc:
                 ultima_falha = str(exc)[:300]
                 continue
@@ -985,6 +993,7 @@ class SSHReplayAdapter:
             amostras: list[dict] = []
             esperadas: object = None
             offset_ms: object = None
+            remote_now_ms: object = None
             try:
                 for linha in stdout.splitlines():
                     linha = linha.strip()
@@ -995,6 +1004,7 @@ class SSHReplayAdapter:
                             and dado.get("host_metrics_query") == "done"):
                         esperadas = dado.get("rows")
                         offset_ms = dado.get("clock_offset_ms")
+                        remote_now_ms = dado.get("remote_now_ms")
                         continue
                     dado["host_id"] = self.env.host
                     dado["platform"] = self.env.platform
@@ -1016,7 +1026,21 @@ class SSHReplayAdapter:
             self.host_metrics_status = {"available": True, "attempts": attempts}
             if offset_ms is not None:
                 try:
-                    self.host_metrics_status["clock_offset_ms"] = int(offset_ms)
+                    offset_int = int(offset_ms)
+                    self.host_metrics_status["clock_offset_raw_ms"] = offset_int
+                    if remote_now_ms is not None:
+                        # compensa a latência do transporte SSH: o offset bruto
+                        # é skew + atraso (caso v8 — VPN inflava ~1-2 s e
+                        # reprovava o gate com relógios sincronizados); o
+                        # melhor estimador é remote_now - ponto médio local
+                        rtt_ms = max(0, t1_ms - t0_ms)
+                        offset_comp = (int(remote_now_ms)
+                                       - (t0_ms + t1_ms) // 2)
+                        self.host_metrics_status["clock_offset_ms"] = offset_comp
+                        self.host_metrics_status["clock_rtt_ms"] = rtt_ms
+                    else:
+                        # sentinela legada (sem remote_now_ms): sem compensação
+                        self.host_metrics_status["clock_offset_ms"] = offset_int
                 except (TypeError, ValueError):
                     pass
             return amostras
@@ -1080,12 +1104,14 @@ class SSHReplayAdapter:
 #: e a janela nominal capturava só as amostras anteriores à run. O script
 #: mede ``offset = remote_now - local_now`` no momento da query e desloca a
 #: janela por esse offset; o offset medido volta na sentinela
-#: (``clock_offset_ms``) e é registrado em ``host_metrics_status`` e no
+#: (``clock_offset_ms`` bruto + ``remote_now_ms`` para compensação de RTT —
+#: ver ``collect_host_metrics``) e é registrado em ``host_metrics_status`` e no
 #: execution-result.json da run, para auditoria. As amostras mantêm o
 #: ``ts_ms`` original do host (evidência bruta, sem reescrita).
 _REMOTE_HOST_METRICS_SCRIPT = (
     "import json, sqlite3, time\n"
-    "offset = int(time.time() * 1000) - __LOCAL_NOW_MS__\n"
+    "remote_now = int(time.time() * 1000)\n"
+    "offset = remote_now - __LOCAL_NOW_MS__\n"
     "con = sqlite3.connect('__DB_PATH__')\n"
     "con.row_factory = sqlite3.Row\n"
     "try:\n"
@@ -1098,7 +1124,7 @@ _REMOTE_HOST_METRICS_SCRIPT = (
     "for row in rows:\n"
     "    print(json.dumps(dict(row)))\n"
     "print(json.dumps({'host_metrics_query': 'done', 'rows': len(rows),\n"
-    "                  'clock_offset_ms': offset}))\n"
+    "                  'clock_offset_ms': offset, 'remote_now_ms': remote_now}))\n"
 )
 
 

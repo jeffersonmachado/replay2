@@ -120,15 +120,23 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install browser and selenium
+    - name: Install Chrome and selenium
       run: |
+        # O chromium dos repositórios do runner NÃO fica em /opt/google/chrome:
+        # o Selenium Manager procura o binário no caminho padrão do Google
+        # Chrome e o job falhava com "no chrome binary at
+        # /opt/google/chrome/chrome" (tests/test_web_ui_selenium.py não lê
+        # CHROME_BIN — usa webdriver.Chrome() puro, headless). Instala o .deb
+        # oficial (sem keyring/gpg: no runner o `gpg --dearmor` abortava com
+        # "cannot open '/dev/tty'"; o apt resolve as dependências do .deb).
         sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver || sudo apt-get install -y chromium-driver chromium
+        wget -q -O /tmp/google-chrome.deb \
+          https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt-get install -y /tmp/google-chrome.deb
+        google-chrome --version
         python -m pip install --upgrade pip
         pip install selenium
 
     - name: Run Selenium smoke tests
-      env:
-        CHROME_BIN: /usr/bin/chromium
       run: |
         python3 tests/test_web_ui_selenium.py

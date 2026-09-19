@@ -797,6 +797,13 @@ Smoke remoto (requer acesso SSH ao host): `scripts/smoke-test-capture.sh` e
 geometria, encoding, timeline e playback contra o servidor (default
 `10.5.8.24:8080`).
 
+Atenção ao `dist/` em release: `scripts/smoke-test.sh` roda `build-tarball.sh`
+entre os 11 checks locais e deixa um tarball extra (sem manifest/`.sha256`, que
+só o pipeline de aceitação gera), e o auto-aceite do build também produz o
+tarball do pipeline antes do seu. Como `remoto_dakota/scripts/deploy.sh` pega o
+mais recente (`ls -t`), apague os extras (ou regenere o `.sha256`) para o par
+`<ts>.tar.gz` + `<ts>.run` empacotado seguir sendo o validado pelo aceite.
+
 Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
 `test-p2.sh`, `test-best-effort.sh`, `validate_acceptance_results.py`,
 `process_tree.py` (runner com detecção de processos vazados, usado pelo
@@ -806,8 +813,11 @@ Scripts auxiliares de teste em `scripts/`: `test-fast.sh`, `test-all.sh`,
 
 ```bash
 bash scripts/final-acceptance.sh   # pipeline de aceitação completo (fases 01–08);
-                                   #   gera artifacts/ exigidos pelo build
+                                   #   gera artifacts/, o tarball + manifest +
+                                   #   .sha256 em dist/ e valida a árvore extraída
 ./scripts/build-tarball.sh         # gera dist/dakota-replay2-<VERSION>-<ts>.tar.gz
+                                   #   --with-benchmarks <id|none> (default auto)
+                                   #   --acceptance <auto|never> (default auto)
 bash scripts/build-selfinstall.sh  # gera dist/...run — self-installing archive
                                    #   (stub selfinstall-stub.sh + tarball); no
                                    #   servidor: `sh <pkg>.run` instala ou
@@ -817,8 +827,18 @@ make tailwind                      # rebuilda gateway/control/static/tailwind.cs
 bash scripts/bump.sh [patch|minor|major]   # incrementa VERSION
 ```
 
-**Importante:** `build-tarball.sh` **falha** se os artefatos de aceitação em
-`artifacts/` não existirem — rode `scripts/final-acceptance.sh` antes. Com
+**Importante:** o aceite em `artifacts/` é **obrigatório** no modo release e
+vinculado ao hash da árvore — qualquer edição em `scripts/`, `tests/`,
+`gateway/` ou `README.md` invalida o aceite anterior. Desde a 0.9.12 isso **não
+é mais só uma mensagem de erro**: com `--acceptance auto` (default; env
+`DAKOTA_ACCEPTANCE`) o próprio build roda `final-acceptance.sh`, recalcula o
+hash, revalida e continua (respeitando `--with-benchmarks`, que o pipeline não
+conhece). Guardas: dentro do pipeline o build enxerga
+`DAKOTA_ACCEPTANCE_PIPELINE=1` (exportada por `final-acceptance.sh`) e **falha
+fail-closed em vez de recursar**; um lock em `dist/.acceptance-run.lock` impede
+que os builds paralelos dos deploys AIX/Linux rodem dois pipelines sobre
+`artifacts/` ao mesmo tempo; `--acceptance never` (ou
+`DAKOTA_ACCEPTANCE=never`) restaura o comportamento antigo. Com
 `artifacts/` presente (modo release), o build também **exige que o aceite
 seja da MESMA árvore e da MESMA VERSION** (`build_validate.py
 check-acceptance`: hash `source_tree_sha256_before/after` do results JSON ==
@@ -995,6 +1015,27 @@ Unitários (Py+JS+Tcl) → tests/ + gateway/tests/ + static/js/*.test.mjs + test
 
 **Sempre usar o script de deploy/instalador. NUNCA fazer deploy manual com `scp`/`ssh` soltos.**
 
+### Acesso SSH: por CHAVE, sem senha
+
+Os dois hosts estão configurados por chave SSH na estação (verificado com
+`ssh -o BatchMode=yes`): nenhum deploy precisa de senha.
+
+| Alvo | Host | Usuário | Chave | Como referenciar |
+|---|---|---|---|---|
+| Linux | `10.5.8.24` (`recital24`) | `root` | `~/.ssh/dakota_linux24` | `ssh -i ~/.ssh/dakota_linux24 root@10.5.8.24` |
+| AIX (MIG24) | `10.5.8.25` (`MIG_REC24`) | `root` | `~/.ssh/dakota_mig24_root` | alias `dakota-mig24-root` (`~/.ssh/config`) |
+| AIX (MIG24) | `10.5.8.25` | `results` | `~/.ssh/dakota_mig24` | alias `dakota-mig24` (`~/.ssh/config`) |
+
+O `scripts/deploy.sh` do `remoto_dakota` **já prefere a chave**: no alvo Linux
+ele testa `ssh -i "$LINUX_KEY" -o BatchMode=yes ... true` antes de qualquer
+coisa (chave configurável por `DAKOTA_LINUX_KEY`, host/porta por
+`DAKOTA_LINUX_HOST`/`DAKOTA_LINUX_PORT`); no alvo AIX usa `ssh -p <porta>` e o
+`~/.ssh/config` resolve usuário/chave dos aliases. `SSH_PASSWORD` + `sshpass`
+são apenas **fallback legado** para o Linux (host sem a chave instalada) — não é
+o caminho esperado.
+
+Chaves e `~/.ssh/config` são locais (`0600`) e nunca versionados.
+
 ### Deploy no MIG24 (AIX 10.5.8.25):
 ```bash
 cd /home/jmachado/projetos/dakota/remoto_dakota
@@ -1015,17 +1056,21 @@ lê as chaves dos índices Recital — sem ela, os irmãos de `source_dir` com
 índices são descobertos automaticamente. O arquivo é do servidor (não vem no
 tarball, como `.local-secrets/`) e sobrevive a deploys.
 
-Manualmente (sem o deploy.sh), o fluxo equivalente é:
+Manualmente (sem o deploy.sh), o fluxo equivalente é (a chave vem do alias
+`dakota-mig24-root` do `~/.ssh/config`):
 ```bash
 cd /home/jmachado/projetos/dakota/replay2
 bash scripts/build-selfinstall.sh
-scp dist/dakota-replay2-<VERSAO>-<ts>.run root@10.5.8.25:/tmp/
-ssh root@10.5.8.25 "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakota/replay2 && rm -f /tmp/dakota-replay2-<VERSAO>-<ts>.run"
+scp dist/dakota-replay2-<VERSAO>-<ts>.run dakota-mig24-root:/tmp/
+ssh dakota-mig24-root "sh /tmp/dakota-replay2-<VERSAO>-<ts>.run --prefix /opt/dakota/replay2 && rm -f /tmp/dakota-replay2-<VERSAO>-<ts>.run"
 ```
 
 ### Deploy no Linux (10.5.8.24):
 ```bash
-SSH_PASSWORD="$SSH_PASSWORD" bash scripts/deploy.sh --target linux
+cd /home/jmachado/projetos/dakota/remoto_dakota
+bash scripts/deploy.sh --target linux
+# a chave ~/.ssh/dakota_linux24 é usada automaticamente (DAKOTA_LINUX_KEY)
+# fallback legado, só se o host não tiver a chave: SSH_PASSWORD='...' bash scripts/deploy.sh --target linux
 ```
 O deploy Linux usa o mesmo **self-installing archive** (`.run`) do AIX
 (homologado na 0.8.9; o stub destaca stdin/stdout/stderr dos `su` de
@@ -1038,7 +1083,7 @@ serviço, sincronização, chown, restart e health check.
 ```bash
 cd replay2
 for f in gateway/control/services/arquivo.py gateway/control/templates/algum.html; do
-  scp -o StrictHostKeyChecking=accept-new "$f" root@10.5.8.25:/opt/dakota/replay2/"$f"
+  scp -o StrictHostKeyChecking=accept-new "$f" dakota-mig24-root:/opt/dakota/replay2/"$f"
 done
 ssh dakota-mig24-root "chown -R results:cpd /opt/dakota/replay2/gateway/ && pkill -f server.py; sleep 2; cd /opt/dakota/replay2/gateway && su results -c '...'"
 ```

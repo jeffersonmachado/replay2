@@ -103,8 +103,10 @@ class EnvironmentRunResult:
     # auditável — ``None`` = não registrado.
     checkpoint_exceptions: list | None = None
     # Clock skew host × orquestrador medido na coleta de host metrics
-    # (``clock_offset_ms`` do script remoto). ``measured=False`` = coletor
-    # sem medição de offset — correção de skew NÃO comprovável.
+    # (``clock_offset_ms`` da coleta — compensado pelo RTT do transporte SSH
+    # quando a sentinela traz ``remote_now_ms``; bruto em sentinelas legadas).
+    # ``measured=False`` = coletor sem medição de offset — correção de skew
+    # NÃO comprovável.
     host_clock_offset_ms: int | None = None
     host_clock_offset_measured: bool = False
     # Medição REAL de rede na janela da run (contadores remotos antes/depois

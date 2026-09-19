@@ -106,7 +106,16 @@ Desde a correção do incidente 0.8.85 (pacote com aceite de outra árvore):
 2. `final-acceptance-results.json` grava `version` + hashes before/after;
 3. `build-tarball.sh` (com `artifacts/` presente) exige results JSON da MESMA
    árvore e da MESMA VERSION, com a suíte completa aprovada — aceite antigo
-   reaproveitado reprova o build;
+   reaproveitado reprova o build. Como o aceite é obrigatório, o build não fica
+   só na mensagem de erro: com `--acceptance auto` (default) ele **roda o
+   pipeline** `final-acceptance.sh` sozinho, revalida o vínculo e continua.
+   `--acceptance never` (ou `DAKOTA_ACCEPTANCE=never`) restaura o fail-closed
+   clássico. Dentro do pipeline o auto-aceite fica **desligado**
+   (`DAKOTA_ACCEPTANCE_PIPELINE=1`, exportada pelo `final-acceptance.sh`): é o
+   pipeline que gera o aceite e chama o build no passo 11 — sem a guarda, um
+   aceite reprovado recursaria o pipeline. Um lock em `dist/.acceptance-run.lock`
+   impede dois builds paralelos (deploy AIX/Linux) de rodarem o pipeline ao
+   mesmo tempo sobre `artifacts/`;
 4. após gerar o tarball, o build o extrai, hasheia a árvore extraída com o
    `tree_hash.py` do próprio pacote e exige igualdade com o aceite, além de
    sanity checks (VERSION, `gateway/control/server.py`, nenhum
@@ -135,7 +144,8 @@ release oficial é feito em Linux; o AIX só consome o `.run` gerado lá.
 3. Aceitação completa: `bash scripts/final-acceptance.sh` (se arquivos
    protegidos mudaram, regerar antes a baseline:
    `bash scripts/acceptance/regen-baseline.sh`)
-4. Build: `bash scripts/build-tarball.sh` (ou já chamado pelo passo 3)
+4. Build: `bash scripts/build-tarball.sh` (ou já chamado pelo passo 3; com o
+   aceite inválido o próprio build roda o pipeline — ver FASE 2)
 5. Verificar com checklist acima
 6. Copiar para `remoto_dakota/artifacts/`
 7. Testar instalação limpa em ambiente de homologação
